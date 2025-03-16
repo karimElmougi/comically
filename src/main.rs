@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 mod comic_archive;
 mod epub_builder;
@@ -28,6 +28,21 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
+
+    if cfg!(target_os = "macos") {
+        let additional_paths = [
+            "/Applications/Kindle Comic Creator/Kindle Comic Creator.app/Contents/MacOS",
+            "/Applications/Kindle Previewer 3.app/Contents/lib/fc/bin/",
+        ];
+
+        let current_path = env::var("PATH").unwrap_or_default();
+        let new_path = additional_paths
+            .iter()
+            .fold(current_path, |acc, &path| format!("{}:{}", acc, path));
+
+        env::set_var("PATH", new_path);
+    }
+
     let cli = Cli::parse();
 
     // Create default output path if not provided
