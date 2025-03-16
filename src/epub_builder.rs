@@ -356,7 +356,7 @@ fn create_epub_file(epub_dir: &Path, output_path: &Path) -> Result<()> {
     let options_stored = FileOptions::default().compression_method(CompressionMethod::Stored);
 
     // Options with compression
-    let options_deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options_deflated = FileOptions::default().compression_method(CompressionMethod::Stored);
 
     // Add mimetype first (must not be compressed)
     let mimetype_path = epub_dir.join("mimetype");
