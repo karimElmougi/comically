@@ -1,0 +1,22 @@
+[package]
+name = "comically"
+version = "0.1.0"
+edition = "2021"
+description = "A simple converter for comic book files to Kindle MOBI format"
+
+[profile.release]
+incremental = true
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+image = "0.25"
+zip = "0.6"
+anyhow = "1.0"
+tempfile = "3.10"
+uuid = { version = "1.8", features = ["v4"] }
+log = "0.4"
+env_logger = "0.11"
+regex = "1.10"
+walkdir = "2.4"
+chrono = "0.4"
+rayon = "1.10.0"
