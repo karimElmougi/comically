@@ -39,7 +39,6 @@ fn main() -> anyhow::Result<()> {
 
     println!("Converting {}", cli.input.display());
 
-    // Extract CBZ to temporary directory
     let temp_dir = tempfile::tempdir()?;
 
     let comic = Comic {
@@ -48,20 +47,17 @@ fn main() -> anyhow::Result<()> {
         directory: temp_dir.path().to_path_buf(),
     };
 
-    time_it("Extracting CBZ", || comic_archive::extract_cbz(&comic))?;
+    time_it("Extract CBZ", || comic_archive::extract_cbz(&comic))?;
 
     // Process images
-    time_it("Processing Images", || {
-        image_processor::process_images(&comic)
-    })?;
+    time_it("Process Images", || image_processor::process_images(&comic))?;
 
     // Create EPUB
-    time_it("Creating EPUB", || epub_builder::build_epub(&comic))?;
+    time_it("Create EPUB", || epub_builder::build_epub(&comic))?;
 
     // Convert to MOBI
-    time_it("Creating MOBI", || mobi_converter::create_mobi(&comic))?;
+    time_it("Create MOBI", || mobi_converter::create_mobi(&comic))?;
 
-    println!("Conversion completed successfully!");
     Ok(())
 }
 

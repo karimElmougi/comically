@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use log::info;
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use crate::Comic;
@@ -19,7 +21,7 @@ pub fn create_mobi(comic: &Comic) -> Result<()> {
         .arg("-dont_append_source")
         .arg("-locale")
         .arg("en")
-        .arg(epub_path)
+        .arg(&epub_path)
         .output()
         .context("Failed to execute KindleGen")?;
 
@@ -29,6 +31,17 @@ pub fn create_mobi(comic: &Comic) -> Result<()> {
     if !output.status.success() && !output_str.contains("Warnings") {
         let code = output.status.code();
         anyhow::bail!("KindleGen failed with code {:?}: {}", code, output_str);
+    }
+
+    // KindleGen creates the mobi file in the same directory as the epub
+    let mobi_path = epub_path.with_extension("mobi");
+
+    if mobi_path != output_path {
+        fs::rename(&mobi_path, &output_path).context(format!(
+            "Failed to move MOBI file from {} to {}",
+            mobi_path.display(),
+            output_path.display()
+        ))?;
     }
 
     info!("MOBI creation successful: {}", output_path.display());

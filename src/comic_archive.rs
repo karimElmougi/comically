@@ -84,7 +84,7 @@ fn has_image_extension(path: &Path, valid_extensions: &[&str]) -> bool {
     false
 }
 
-/// Checks for metadata in the comic archive (ComicInfo.xml)
+// Checks for metadata in the comic archive (ComicInfo.xml)
 // pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
 //     let file = File::open(cbz_path)?;
 //     let mut archive = ZipArchive::new(file)?;
