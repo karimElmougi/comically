@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use color_quant::NeuQuant;
+use image::imageops::colorops::contrast_in_place;
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
+use image::{DynamicImage, GenericImageView, Pixel, RgbImage};
 use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
@@ -71,18 +72,14 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
 
-    // Convert to grayscale
-    let img = img.grayscale();
     let mut img = img.to_rgb8();
 
     // Apply auto contrast (simple version)
     auto_contrast(&mut img);
 
-    // Resize image for device dimensions
-    let processed = resize_image_kcc_style(DynamicImage::ImageRgb8(img))?;
+    let processed = resize_image(DynamicImage::ImageRgb8(img))?;
 
-    // Apply quantization with color_quant (using the 16-color grayscale palette)
-    let quantized = quantize_with_neuquant(processed);
+    let quantized = quantize(processed);
 
     // Save with high quality settings
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
@@ -95,32 +92,21 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Simple auto-contrast function
 fn auto_contrast(img: &mut RgbImage) {
-    let mut min = 255;
-    let mut max = 0;
+    let gamma = 1.8;
 
-    // Find min and max values
-    for pixel in img.pixels() {
-        let luminance =
-            (pixel[0] as u32 * 299 + pixel[1] as u32 * 587 + pixel[2] as u32 * 114) / 1000;
-        min = min.min(luminance as u8);
-        max = max.max(luminance as u8);
-    }
-
-    // Apply contrast stretching if there's a meaningful range
-    if max > min {
-        for pixel in img.pixels_mut() {
-            for c in 0..3 {
-                pixel[c] =
-                    (((pixel[c] as u32 - min as u32) * 255) / (max as u32 - min as u32)) as u8;
-            }
+    for pixel in img.pixels_mut() {
+        for c in pixel.channels_mut() {
+            let normalized = *c as f32 / 255.0;
+            let corrected = normalized.powf(gamma);
+            *c = (corrected * 255.0).round() as u8;
         }
     }
+
+    contrast_in_place(img, 0.1);
 }
 
-/// KCC-style image resizing
-fn resize_image_kcc_style(img: DynamicImage) -> Result<DynamicImage> {
+fn resize_image(img: DynamicImage) -> Result<DynamicImage> {
     let (width, height) = img.dimensions();
 
     // Choose resize method based on whether we're upscaling or downscaling
@@ -155,64 +141,53 @@ fn resize_image_kcc_style(img: DynamicImage) -> Result<DynamicImage> {
     Ok(processed)
 }
 
-/// Quantize image using NeuQuant algorithm from color_quant
-fn quantize_with_neuquant(img: DynamicImage) -> DynamicImage {
+// Define the Kindle palette as a constant
+#[rustfmt::skip]
+const KINDLE_PALETTE: [u8; 64] = [
+    0x00, 0x00, 0x00, 0xff,  // Black with full opacity
+    0x11, 0x11, 0x11, 0xff,
+    0x22, 0x22, 0x22, 0xff,
+    0x33, 0x33, 0x33, 0xff,
+    0x44, 0x44, 0x44, 0xff,
+    0x55, 0x55, 0x55, 0xff,
+    0x66, 0x66, 0x66, 0xff,
+    0x77, 0x77, 0x77, 0xff,
+    0x88, 0x88, 0x88, 0xff,
+    0x99, 0x99, 0x99, 0xff,
+    0xaa, 0xaa, 0xaa, 0xff,
+    0xbb, 0xbb, 0xbb, 0xff,
+    0xcc, 0xcc, 0xcc, 0xff,
+    0xdd, 0xdd, 0xdd, 0xff,
+    0xee, 0xee, 0xee, 0xff,
+    0xff, 0xff, 0xff, 0xff,  // White with full opacity
+];
+
+/// Quantize image using the Kindle palette
+fn quantize(img: DynamicImage) -> DynamicImage {
     // Force convert to grayscale to ensure proper contrast
     let grayscale = img.grayscale();
-    let rgb = grayscale.to_rgb8();
+    let rgb = grayscale.to_rgba8();
     let (width, height) = rgb.dimensions();
 
-    // Flatten RGB pixels into a vec of bytes for NeuQuant
-    let pixels: Vec<u8> = rgb.pixels().flat_map(|p| p.0.to_vec()).collect();
-
-    // Setup Kindle grayscale palette
-    // We specifically want the 16 Kindle grayscale levels (not automatic colors)
-    // These values match the Kindle's e-ink display capabilities
-    let kindle_palette = [
-        0x00, 0x00, 0x00, // Black
-        0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x33, 0x33, 0x33, 0x44, 0x44, 0x44, 0x55, 0x55, 0x55,
-        0x66, 0x66, 0x66, 0x77, 0x77, 0x77, 0x88, 0x88, 0x88, 0x99, 0x99, 0x99, 0xAA, 0xAA, 0xAA,
-        0xBB, 0xBB, 0xBB, 0xCC, 0xCC, 0xCC, 0xDD, 0xDD, 0xDD, 0xEE, 0xEE, 0xEE, 0xFF, 0xFF,
-        0xFF, // White
-    ];
-
-    // Apply NeuQuant quantization with a low sample factor for higher quality
-    // Sample factor: 1 is highest quality, 30 is fastest
-    let nq = NeuQuant::new(1, 16, &pixels);
+    // Apply NeuQuant quantization
+    // TODO: USE LAZYLOCK
+    let nq = NeuQuant::new(1, 16, &KINDLE_PALETTE);
 
     // Create a new image with the quantized colors
-    let mut result = RgbImage::new(width, height);
+    let mut result = image::RgbaImage::new(width, height);
 
     // Apply quantization to each pixel
-    let mut pixel_index = 0;
     for y in 0..height {
         for x in 0..width {
-            let r = pixels[pixel_index];
-            let g = pixels[pixel_index + 1];
-            let b = pixels[pixel_index + 2];
+            let pixel = rgb.get_pixel(x, y);
 
-            // Get the index of the closest color in the palette
-            let color_idx = nq.index_of(&[r, g, b]);
-
-            // Get the actual color from the palette
-            let [mut r_val, mut g_val, mut b_val, a] = nq.lookup(color_idx).unwrap();
-
-            // Enhance dark colors slightly for better text readability
-            // This specifically helps with manga text bubbles
-
-            // Darken dark areas slightly for better text contrast
-            if r_val < 64 && g_val < 64 && b_val < 64 {
-                r_val = (r_val as f32 * 0.7) as u8;
-                g_val = (g_val as f32 * 0.7) as u8;
-                b_val = (b_val as f32 * 0.7) as u8;
-            }
+            let mut color = [pixel[0], pixel[1], pixel[2], pixel[3]];
+            nq.map_pixel(&mut color);
 
             // Set the pixel in the result image
-            result.put_pixel(x, y, Rgb([r_val, g_val, b_val]));
-
-            pixel_index += 3;
+            result.put_pixel(x, y, image::Rgba(color));
         }
     }
 
-    DynamicImage::ImageRgb8(result)
+    DynamicImage::from(result)
 }
