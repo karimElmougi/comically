@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use log::{info, warn};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -35,11 +35,12 @@ pub fn process_images(src_dir: PathBuf) -> Result<PathBuf> {
             }
         })
         .map(|entry| entry.path().to_path_buf())
-        .enumerate()
         .collect();
 
     let processed_count = image_files
-        .into_par_iter()
+        .into_iter()
+        .enumerate()
+        .par_bridge()
         .map(|(idx, path)| {
             let filename = format!("page{:03}.jpg", idx + 1);
             let output_path = processed_dir.join(filename);

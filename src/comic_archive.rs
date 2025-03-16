@@ -1,67 +1,71 @@
 use anyhow::{Context, Result};
-use log::{info, warn};
-use std::fs::{self, create_dir_all, File};
+use log::info;
+use std::fs::{create_dir_all, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 use zip::ZipArchive;
 
 /// Extracts a CBZ file to the target directory
 pub fn extract_cbz(cbz_path: &Path, target_dir: &Path) -> Result<PathBuf> {
     info!("Extracting CBZ: {}", cbz_path.display());
-    
+
     // Create the images directory
     let images_dir = target_dir.join("Images");
     create_dir_all(&images_dir).context("Failed to create images directory")?;
-    
+
     // Open the zip file
     let file = File::open(cbz_path).context("Failed to open CBZ file")?;
     let mut archive = ZipArchive::new(file).context("Failed to parse CBZ file as ZIP archive")?;
-    
+
     // Extract all image files
     let valid_extensions = [".jpg", ".jpeg", ".png", ".gif"];
     let mut extracted_count = 0;
-    
+
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => path.to_owned(),
             None => continue,
         };
-        
+
         // Skip directories and non-image files
         if file.is_dir() || !has_image_extension(&outpath, &valid_extensions) {
             continue;
         }
-        
+
         // Skip system files
         let file_name = outpath.file_name().unwrap().to_string_lossy();
-        if file_name.starts_with(".") || 
-           file_name.contains("__MACOSX") || 
-           file_name.contains("thumbs.db") || 
-           file_name.contains(".DS_Store") {
+        if file_name.starts_with(".")
+            || file_name.contains("__MACOSX")
+            || file_name.contains("thumbs.db")
+            || file_name.contains(".DS_Store")
+        {
             continue;
         }
-        
+
         // Create sanitized filename (page001.jpg, page002.jpg, etc.)
         let target_filename = format!("page{:03}.jpg", extracted_count + 1);
         let target_path = images_dir.join(&target_filename);
-        
+
         // Extract the file
         let mut outfile = File::create(&target_path)
             .context(format!("Failed to create file: {}", target_path.display()))?;
         io::copy(&mut file, &mut outfile)
             .context(format!("Failed to extract file: {}", outpath.display()))?;
-        
+
         extracted_count += 1;
     }
-    
-    info!("Extracted {} images to {}", extracted_count, images_dir.display());
-    
+
+    info!(
+        "Extracted {} images to {}",
+        extracted_count,
+        images_dir.display()
+    );
+
     if extracted_count == 0 {
         anyhow::bail!("No images found in the CBZ file");
     }
-    
+
     Ok(images_dir)
 }
 
@@ -82,7 +86,7 @@ fn has_image_extension(path: &Path, valid_extensions: &[&str]) -> bool {
 pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
     let file = File::open(cbz_path)?;
     let mut archive = ZipArchive::new(file)?;
-    
+
     // Look for ComicInfo.xml
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -90,8 +94,14 @@ pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
             Some(path) => path.to_owned(),
             None => continue,
         };
-        
-        if outpath.file_name().unwrap().to_string_lossy().to_lowercase() == "comicinfo.xml" {
+
+        if outpath
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_lowercase()
+            == "comicinfo.xml"
+        {
             // Found the metadata file
             let metadata_path = cbz_path.with_extension("xml");
             let mut outfile = File::create(&metadata_path)?;
@@ -99,6 +109,6 @@ pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
             return Ok(Some(metadata_path));
         }
     }
-    
+
     Ok(None)
 }
