@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView, GrayImage, ImageBuffer, Pixel, Rgb, RgbImage};
+use color_quant::NeuQuant;
+use image::imageops::FilterType;
+use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
@@ -9,26 +11,6 @@ use walkdir::WalkDir;
 // Default Kindle dimensions (Paperwhite Signature Edition)
 const TARGET_WIDTH: u32 = 1236;
 const TARGET_HEIGHT: u32 = 1648;
-
-// Kindle Paperwhite grayscale palette (16 levels)
-const KINDLE_PALETTE_16: [u8; 48] = [
-    0x00, 0x00, 0x00, // Black
-    0x11, 0x11, 0x11,
-    0x22, 0x22, 0x22,
-    0x33, 0x33, 0x33,
-    0x44, 0x44, 0x44,
-    0x55, 0x55, 0x55,
-    0x66, 0x66, 0x66,
-    0x77, 0x77, 0x77,
-    0x88, 0x88, 0x88,
-    0x99, 0x99, 0x99,
-    0xaa, 0xaa, 0xaa,
-    0xbb, 0xbb, 0xbb,
-    0xcc, 0xcc, 0xcc,
-    0xdd, 0xdd, 0xdd,
-    0xee, 0xee, 0xee,
-    0xff, 0xff, 0xff, // White
-];
 
 /// Process all images in the source directory
 pub fn process_images(src_dir: PathBuf) -> Result<PathBuf> {
@@ -89,34 +71,31 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
 
-    // Convert to RGB and apply processing pipeline
+    // Convert to grayscale
+    let img = img.grayscale();
     let mut img = img.to_rgb8();
-    
-    // Step 1: Apply auto contrast to improve visibility
+
+    // Apply auto contrast (simple version)
     auto_contrast(&mut img);
-    
-    // Step 2: Resize image appropriately for the device
-    let mut processed = resize_image_kcc_style(DynamicImage::ImageRgb8(img))?;
-    
-    // Step 3: Apply gamma correction for better visibility on e-ink
-    processed = apply_gamma(processed, 1.2); // Gamma 1.2 based on KCC defaults
-    
-    // Step 4: Quantize and dither to Kindle's 16 grayscale levels
-    processed = quantize_to_kindle_palette(processed);
+
+    // Resize image for device dimensions
+    let processed = resize_image_kcc_style(DynamicImage::ImageRgb8(img))?;
+
+    // Apply quantization with color_quant (using the 16-color grayscale palette)
+    let quantized = quantize_with_neuquant(processed);
 
     // Save with high quality settings
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
-    processed
-        .write_to(&mut output_buffer, image::ImageFormat::Jpeg)
-        .context(format!(
-            "Failed to save processed image: {}",
-            output_path.display()
-        ))?;
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 95);
+    encoder.encode_image(&quantized).context(format!(
+        "Failed to save processed image: {}",
+        output_path.display()
+    ))?;
 
     Ok(())
 }
 
-/// Auto-contrast function similar to KCC's approach
+/// Simple auto-contrast function
 fn auto_contrast(img: &mut RgbImage) {
     let mut min = 255;
     let mut max = 0;
@@ -140,17 +119,17 @@ fn auto_contrast(img: &mut RgbImage) {
     }
 }
 
-/// Resize image using KCC's strategy
+/// KCC-style image resizing
 fn resize_image_kcc_style(img: DynamicImage) -> Result<DynamicImage> {
     let (width, height) = img.dimensions();
 
     // Choose resize method based on whether we're upscaling or downscaling
     let filter = if width <= TARGET_WIDTH && height <= TARGET_HEIGHT {
         // For upscaling, Bicubic gives smoother results for manga
-        image::imageops::FilterType::CatmullRom
+        FilterType::CatmullRom
     } else {
         // For downscaling, Lanczos3 preserves more detail
-        image::imageops::FilterType::Lanczos3
+        FilterType::Lanczos3
     };
 
     // Calculate aspect ratios
@@ -160,8 +139,7 @@ fn resize_image_kcc_style(img: DynamicImage) -> Result<DynamicImage> {
     // Determine resize strategy based on aspect ratios
     let processed = if (ratio_image - ratio_device).abs() < 0.015 {
         // Similar aspect ratios - use fit to fill the screen
-        let resized = image::imageops::resize(&img, TARGET_WIDTH, TARGET_HEIGHT, filter);
-        DynamicImage::from(resized)
+        img.resize_exact(TARGET_WIDTH, TARGET_HEIGHT, filter)
     } else {
         // Different aspect ratios - maintain aspect ratio
         let width_ratio = TARGET_WIDTH as f32 / width as f32;
@@ -177,122 +155,64 @@ fn resize_image_kcc_style(img: DynamicImage) -> Result<DynamicImage> {
     Ok(processed)
 }
 
-/// Apply gamma correction to improve visibility on e-ink displays
-fn apply_gamma(img: DynamicImage, gamma: f32) -> DynamicImage {
-    let rgb = img.to_rgb8();
-    let (width, height) = rgb.dimensions();
-    
-    // Create lookup table for gamma correction
-    let mut gamma_lut = [0u8; 256];
-    for i in 0..256 {
-        let normalized = i as f32 / 255.0;
-        let corrected = normalized.powf(1.0 / gamma);
-        gamma_lut[i] = (corrected * 255.0).round() as u8;
-    }
-    
-    let mut result = RgbImage::new(width, height);
-    
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = rgb.get_pixel(x, y);
-            let new_pixel = Rgb([
-                gamma_lut[pixel.0[0] as usize],
-                gamma_lut[pixel.0[1] as usize],
-                gamma_lut[pixel.0[2] as usize],
-            ]);
-            result.put_pixel(x, y, new_pixel);
-        }
-    }
-    
-    DynamicImage::ImageRgb8(result)
-}
-
-/// Quantize image to the Kindle's 16-level grayscale palette using Floyd-Steinberg dithering
-fn quantize_to_kindle_palette(img: DynamicImage) -> DynamicImage {
-    // Convert to grayscale first
+/// Quantize image using NeuQuant algorithm from color_quant
+fn quantize_with_neuquant(img: DynamicImage) -> DynamicImage {
+    // Force convert to grayscale to ensure proper contrast
     let grayscale = img.grayscale();
     let rgb = grayscale.to_rgb8();
     let (width, height) = rgb.dimensions();
-    
-    // Create result image
+
+    // Flatten RGB pixels into a vec of bytes for NeuQuant
+    let pixels: Vec<u8> = rgb.pixels().flat_map(|p| p.0.to_vec()).collect();
+
+    // Setup Kindle grayscale palette
+    // We specifically want the 16 Kindle grayscale levels (not automatic colors)
+    // These values match the Kindle's e-ink display capabilities
+    let kindle_palette = [
+        0x00, 0x00, 0x00, // Black
+        0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x33, 0x33, 0x33, 0x44, 0x44, 0x44, 0x55, 0x55, 0x55,
+        0x66, 0x66, 0x66, 0x77, 0x77, 0x77, 0x88, 0x88, 0x88, 0x99, 0x99, 0x99, 0xAA, 0xAA, 0xAA,
+        0xBB, 0xBB, 0xBB, 0xCC, 0xCC, 0xCC, 0xDD, 0xDD, 0xDD, 0xEE, 0xEE, 0xEE, 0xFF, 0xFF,
+        0xFF, // White
+    ];
+
+    // Apply NeuQuant quantization with a low sample factor for higher quality
+    // Sample factor: 1 is highest quality, 30 is fastest
+    let nq = NeuQuant::new(1, 16, &pixels);
+
+    // Create a new image with the quantized colors
     let mut result = RgbImage::new(width, height);
-    
-    // Create a mutable copy for dithering
-    let mut dither_img = rgb.clone();
-    
-    // Extract just the grayscale levels from the palette (R=G=B)
-    let mut kindle_gray_palette = [0u8; 16];
-    for i in 0..16 {
-        kindle_gray_palette[i] = KINDLE_PALETTE_16[i * 3]; // Take just the R value
-    }
-    
-    // Apply Floyd-Steinberg dithering with Kindle palette
+
+    // Apply quantization to each pixel
+    let mut pixel_index = 0;
     for y in 0..height {
         for x in 0..width {
-            // Get current pixel value (just read R since R=G=B in grayscale)
-            let old_pixel = dither_img.get_pixel(x, y).0[0];
-            
-            // Find closest palette color
-            let closest_color_idx = find_closest_color(old_pixel, &kindle_gray_palette);
-            let new_pixel_value = kindle_gray_palette[closest_color_idx];
-            
-            // Update the result image (set R=G=B to the same palette value)
-            let new_pixel = Rgb([new_pixel_value, new_pixel_value, new_pixel_value]);
-            result.put_pixel(x, y, new_pixel);
-            
-            // Calculate quantization error
-            let quant_error = old_pixel as i16 - new_pixel_value as i16;
-            
-            // Distribute the error to neighboring pixels (Floyd-Steinberg)
-            if x < width - 1 {
-                let pixel = dither_img.get_pixel_mut(x + 1, y);
-                let value = pixel.0[0] as i16 + (quant_error * 7 / 16);
-                pixel.0[0] = value.clamp(0, 255) as u8;
-                pixel.0[1] = pixel.0[0]; // Keep grayscale consistent
-                pixel.0[2] = pixel.0[0];
-            }
-            
-            if y < height - 1 {
-                if x > 0 {
-                    let pixel = dither_img.get_pixel_mut(x - 1, y + 1);
-                    let value = pixel.0[0] as i16 + (quant_error * 3 / 16);
-                    pixel.0[0] = value.clamp(0, 255) as u8;
-                    pixel.0[1] = pixel.0[0];
-                    pixel.0[2] = pixel.0[0];
-                }
-                
-                let pixel = dither_img.get_pixel_mut(x, y + 1);
-                let value = pixel.0[0] as i16 + (quant_error * 5 / 16);
-                pixel.0[0] = value.clamp(0, 255) as u8;
-                pixel.0[1] = pixel.0[0];
-                pixel.0[2] = pixel.0[0];
-                
-                if x < width - 1 {
-                    let pixel = dither_img.get_pixel_mut(x + 1, y + 1);
-                    let value = pixel.0[0] as i16 + (quant_error * 1 / 16);
-                    pixel.0[0] = value.clamp(0, 255) as u8;
-                    pixel.0[1] = pixel.0[0];
-                    pixel.0[2] = pixel.0[0];
-                }
-            }
-        }
-    }
-    
-    DynamicImage::ImageRgb8(result)
-}
+            let r = pixels[pixel_index];
+            let g = pixels[pixel_index + 1];
+            let b = pixels[pixel_index + 2];
 
-/// Find the closest color in the palette to the given pixel value
-fn find_closest_color(pixel_value: u8, palette: &[u8]) -> usize {
-    let mut closest_idx = 0;
-    let mut closest_diff = 255;
-    
-    for (i, &palette_value) in palette.iter().enumerate() {
-        let diff = (pixel_value as i16 - palette_value as i16).abs() as u8;
-        if diff < closest_diff {
-            closest_diff = diff;
-            closest_idx = i;
+            // Get the index of the closest color in the palette
+            let color_idx = nq.index_of(&[r, g, b]);
+
+            // Get the actual color from the palette
+            let [mut r_val, mut g_val, mut b_val, a] = nq.lookup(color_idx).unwrap();
+
+            // Enhance dark colors slightly for better text readability
+            // This specifically helps with manga text bubbles
+
+            // Darken dark areas slightly for better text contrast
+            if r_val < 64 && g_val < 64 && b_val < 64 {
+                r_val = (r_val as f32 * 0.7) as u8;
+                g_val = (g_val as f32 * 0.7) as u8;
+                b_val = (b_val as f32 * 0.7) as u8;
+            }
+
+            // Set the pixel in the result image
+            result.put_pixel(x, y, Rgb([r_val, g_val, b_val]));
+
+            pixel_index += 3;
         }
     }
-    
-    closest_idx
+
+    DynamicImage::ImageRgb8(result)
 }
