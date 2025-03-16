@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use log::{info, warn};
-use std::fs::{self, create_dir_all};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -19,31 +20,38 @@ pub fn process_images(src_dir: PathBuf) -> Result<PathBuf> {
     create_dir_all(&processed_dir).context("Failed to create processed directory")?;
 
     // Process each image file
-    let mut processed_count = 0;
-    for entry in WalkDir::new(&src_dir)
+    let image_files: Vec<_> = WalkDir::new(&src_dir)
         .sort_by_file_name()
         .into_iter()
         .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let path = entry.path();
-        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-        if ["jpg", "jpeg", "png", "gif"].contains(&extension.to_lowercase().as_str()) {
-            let filename = format!("page{:03}.jpg", processed_count + 1);
-            let output_path = processed_dir.join(filename);
-
-            match process_image(path, &output_path) {
-                Ok(_) => {
-                    log::info!("Processed {}", path.display());
-                    processed_count += 1
-                }
-                Err(e) => warn!("Failed to process {}: {}", path.display(), e),
+        .filter(|entry| {
+            let is_file = entry.file_type().is_file();
+            if is_file {
+                let path = entry.path();
+                let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+                ["jpg", "jpeg", "png", "gif"].contains(&extension.to_lowercase().as_str())
+            } else {
+                false
             }
-        }
-    }
+        })
+        .map(|entry| entry.path().to_path_buf())
+        .enumerate()
+        .collect();
+
+    let processed_count = image_files
+        .into_par_iter()
+        .map(|(idx, path)| {
+            let filename = format!("page{:03}.jpg", idx + 1);
+            let output_path = processed_dir.join(filename);
+            match process_image(&path, &output_path) {
+                Ok(_) => 1,
+                Err(e) => {
+                    warn!("Failed to process {}: {}", path.display(), e);
+                    0
+                }
+            }
+        })
+        .reduce(|| 0, |acc, res| acc + res);
 
     info!("Processed {} images", processed_count);
 
