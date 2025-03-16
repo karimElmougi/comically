@@ -58,13 +58,3 @@ fn is_kindlegen_available() -> bool {
         Err(_) => false,
     }
 }
-
-/// Provides information about KindleGen
-pub fn kindlegen_info() -> String {
-    match Command::new("kindlegen").arg("-version").output() {
-        Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-        Err(_) => {
-            "KindleGen is not available. Please install it from the Amazon KDP website.".to_string()
-        }
-    }
-}

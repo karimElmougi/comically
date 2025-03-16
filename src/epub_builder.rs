@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::info;
 use std::fs::{self, create_dir_all, File};
 use std::io::{BufWriter, Write};
