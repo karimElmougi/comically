@@ -1,16 +1,13 @@
 use anyhow::{Context, Result};
 use log::info;
-use std::fs;
-use std::path::Path;
 use std::process::Command;
 
+use crate::Comic;
+
 /// Converts an EPUB file to MOBI using Amazon's KindleGen
-pub fn create_mobi(epub_path: &Path, output_path: &Path) -> Result<()> {
-    info!(
-        "Converting EPUB to MOBI: {} -> {}",
-        epub_path.display(),
-        output_path.display()
-    );
+pub fn create_mobi(comic: &Comic) -> Result<()> {
+    let epub_path = comic.epub_file();
+    let output_path = comic.output_mobi();
 
     // Check if kindlegen is available
     if !is_kindlegen_available() {
@@ -32,18 +29,6 @@ pub fn create_mobi(epub_path: &Path, output_path: &Path) -> Result<()> {
     if !output.status.success() && !output_str.contains("Warnings") {
         let code = output.status.code();
         anyhow::bail!("KindleGen failed with code {:?}: {}", code, output_str);
-    }
-
-    // KindleGen creates the mobi file in the same directory as the epub
-    let mobi_path = epub_path.with_extension("mobi");
-
-    // Rename to the desired output path if needed
-    if mobi_path != output_path {
-        fs::rename(&mobi_path, output_path).context(format!(
-            "Failed to move MOBI file from {} to {}",
-            mobi_path.display(),
-            output_path.display()
-        ))?;
     }
 
     info!("MOBI creation successful: {}", output_path.display());

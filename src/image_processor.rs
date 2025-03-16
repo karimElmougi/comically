@@ -8,34 +8,27 @@ use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use crate::Comic;
+
 // Default Kindle dimensions (Paperwhite Signature Edition)
 const TARGET_WIDTH: u32 = 1236;
 const TARGET_HEIGHT: u32 = 1648;
 
 /// Process all images in the source directory
-pub fn process_images(src_dir: PathBuf) -> Result<PathBuf> {
-    info!("Processing images in {}", src_dir.display());
+pub fn process_images(comic: &Comic) -> Result<()> {
+    info!("Processing images in {}", comic.directory.display());
 
     // Create a processed directory
-    let parent = src_dir.parent().unwrap_or(&src_dir);
-    let processed_dir = parent.join("Processed");
+    let images_dir = comic.images_dir();
+    let processed_dir = comic.processed_dir();
     create_dir_all(&processed_dir).context("Failed to create processed directory")?;
 
     // Process each image file
-    let image_files: Vec<_> = WalkDir::new(&src_dir)
+    let image_files: Vec<_> = WalkDir::new(&images_dir)
         .sort_by_file_name()
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|entry| {
-            let is_file = entry.file_type().is_file();
-            if is_file {
-                let path = entry.path();
-                let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                ["jpg", "jpeg", "png", "gif"].contains(&extension.to_lowercase().as_str())
-            } else {
-                false
-            }
-        })
+        .filter(|e| e.path().is_file())
         .map(|entry| entry.path().to_path_buf())
         .collect();
 
@@ -62,7 +55,7 @@ pub fn process_images(src_dir: PathBuf) -> Result<PathBuf> {
         anyhow::bail!("No images were processed");
     }
 
-    Ok(processed_dir)
+    Ok(())
 }
 
 /// Process a single image file with Kindle-optimized transformations

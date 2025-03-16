@@ -5,16 +5,18 @@ use std::io;
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
+use crate::Comic;
+
 /// Extracts a CBZ file to the target directory
-pub fn extract_cbz(cbz_path: &Path, target_dir: &Path) -> Result<PathBuf> {
-    info!("Extracting CBZ: {}", cbz_path.display());
+pub fn extract_cbz(comic: &Comic) -> Result<()> {
+    info!("Extracting CBZ: {}", comic.input.display());
 
     // Create the images directory
-    let images_dir = target_dir.join("Images");
+    let images_dir = comic.images_dir();
     create_dir_all(&images_dir).context("Failed to create images directory")?;
 
     // Open the zip file
-    let file = File::open(cbz_path).context("Failed to open CBZ file")?;
+    let file = File::open(&comic.input).context("Failed to open CBZ file")?;
     let mut archive = ZipArchive::new(file).context("Failed to parse CBZ file as ZIP archive")?;
 
     // Extract all image files
@@ -66,7 +68,7 @@ pub fn extract_cbz(cbz_path: &Path, target_dir: &Path) -> Result<PathBuf> {
         anyhow::bail!("No images found in the CBZ file");
     }
 
-    Ok(images_dir)
+    Ok(())
 }
 
 /// Helper function to check if a file has an image extension
@@ -83,32 +85,34 @@ fn has_image_extension(path: &Path, valid_extensions: &[&str]) -> bool {
 }
 
 /// Checks for metadata in the comic archive (ComicInfo.xml)
-pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
-    let file = File::open(cbz_path)?;
-    let mut archive = ZipArchive::new(file)?;
+// pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
+//     let file = File::open(cbz_path)?;
+//     let mut archive = ZipArchive::new(file)?;
 
-    // Look for ComicInfo.xml
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => path.to_owned(),
-            None => continue,
-        };
+//     // archive.by_name("ComicInfo.xml").or_else(|| archive.by_name("comicinfo.xml"))?;
 
-        if outpath
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_lowercase()
-            == "comicinfo.xml"
-        {
-            // Found the metadata file
-            let metadata_path = cbz_path.with_extension("xml");
-            let mut outfile = File::create(&metadata_path)?;
-            io::copy(&mut file, &mut outfile)?;
-            return Ok(Some(metadata_path));
-        }
-    }
+//     // Look for ComicInfo.xml
+//     for i in 0..archive.len() {
+//         let mut file = archive.by_index(i)?;
+//         let outpath = match file.enclosed_name() {
+//             Some(path) => path.to_owned(),
+//             None => continue,
+//         };
 
-    Ok(None)
-}
+//         if outpath
+//             .file_name()
+//             .unwrap()
+//             .to_string_lossy()
+//             .to_lowercase()
+//             == "comicinfo.xml"
+//         {
+//             // Found the metadata file
+//             let metadata_path = cbz_path.with_extension("xml");
+//             let mut outfile = File::create(&metadata_path)?;
+//             io::copy(&mut file, &mut outfile)?;
+//             return Ok(Some(metadata_path));
+//         }
+//     }
+
+//     Ok(None)
+// }

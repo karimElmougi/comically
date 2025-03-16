@@ -7,13 +7,14 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
-/// Builds an EPUB file from the processed images
-pub fn build_epub(images_dir: PathBuf) -> Result<PathBuf> {
-    info!("Building EPUB from {}", images_dir.display());
+use crate::Comic;
 
+/// Builds an EPUB file from the processed images
+pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create EPUB working directory
-    let parent = images_dir.parent().unwrap_or(&images_dir);
-    let epub_dir = parent.join("EPUB");
+    let epub_dir = comic.epub_dir();
+    let images_dir = comic.images_dir();
+
     create_dir_all(&epub_dir)?;
 
     // Create EPUB structure
@@ -67,12 +68,10 @@ pub fn build_epub(images_dir: PathBuf) -> Result<PathBuf> {
     create_content_opf(&oebps_dir, &cover_path, &html_files, &image_paths)?;
 
     // Package as EPUB
-    let epub_path = parent.join("book.epub");
+    let epub_path = comic.epub_file();
     create_epub_file(&epub_dir, &epub_path)?;
 
-    info!("EPUB created at {}", epub_path.display());
-
-    Ok(epub_path)
+    Ok(())
 }
 
 /// Creates the mimetype file (must be first in the EPUB and not compressed)
