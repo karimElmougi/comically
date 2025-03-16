@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use color_quant::NeuQuant;
 use image::imageops::colorops::contrast_in_place;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, Pixel, RgbImage};
@@ -77,14 +76,13 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
     // Apply auto contrast (simple version)
     auto_contrast(&mut img);
 
-    let processed = resize_image(DynamicImage::ImageRgb8(img))?;
+    let img = resize_image(DynamicImage::ImageRgb8(img))?;
 
-    let quantized = quantize(processed);
+    let img = quantize(img);
 
-    // Save with high quality settings
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 95);
-    encoder.encode_image(&quantized).context(format!(
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 70);
+    encoder.encode_image(&img).context(format!(
         "Failed to save processed image: {}",
         output_path.display()
     ))?;
@@ -93,7 +91,7 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
 }
 
 fn auto_contrast(img: &mut RgbImage) {
-    let gamma = 1.8;
+    let gamma = 1.5;
 
     for pixel in img.pixels_mut() {
         for c in pixel.channels_mut() {
@@ -103,7 +101,7 @@ fn auto_contrast(img: &mut RgbImage) {
         }
     }
 
-    contrast_in_place(img, 0.1);
+    contrast_in_place(img, 0.4);
 }
 
 fn resize_image(img: DynamicImage) -> Result<DynamicImage> {
@@ -141,53 +139,67 @@ fn resize_image(img: DynamicImage) -> Result<DynamicImage> {
     Ok(processed)
 }
 
-// Define the Kindle palette as a constant
+// Define the Kindle palette as a constant (without alpha channel)
 #[rustfmt::skip]
-const KINDLE_PALETTE: [u8; 64] = [
-    0x00, 0x00, 0x00, 0xff,  // Black with full opacity
-    0x11, 0x11, 0x11, 0xff,
-    0x22, 0x22, 0x22, 0xff,
-    0x33, 0x33, 0x33, 0xff,
-    0x44, 0x44, 0x44, 0xff,
-    0x55, 0x55, 0x55, 0xff,
-    0x66, 0x66, 0x66, 0xff,
-    0x77, 0x77, 0x77, 0xff,
-    0x88, 0x88, 0x88, 0xff,
-    0x99, 0x99, 0x99, 0xff,
-    0xaa, 0xaa, 0xaa, 0xff,
-    0xbb, 0xbb, 0xbb, 0xff,
-    0xcc, 0xcc, 0xcc, 0xff,
-    0xdd, 0xdd, 0xdd, 0xff,
-    0xee, 0xee, 0xee, 0xff,
-    0xff, 0xff, 0xff, 0xff,  // White with full opacity
+const KINDLE_PALETTE: [u8; 16] = [
+    0x00, // Black
+    0x11, 
+    0x22, 
+    0x33, 
+    0x44, 
+    0x55, 
+    0x66, 
+    0x77, 
+    0x88, 
+    0x99, 
+    0xaa, 
+    0xbb, 
+    0xcc, 
+    0xdd, 
+    0xee, 
+    0xff, // White
 ];
 
 /// Quantize image using the Kindle palette
 fn quantize(img: DynamicImage) -> DynamicImage {
-    // Force convert to grayscale to ensure proper contrast
-    let grayscale = img.grayscale();
-    let rgb = grayscale.to_rgba8();
-    let (width, height) = rgb.dimensions();
+    let img = img.grayscale();
+    let img = img.as_luma8().unwrap();
+    let (width, height) = img.dimensions();
 
-    // Apply NeuQuant quantization
-    // TODO: USE LAZYLOCK
-    let nq = NeuQuant::new(1, 16, &KINDLE_PALETTE);
-
-    // Create a new image with the quantized colors
-    let mut result = image::RgbaImage::new(width, height);
+    let mut result = image::GrayImage::new(width, height);
 
     // Apply quantization to each pixel
     for y in 0..height {
         for x in 0..width {
-            let pixel = rgb.get_pixel(x, y);
+            let pixel = img.get_pixel(x, y);
+            let gray_value = pixel[0];
 
-            let mut color = [pixel[0], pixel[1], pixel[2], pixel[3]];
-            nq.map_pixel(&mut color);
+            let closest_color = find_closest_color(gray_value, &KINDLE_PALETTE);
 
             // Set the pixel in the result image
-            result.put_pixel(x, y, image::Rgba(color));
+            result.put_pixel(x, y, image::Luma([closest_color]));
         }
     }
 
     DynamicImage::from(result)
+}
+
+fn find_closest_color(value: u8, palette: &[u8]) -> u8 {
+    let mut closest = palette[0];
+    let mut min_diff = 255;
+
+    for &color in palette {
+        let diff = if value > color {
+            value - color
+        } else {
+            color - value
+        };
+
+        if diff < min_diff {
+            min_diff = diff;
+            closest = color;
+        }
+    }
+
+    closest
 }
