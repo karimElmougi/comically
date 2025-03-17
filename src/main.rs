@@ -25,6 +25,15 @@ struct Cli {
     /// the quality of the images, between 0 and 100
     #[arg(long, short, default_value_t = 50)]
     quality: u8,
+
+    /// the prefix to add to the title of the comic + the output file
+    #[arg(long, short)]
+    prefix: Option<String>,
+
+    /// the number of threads to use for processing
+    /// defaults to the number of logical CPUs
+    #[arg(short)]
+    threads: Option<usize>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -45,6 +54,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     let cli = Cli::parse();
+
+    if let Some(threads) = cli.threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .unwrap();
+    }
 
     // Collect all files to process
     let files_to_process: Vec<PathBuf> = cli
@@ -76,7 +92,11 @@ fn main() -> anyhow::Result<()> {
     let (pending_conversions, phase1_duration) = timer_result(|| {
         files_to_process
             .into_par_iter()
-            .map(|file| timer_result(|| process_to_epub(file, cli.manga_mode, cli.quality)))
+            .map(|file| {
+                timer_result(|| {
+                    process_to_epub(file, cli.manga_mode, cli.quality, cli.prefix.as_deref())
+                })
+            })
             .collect::<Vec<_>>()
     });
 
@@ -149,19 +169,37 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn process_to_epub(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Result<Comic> {
+fn process_to_epub(
+    file: PathBuf,
+    manga_mode: bool,
+    quality: u8,
+    title_prefix: Option<&str>,
+) -> anyhow::Result<Comic> {
     log::debug!("Processing {} to EPUB", file.display());
     let quality = quality.clamp(0, 100);
-    let title = file.file_stem().unwrap().to_string_lossy().to_string();
+
+    let title_prefix = title_prefix
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let title = {
+        let file_stem = file.file_stem().unwrap().to_string_lossy();
+        match &title_prefix {
+            Some(prefix) => format!("{} {}", prefix, file_stem),
+            _ => file_stem.to_string(),
+        }
+    };
 
     let temp_dir = tempfile::tempdir()?;
 
     let mut comic = Comic {
-        title,
-        input: file,
         directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
+
+        title,
+        prefix: title_prefix,
+        input: file,
         device_dimensions: (1236, 1648),
         right_to_left: manga_mode,
         compression_quality: quality,
@@ -177,12 +215,13 @@ fn process_to_epub(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Resu
 }
 
 pub struct Comic {
-    title: String,
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
 
     // config
+    prefix: Option<String>,
+    title: String,
     input: PathBuf,
     device_dimensions: (u32, u32),
     right_to_left: bool,
@@ -223,6 +262,13 @@ impl Comic {
 
     pub fn output_mobi(&self) -> PathBuf {
         let mut path = self.input.clone();
+        if let Some(prefix) = &self.prefix {
+            path.set_file_name(format!(
+                "{}_{}",
+                prefix,
+                path.file_stem().unwrap().to_string_lossy()
+            ));
+        }
         path.set_extension("mobi");
         path
     }
