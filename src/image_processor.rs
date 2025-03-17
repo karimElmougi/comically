@@ -98,40 +98,57 @@ fn auto_contrast(img: &mut GrayImage) {
 fn auto_crop_sides(img: &GrayImage) -> Option<DynamicImage> {
     const WHITE_THRESHOLD: u8 = 230; // Pixel values above this are considered "white"
     const MIN_MARGIN_WIDTH: u32 = 10; // Minimum width to consider cropping
+    const SAMPLE_ROWS: usize = 5; // Number of rows to sample
+    const SAFETY_MARGIN: u32 = 2; // Extra margin to keep, avoiding cutting content
 
     let (width, height) = img.dimensions();
 
-    // Find middle y coordinate
-    let mid_y = height / 2;
+    // Sample multiple rows instead of just the middle
+    let mut sample_ys = Vec::with_capacity(SAMPLE_ROWS);
+    for i in 0..SAMPLE_ROWS {
+        sample_ys.push((height * (i + 1) as u32) / (SAMPLE_ROWS as u32 + 1));
+    }
 
-    // Scan from left edge to find first non-white pixel
-    let mut left_margin = 0;
-    for x in 0..width {
-        if img.get_pixel(x, mid_y)[0] < WHITE_THRESHOLD {
-            left_margin = x;
-            break;
+    // Find the most conservative margins (closest to content)
+    let mut left_margin = width;
+    let mut right_margin = 0;
+
+    for &y in &sample_ys {
+        // Find leftmost non-white pixel for this row
+        for x in 0..width {
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD {
+                left_margin = left_margin.min(x);
+                break;
+            }
+        }
+
+        // Find rightmost non-white pixel for this row
+        for x in (0..width).rev() {
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD {
+                right_margin = right_margin.max(x);
+                break;
+            }
         }
     }
 
-    // Scan from right edge to find first non-white pixel
-    let mut right_margin = width;
-    for x in (0..width).rev() {
-        if img.get_pixel(x, mid_y)[0] < WHITE_THRESHOLD {
-            right_margin = x + 1;
-            break;
-        }
-    }
+    // Apply safety margin
+    left_margin = left_margin.saturating_sub(SAFETY_MARGIN);
+    right_margin = (right_margin + SAFETY_MARGIN).min(width - 1);
 
-    // Verify these columns are empty (all white) throughout their height
-    let left_margin = verify_vertical_margin(img, left_margin, WHITE_THRESHOLD).unwrap_or(0);
-    let right_margin = verify_vertical_margin(img, right_margin.saturating_sub(1), WHITE_THRESHOLD)
-        .map(|x| x + 1)
-        .unwrap_or(width);
+    // Verify these margins by checking for any content outside them
+    left_margin = find_safe_left_margin(img, left_margin, WHITE_THRESHOLD);
+    right_margin = find_safe_right_margin(img, right_margin, WHITE_THRESHOLD, width);
 
-    // Only crop if we found valid margins with sufficient width
-    if left_margin > MIN_MARGIN_WIDTH || width - right_margin > MIN_MARGIN_WIDTH {
-        let crop_width = right_margin - left_margin;
+    // Only crop if margins are wide enough
+    if left_margin > MIN_MARGIN_WIDTH || width - right_margin - 1 > MIN_MARGIN_WIDTH {
+        let crop_width = right_margin - left_margin + 1;
         if crop_width > 0 && crop_width < width {
+            log::debug!(
+                "Cropping margins: left={}, right={}, width={}",
+                left_margin,
+                width - right_margin - 1,
+                crop_width
+            );
             return Some(DynamicImage::from(
                 image::imageops::crop_imm(img, left_margin, 0, crop_width, height).to_image(),
             ));
@@ -141,50 +158,54 @@ fn auto_crop_sides(img: &GrayImage) -> Option<DynamicImage> {
     None
 }
 
-/// Verify if a column can be considered a valid margin by checking if it's all white
-/// Returns the adjusted margin position
-fn verify_vertical_margin(img: &GrayImage, initial_x: u32, white_threshold: u8) -> Option<u32> {
+/// Find the safe left margin by checking for content in vertical strips
+fn find_safe_left_margin(img: &GrayImage, initial_margin: u32, white_threshold: u8) -> u32 {
     let (width, height) = img.dimensions();
-    if initial_x >= width {
-        return None;
+    if initial_margin >= width {
+        return 0;
     }
 
-    // For left margin: find rightmost column that's all white
-    // For right margin: find leftmost column that's all white
-    let is_left_side = initial_x < width / 2;
+    // Check each column from the initial margin back to the left edge
+    for x in (0..initial_margin).rev() {
+        // Check if this vertical strip is all white
+        let strip_is_white = (0..height).all(|y| img.get_pixel(x, y)[0] >= white_threshold);
 
-    let mut margin_x = if is_left_side { 0 } else { width - 1 };
-
-    let range = if is_left_side {
-        0..initial_x.saturating_add(1)
-    } else {
-        initial_x..width
-    };
-
-    for x in range {
-        let mut is_white_column = true;
-
-        // Check the entire column
-        for y in 0..height {
-            if img.get_pixel(x, y)[0] < white_threshold {
-                is_white_column = false;
-                break;
-            }
-        }
-
-        if is_white_column {
-            margin_x = x;
-            // For left margin, continue to find rightmost white column
-            if !is_left_side {
-                break;
-            }
-        } else if is_left_side {
-            // Found non-white column on left side, stop
-            break;
+        // If we found a non-white strip, the safe margin is the next column
+        if !strip_is_white {
+            return x + 1;
         }
     }
 
-    Some(margin_x)
+    // If all columns to the left are white, return 0
+    0
+}
+
+/// Find the safe right margin by checking for content in vertical strips
+fn find_safe_right_margin(
+    img: &GrayImage,
+    initial_margin: u32,
+    white_threshold: u8,
+    width: u32,
+) -> u32 {
+    if initial_margin >= width {
+        return width - 1;
+    }
+
+    let height = img.height();
+
+    // Check each column from the initial margin to the right edge
+    for x in initial_margin + 1..width {
+        // Check if this vertical strip is all white
+        let strip_is_white = (0..height).all(|y| img.get_pixel(x, y)[0] >= white_threshold);
+
+        // If we found a non-white strip, the safe margin is the previous column
+        if !strip_is_white {
+            return x - 1;
+        }
+    }
+
+    // If all columns to the right are white, return the rightmost column
+    width - 1
 }
 
 fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<DynamicImage> {
