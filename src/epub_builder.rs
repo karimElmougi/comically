@@ -65,7 +65,7 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     create_toc_ncx(&comic, &oebps_dir, &cover_path, &html_files)?;
 
     // Create content.opf
-    create_content_opf(&oebps_dir, &cover_path, &html_files, &image_paths)?;
+    create_content_opf(&comic, &oebps_dir, &cover_path, &html_files, &image_paths)?;
 
     // Package as EPUB
     let epub_path = comic.epub_file();
@@ -239,6 +239,7 @@ fn create_toc_ncx(
 
 /// Creates the content.opf file (package document)
 fn create_content_opf(
+    c: &Comic,
     oebps_dir: &Path,
     cover_path: &Path,
     html_files: &[PathBuf],
@@ -323,29 +324,24 @@ fn create_content_opf(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookID">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:title>Comic Book</dc:title>
+    <dc:title>{title}</dc:title>
     <dc:language>en</dc:language>
-    <dc:identifier id="BookID">urn:uuid:{}</dc:identifier>
+    <dc:identifier id="BookID">urn:uuid:{uuid}</dc:identifier>
     <dc:creator>Comically</dc:creator>
     <dc:publisher>Comically</dc:publisher>
     <dc:date>{}</dc:date>
     <meta property="dcterms:modified">{}</meta>
     <meta name="cover" content="cover-image"/>
   </metadata>
-  <manifest>
-{}  </manifest>
-  <spine toc="ncx">
-{}  </spine>
+  <manifest>{manifest}</manifest>
+  <spine toc="ncx">{spine}</spine>
   <guide>
-    <reference type="cover" title="Cover" href="{}"/>
+    <reference type="cover" title="Cover" href="{cover_filename}"/>
   </guide>
 </package>"#,
-        uuid,
         chrono::Local::now().format("%Y-%m-%d"),
         chrono::Local::now().format("%Y-%m-%dT%H:%M:%SZ"),
-        manifest,
-        spine,
-        cover_filename
+        title = &c.title,
     );
 
     let mut file = File::create(&opf_path)?;
@@ -364,7 +360,7 @@ fn create_epub_file(epub_dir: &Path, output_path: &Path) -> Result<()> {
     let options_stored = FileOptions::default().compression_method(CompressionMethod::Stored);
 
     // Options with compression
-    let options_deflated = FileOptions::default().compression_method(CompressionMethod::Stored);
+    let options_deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add mimetype first (must not be compressed)
     let mimetype_path = epub_dir.join("mimetype");
