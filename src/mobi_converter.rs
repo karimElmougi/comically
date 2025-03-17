@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use log::info;
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 
 use crate::Comic;

@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    println!("Converting {}", cli.input.display());
+    log::info!("Converting {}", cli.input.display());
 
     let temp_dir = tempfile::tempdir()?;
 
