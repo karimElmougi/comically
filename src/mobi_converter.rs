@@ -18,6 +18,7 @@ pub fn create_mobi(comic: &Comic) -> Result<()> {
     // Run kindlegen
     let output = Command::new("kindlegen")
         .arg("-dont_append_source")
+        .arg("-c1")
         .arg("-locale")
         .arg("en")
         .arg(&epub_path)

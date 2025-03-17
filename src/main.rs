@@ -39,16 +39,24 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("Converting {}", cli.input.display());
 
-    let temp_dir = tempfile::tempdir()?;
+    time_it("Convert to MOBI", || convert_to_mobi(cli.input))?;
 
-    let title = cli.input.file_stem().unwrap().to_string_lossy().to_string();
+    Ok(())
+}
+
+fn convert_to_mobi(file: PathBuf) -> anyhow::Result<()> {
+    let title = file.file_stem().unwrap().to_string_lossy().to_string();
+
+    let temp_dir = tempfile::tempdir()?;
 
     let mut comic = Comic {
         title,
-        input: cli.input,
+        input: file,
         directory: temp_dir.path().to_path_buf(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
+        // kindle paperwhite signature edition
+        device_dimensions: (1236, 1648),
     };
 
     time_it("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
@@ -73,9 +81,10 @@ pub struct Comic {
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
+    device_dimensions: (u32, u32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProcessedImage {
     path: PathBuf,
     dimensions: (u32, u32),

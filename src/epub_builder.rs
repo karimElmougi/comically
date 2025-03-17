@@ -22,20 +22,14 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     let meta_inf_dir = epub_dir.join("META-INF");
     create_dir_all(&meta_inf_dir)?;
 
-    // Create mimetype file
     create_mimetype_file(&epub_dir)?;
-
-    // Create container.xml
     create_container_xml(&meta_inf_dir)?;
 
-    // Create a cover page
     let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
 
     // Copy processed images to OEBPS/Images
     let images_dir = oebps_dir.join("Images");
     create_dir_all(&images_dir)?;
-
-    // Create a mapping of original paths to new relative paths
     let mut image_map: Vec<(ProcessedImage, String)> = Vec::new();
     for (i, image) in comic.processed_files.iter().enumerate() {
         let filename = format!("image{:03}.jpg", i + 1);
@@ -306,27 +300,32 @@ fn create_content_opf(
 
     // Create the OPF content
     let opf_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookID">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>{title}</dc:title>
-    <dc:language>en</dc:language>
-    <dc:identifier id="BookID">urn:uuid:{uuid}</dc:identifier>
-    <dc:creator>Comically</dc:creator>
-    <dc:publisher>Comically</dc:publisher>
-    <dc:date>{}</dc:date>
-    <meta property="dcterms:modified">{}</meta>
-    <meta name="cover" content="cover-image"/>
-  </metadata>
-  <manifest>{manifest}</manifest>
-  <spine toc="ncx">{spine}</spine>
-  <guide>
-    <reference type="cover" title="Cover" href="{cover_filename}"/>
-  </guide>
-</package>"#,
-        chrono::Local::now().format("%Y-%m-%d"),
-        chrono::Local::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        r###"<?xml version="1.0" encoding="UTF-8"?>
+        <package version="3.0" unique-identifier="BookID" xmlns="http://www.idpf.org/2007/opf">
+          <metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <dc:title>{title}</dc:title>
+            <dc:language>en-US</dc:language>
+            <dc:identifier id="BookID">urn:uuid:{uuid}</dc:identifier>
+            <meta name="cover" content="cover-image"/>
+            <meta name="fixed-layout" content="true"/>
+            <meta name="original-resolution" content="{width}x{height}"/>
+            <meta name="book-type" content="comic"/>
+            <meta name="primary-writing-mode" content="horizontal-lr"/>
+            <meta name="zero-gutter" content="true"/>
+            <meta name="zero-margin" content="true"/>
+            <meta name="ke-border-color" content="#FFFFFF"/>
+            <meta name="ke-border-width" content="0"/>
+            <meta name="orientation-lock" content="none"/>
+            <meta name="region-mag" content="true"/>
+            <meta property="rendition:spread">landscape</meta>
+            <meta property="rendition:layout">pre-paginated</meta>
+          </metadata>
+          <manifest>{manifest}</manifest>
+          <spine toc="ncx">{spine}</spine>
+        </package>"###,
         title = &c.title,
+        width = c.device_dimensions.0,
+        height = c.device_dimensions.1,
     );
 
     let mut file = File::create(&opf_path)?;
