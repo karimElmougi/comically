@@ -31,7 +31,9 @@ pub fn create_mobi(comic: &Comic) -> Result<()> {
     // Check output
     let output_str = String::from_utf8_lossy(&output.stdout);
 
-    if !output.status.success() && !output_str.contains("Warnings") {
+    let has_error_output = output_str.lines().any(|line| line.starts_with("Error("));
+
+    if !output.status.success() || has_error_output {
         let code = output.status.code();
         anyhow::bail!("KindleGen failed with code {:?}: {}", code, output_str);
     }
