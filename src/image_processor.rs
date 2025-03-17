@@ -81,8 +81,6 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
 
     let img = resize_image(DynamicImage::from(img))?;
 
-    // let img = quantize(img);
-
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 75);
     encoder.encode_image(&img).context(format!(

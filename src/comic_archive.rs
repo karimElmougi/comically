@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use log::info;
 use std::fs::{create_dir_all, File};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use zip::ZipArchive;
 
 use crate::Comic;
