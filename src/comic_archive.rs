@@ -44,9 +44,7 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
             continue;
         }
 
-        // Create sanitized filename (page001.jpg, page002.jpg, etc.)
         let target_path = images_dir.join(&*file_name);
-
         comic.input_page_names.push(file_name.to_string());
 
         // Extract the file
@@ -58,11 +56,7 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
         extracted_count += 1;
     }
 
-    info!(
-        "Extracted {} images to {}",
-        extracted_count,
-        images_dir.display()
-    );
+    info!("Extracted {} images", extracted_count,);
 
     if extracted_count == 0 {
         anyhow::bail!("No images found in the CBZ file");

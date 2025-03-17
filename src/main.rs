@@ -123,6 +123,6 @@ where
     let start = std::time::Instant::now();
     let result = func();
     let duration = start.elapsed();
-    log::info!("{}: {}ms", label, duration.as_millis());
+    log::debug!("{}: {}ms", label, duration.as_millis());
     result
 }
