@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::info;
+use image::{self, GenericImageView};
 use std::fs::{self, create_dir_all, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use crate::Comic;
 pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create EPUB working directory
     let epub_dir = comic.epub_dir();
-    let images_dir = comic.images_dir();
+    let images_dir = comic.processed_dir();
 
     create_dir_all(&epub_dir)?;
 
@@ -144,23 +144,27 @@ fn create_html_files(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<Vec<Pa
         let image_filename = image_path.file_name().unwrap().to_string_lossy();
         let image_rel_path = format!("Images/{}", image_filename);
 
+        // Get image dimensions
+        let img = image::open(image_path)?;
+        let (width, height) = img.dimensions();
+
         let html_content = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head>
-  <title>Page {}</title>
-  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Page {page_num}</title>
+  <meta name="viewport" content="width={width}, height={height}, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <link href="style.css" type="text/css" rel="stylesheet"/>
 </head>
 <body>
   <div class="image">
-    <img src="{}" alt="Page {}"/>
+    <img src="{image_src}" width="{width}" height="{height}" alt="Page {page_num}"/>
   </div>
 </body>
 </html>"#,
-            i + 1,
-            image_rel_path,
-            i + 1
+            page_num = i + 1,
+            image_src = image_rel_path
         );
 
         let mut file = File::create(&html_path)?;
