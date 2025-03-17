@@ -5,7 +5,7 @@ use image::{DynamicImage, GenericImageView, Pixel, RgbImage};
 use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::Comic;
@@ -40,7 +40,18 @@ pub fn process_images(comic: &Comic) -> Result<()> {
             let filename = format!("page{:03}.jpg", idx + 1);
             let output_path = processed_dir.join(filename);
             match process_image(&path, &output_path) {
-                Ok(_) => 1,
+                Ok(_) => {
+                    if idx == 6 {
+                        // copy input file to working directory
+                        let copy_path = format!("TEST_INPUT_{}.jpg", idx + 1);
+                        std::fs::copy(&path, &copy_path).expect("Failed to copy image");
+
+                        // copy output file to working directory
+                        let copy_path = format!("TEST_OUTPUT_{}.jpg", idx + 1);
+                        std::fs::copy(&output_path, &copy_path).expect("Failed to copy image");
+                    }
+                    1
+                }
                 Err(e) => {
                     warn!("Failed to process {}: {}", path.display(), e);
                     0
@@ -63,6 +74,8 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
     // Load the image
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
+
+    let img = crop_margins(img, 1.0, 0.5);
 
     let mut img = img.to_rgb8();
 
@@ -195,4 +208,74 @@ fn find_closest_color(value: u8, palette: &[u8]) -> u8 {
     }
 
     closest
+}
+
+/// Crop margins from an image based on background color detection
+fn crop_margins(img: DynamicImage, power: f32, minimum_area_ratio: f32) -> DynamicImage {
+    // Convert to grayscale for processing
+    let mut grayscale = img.grayscale();
+    contrast_in_place(&mut grayscale, 50.0);
+
+    // Get dimensions
+    let (width, height) = grayscale.dimensions();
+    let original_area = width * height;
+
+    // Calculate threshold based on power (0-3 range)
+    let threshold = threshold_from_power(power);
+
+    // Find bounding box
+    if let Some(bbox) = get_bbox(&grayscale, threshold) {
+        let (x1, y1, x2, y2) = bbox;
+        let crop_area = (x2 - x1) * (y2 - y1);
+
+        // Only crop if the resulting area is at least the minimum percentage of original
+        if (crop_area as f32 / original_area as f32) >= minimum_area_ratio {
+            log::info!("Cropping image by {}%", crop_area / original_area);
+            return img.crop_imm(x1, y1, x2 - x1, y2 - y1);
+        }
+    }
+
+    // Return original if no suitable crop found
+    img
+}
+
+/// Calculate threshold value from power parameter
+fn threshold_from_power(power: f32) -> u8 {
+    // Convert power (0-3) to threshold (0-255)
+    // Higher power means more aggressive cropping (lower threshold)
+    let normalized_power = power.max(0.0).min(3.0) / 3.0;
+    (255.0 * (1.0 - normalized_power.powf(1.5))).round() as u8
+}
+
+/// Find the bounding box of non-background content
+fn get_bbox(img: &DynamicImage, threshold: u8) -> Option<(u32, u32, u32, u32)> {
+    let gray_img = img.as_luma8().expect("luma 8");
+    let (width, height) = gray_img.dimensions();
+
+    // Initialize bounds to image edges
+    let mut left = width;
+    let mut top = height;
+    let mut right = 0;
+    let mut bottom = 0;
+
+    // Scan the image to find content bounds
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = gray_img.get_pixel(x, y);
+            // If pixel is darker than threshold (content)
+            if pixel[0] <= threshold {
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+    }
+
+    // If we found any content
+    if left < right && top < bottom {
+        Some((left, top, right, bottom))
+    } else {
+        None
+    }
 }
