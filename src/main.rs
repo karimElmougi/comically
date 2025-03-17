@@ -92,7 +92,9 @@ fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    // PHASE 1: Process all files up to EPUB creation in parallel
+    log::info!("Processing {} files", files_to_process.len());
+
+    // PHASE 1: Process all files up to EPUB creation
     let (pending_conversions, phase1_duration) = timer_result(|| {
         files_to_process
             .into_par_iter()
@@ -115,7 +117,6 @@ fn main() -> anyhow::Result<()> {
         display_duration(phase1_duration)
     );
 
-    // Filter out any failed conversions from phase 1
     let successful_comics: Vec<_> = pending_conversions
         .into_iter()
         .filter_map(|(result, duration)| match result {
@@ -127,7 +128,7 @@ fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    // PHASE 2: Convert all EPUBs to MOBI in parallel
+    // PHASE 2: Convert all EPUBs to MOBI
     let (mut results, phase2_duration) = timer_result(|| {
         successful_comics
             .into_par_iter()
@@ -136,10 +137,7 @@ fn main() -> anyhow::Result<()> {
                     timer_result(|| mobi_converter::create_mobi(&comic));
                 match mobi_result {
                     Ok(_) => (Ok(comic), phase1_duration + mobi_duration),
-                    Err(e) => (
-                        Err(anyhow::anyhow!("MOBI conversion failed: {}", e)),
-                        phase1_duration + mobi_duration,
-                    ),
+                    Err(e) => (Err(e), phase1_duration + mobi_duration),
                 }
             })
             .collect::<Vec<_>>()
