@@ -26,7 +26,12 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
         .filter_map(|(idx, file_name)| {
             let input_path = images_dir.join(file_name);
             let output_path = processed_dir.join(format!("page{:03}.jpg", idx + 1));
-            match process_image(&input_path, &output_path, comic.device_dimensions) {
+            match process_image(
+                &input_path,
+                &output_path,
+                comic.device_dimensions,
+                comic.compression_quality,
+            ) {
                 Ok(img) => Some((output_path, img.dimensions())),
                 Err(e) => {
                     warn!("Failed to process {}: {}", input_path.display(), e);
@@ -57,6 +62,7 @@ fn process_image(
     input_path: &Path,
     output_path: &Path,
     device_dimensions: (u32, u32),
+    compression_quality: u8,
 ) -> Result<DynamicImage> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
@@ -68,7 +74,8 @@ fn process_image(
     let img = resize_image(DynamicImage::from(img), device_dimensions)?;
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 75);
+    let mut encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, compression_quality);
     encoder.encode_image(&img).context(format!(
         "Failed to save processed image: {}",
         output_path.display()
