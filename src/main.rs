@@ -72,7 +72,13 @@ pub struct Comic {
     input: PathBuf,
     directory: PathBuf,
     input_page_names: Vec<String>,
-    processed_files: Vec<PathBuf>,
+    processed_files: Vec<ProcessedImage>,
+}
+
+#[derive(Debug)]
+pub struct ProcessedImage {
+    path: PathBuf,
+    dimensions: (u32, u32),
 }
 
 impl Comic {

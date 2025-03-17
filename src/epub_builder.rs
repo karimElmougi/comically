@@ -1,5 +1,4 @@
 use anyhow::Result;
-use image::{self, GenericImageView};
 use std::fs::{self, create_dir_all, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -7,7 +6,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
-use crate::Comic;
+use crate::{Comic, ProcessedImage};
 
 /// Builds an EPUB file from the processed images
 pub fn build_epub(comic: &Comic) -> Result<()> {
@@ -79,14 +78,14 @@ fn create_container_xml(meta_inf_dir: &Path) -> Result<()> {
 }
 
 /// Creates a cover page using the first image
-fn create_cover_page(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<PathBuf> {
+fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<PathBuf> {
     // If no images, return early
-    if image_paths.is_empty() {
+    if images.is_empty() {
         return Err(anyhow::anyhow!("No images found to create cover page"));
     }
 
     // Use first image as cover
-    let cover_img_path = &image_paths[0];
+    let cover_img_path = &images[0].path;
 
     // Create cover HTML
     let cover_html = format!(
@@ -114,17 +113,14 @@ fn create_cover_page(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<PathBu
 }
 
 /// Creates HTML files for each image
-fn create_html_files(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn create_html_files(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Vec<PathBuf>> {
     let mut html_files = Vec::new();
 
-    for (i, image_path) in image_paths.iter().enumerate() {
+    for (i, image) in images.iter().enumerate() {
         let filename = format!("page{:03}.html", i + 1);
         let html_path = oebps_dir.join(&filename);
 
-        // Get image dimensions
-        let img = image::open(image_path)?;
-        let (width, height) = img.dimensions();
-
+        let (width, height) = image.dimensions;
         let html_content = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -141,7 +137,7 @@ fn create_html_files(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<Vec<Pa
 </body>
 </html>"#,
             page_num = i + 1,
-            image_src = image_path.display()
+            image_src = image.path.display(),
         );
 
         let mut file = File::create(&html_path)?;
@@ -220,7 +216,7 @@ fn create_content_opf(
     oebps_dir: &Path,
     cover_path: &Path,
     html_files: &[PathBuf],
-    image_paths: &[PathBuf],
+    images: &[ProcessedImage],
 ) -> Result<()> {
     let opf_path = oebps_dir.join("content.opf");
     let uuid = Uuid::new_v4().to_string();
@@ -253,8 +249,9 @@ fn create_content_opf(
     }
 
     // Add images
-    for (i, image_path) in image_paths.iter().enumerate() {
-        let extension = image_path
+    for (i, image) in images.iter().enumerate() {
+        let extension = image
+            .path
             .extension()
             .unwrap()
             .to_string_lossy()
@@ -267,18 +264,14 @@ fn create_content_opf(
         };
 
         // Special handling for the first image (cover)
+        let href = image.path.display();
         if i == 0 {
             manifest.push_str(&format!(
-                r#"    <item id="cover-image" href="{}" media-type="{}" properties="cover-image"/>"#,
-                image_path.display(),
-                media_type
+                r#"    <item id="cover-image" href="{href}" media-type="{media_type}" properties="cover-image"/>"#,
             ));
         } else {
             manifest.push_str(&format!(
-                r#"    <item id="image{}" href="{}" media-type="{}"/>"#,
-                i,
-                image_path.display(),
-                media_type
+                r#"    <item id="image{i}" href="{href}" media-type="{media_type}"/>"#,
             ));
         }
         manifest.push_str("\n");
@@ -301,7 +294,7 @@ fn create_content_opf(
     let opf_content = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookID">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>{title}</dc:title>
     <dc:language>en</dc:language>
     <dc:identifier id="BookID">urn:uuid:{uuid}</dc:identifier>

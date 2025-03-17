@@ -7,7 +7,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::Path;
 
-use crate::Comic;
+use crate::{Comic, ProcessedImage};
 
 // Default Kindle dimensions (Paperwhite Signature Edition)
 const TARGET_WIDTH: u32 = 1236;
@@ -31,7 +31,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
             let input_path = images_dir.join(file_name);
             let output_path = processed_dir.join(format!("page{:03}.jpg", idx + 1));
             match process_image(&input_path, &output_path) {
-                Ok(_) => Some(output_path),
+                Ok(img) => Some((output_path, img.dimensions())),
                 Err(e) => {
                     warn!("Failed to process {}: {}", input_path.display(), e);
                     None
@@ -46,15 +46,18 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
         anyhow::bail!("No images were processed");
     }
 
-    processed.sort();
+    processed.sort_by_key(|(a, _)| a.to_string_lossy().into_owned());
 
-    comic.processed_files = processed;
+    comic.processed_files = processed
+        .into_iter()
+        .map(|(path, dimensions)| ProcessedImage { path, dimensions })
+        .collect::<Vec<_>>();
 
     Ok(())
 }
 
 /// Process a single image file with Kindle-optimized transformations
-fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
+fn process_image(input_path: &Path, output_path: &Path) -> Result<DynamicImage> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
 
@@ -71,7 +74,7 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
         output_path.display()
     ))?;
 
-    Ok(())
+    Ok(img)
 }
 
 fn auto_contrast(img: &mut GrayImage) {
