@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use log::info;
 use std::fs::{create_dir_all, File};
 use std::io;
 use std::path::Path;
@@ -9,7 +8,7 @@ use crate::Comic;
 
 /// Extracts a CBZ file to the target directory
 pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
-    info!("Extracting CBZ: {}", comic.input.display());
+    log::debug!("Extracting CBZ: {}", comic.input.display());
 
     // Create the images directory
     let images_dir = comic.images_dir();
@@ -56,7 +55,7 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
         extracted_count += 1;
     }
 
-    info!("Extracted {} images", extracted_count,);
+    log::debug!("Extracted {} images", extracted_count);
 
     if extracted_count == 0 {
         anyhow::bail!("No images found in the CBZ file");

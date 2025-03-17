@@ -324,6 +324,7 @@ fn create_content_opf(
             <dc:title>{title}</dc:title>
             <dc:language>en-US</dc:language>
             <dc:identifier id="BookID">urn:uuid:{uuid}</dc:identifier>
+            <dc:creator>comically</dc:creator>
             <meta name="cover" content="cover-image"/>
             <meta name="fixed-layout" content="true"/>
             <meta name="original-resolution" content="{width}x{height}"/>
