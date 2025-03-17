@@ -31,9 +31,20 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create a cover page
     let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
 
+    // Copy processed images to OEBPS/Images
+    let images_dir = oebps_dir.join("Images");
+    create_dir_all(&images_dir)?;
+
+    // Create a mapping of original paths to new relative paths
+    let mut image_map: Vec<(ProcessedImage, String)> = Vec::new();
+    for (i, image) in comic.processed_files.iter().enumerate() {
+        let filename = format!("image{:03}.jpg", i + 1);
+        image_map.push((image.clone(), format!("Images/{}", filename)));
+    }
+
     // Generate HTML for each image
     let html_dir = oebps_dir.clone();
-    let html_files = create_html_files(&html_dir, &comic.processed_files)?;
+    let html_files = create_html_files(&html_dir, &image_map)?;
 
     // Create toc.ncx
     create_toc_ncx(&comic, &oebps_dir, &cover_html_path, &html_files)?;
@@ -44,12 +55,12 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
         &oebps_dir,
         &cover_html_path,
         &html_files,
-        &comic.processed_files,
+        &image_map,
     )?;
 
     // Package as EPUB
     let epub_path = comic.epub_file();
-    create_epub_file(&epub_dir, &epub_path)?;
+    create_epub_file(&epub_dir, &epub_path, &image_map)?;
 
     Ok(())
 }
@@ -113,31 +124,34 @@ fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Path
 }
 
 /// Creates HTML files for each image
-fn create_html_files(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Vec<PathBuf>> {
+fn create_html_files(
+    oebps_dir: &Path,
+    images: &[(ProcessedImage, String)],
+) -> Result<Vec<PathBuf>> {
     let mut html_files = Vec::new();
 
-    for (i, image) in images.iter().enumerate() {
+    for (i, (image, rel_path)) in images.iter().enumerate() {
         let filename = format!("page{:03}.html", i + 1);
         let html_path = oebps_dir.join(&filename);
 
-        let (width, height) = image.dimensions;
         let html_content = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head>
-  <title>Page {page_num}</title>
+  <title>Page {}</title>
   <meta name="viewport" content="width={width}, height={height}, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <link href="style.css" type="text/css" rel="stylesheet"/>
 </head>
 <body>
   <div class="image">
-    <img src="{image_src}" width="{width}" height="{height}" alt="Page {page_num}"/>
+    <img src="{}"/>
   </div>
 </body>
 </html>"#,
-            page_num = i + 1,
-            image_src = image.path.display(),
+            i + 1,
+            rel_path,
+            width = image.dimensions.0,
+            height = image.dimensions.1,
         );
 
         let mut file = File::create(&html_path)?;
@@ -153,7 +167,7 @@ fn create_html_files(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Vec<
 fn create_toc_ncx(
     c: &Comic,
     oebps_dir: &Path,
-    cover_path: &Path,
+    cover_html_path: &Path,
     html_files: &[PathBuf],
 ) -> Result<()> {
     let toc_path = oebps_dir.join("toc.ncx");
@@ -162,7 +176,7 @@ fn create_toc_ncx(
     let mut nav_points = String::new();
 
     // Add cover to nav points
-    let cover_filename = cover_path.file_name().unwrap().to_string_lossy();
+    let cover_filename = cover_html_path.file_name().unwrap().to_string_lossy();
     nav_points.push_str(&format!(
         r#"    <navPoint id="navpoint-cover" playOrder="1">
       <navLabel><text>Cover</text></navLabel>
@@ -214,9 +228,9 @@ fn create_toc_ncx(
 fn create_content_opf(
     c: &Comic,
     oebps_dir: &Path,
-    cover_path: &Path,
+    cover_html_path: &Path,
     html_files: &[PathBuf],
-    images: &[ProcessedImage],
+    images: &[(ProcessedImage, String)],
 ) -> Result<()> {
     let opf_path = oebps_dir.join("content.opf");
     let uuid = Uuid::new_v4().to_string();
@@ -230,7 +244,7 @@ fn create_content_opf(
     manifest.push_str("\n");
 
     // Add cover HTML
-    let cover_filename = cover_path.file_name().unwrap().to_string_lossy();
+    let cover_filename = cover_html_path.file_name().unwrap().to_string_lossy();
     manifest.push_str(&format!(
         r#"    <item id="cover-html" href="{}" media-type="application/xhtml+xml"/>"#,
         cover_filename
@@ -249,7 +263,7 @@ fn create_content_opf(
     }
 
     // Add images
-    for (i, image) in images.iter().enumerate() {
+    for (i, (image, rel_path)) in images.iter().enumerate() {
         let extension = image
             .path
             .extension()
@@ -264,7 +278,7 @@ fn create_content_opf(
         };
 
         // Special handling for the first image (cover)
-        let href = image.path.display();
+        let href = rel_path;
         if i == 0 {
             manifest.push_str(&format!(
                 r#"    <item id="cover-image" href="{href}" media-type="{media_type}" properties="cover-image"/>"#,
@@ -322,7 +336,11 @@ fn create_content_opf(
 }
 
 /// Creates the EPUB file by zipping the directory structure
-fn create_epub_file(epub_dir: &Path, output_path: &Path) -> Result<()> {
+fn create_epub_file(
+    epub_dir: &Path,
+    output_path: &Path,
+    image_map: &[(ProcessedImage, String)],
+) -> Result<()> {
     let file = File::create(output_path)?;
     let writer = BufWriter::new(file);
     let mut zip = ZipWriter::new(writer);
@@ -339,7 +357,7 @@ fn create_epub_file(epub_dir: &Path, output_path: &Path) -> Result<()> {
     let mimetype_content = fs::read(&mimetype_path)?;
     zip.write_all(&mimetype_content)?;
 
-    // Add the rest of the files
+    // add the rest of the files
     for entry in WalkDir::new(epub_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
 
@@ -356,6 +374,16 @@ fn create_epub_file(epub_dir: &Path, output_path: &Path) -> Result<()> {
             let content = fs::read(path)?;
             zip.write_all(&content)?;
         }
+    }
+
+    // include all images
+    for (image, rel_path) in image_map {
+        let path = &image.path;
+        let rel_path = format!("OEBPS/{}", rel_path);
+
+        zip.start_file(rel_path, options_stored)?;
+        let content = fs::read(path)?;
+        zip.write_all(&content)?;
     }
 
     zip.finish()?;
