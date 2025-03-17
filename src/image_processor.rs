@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use image::imageops::colorops::contrast_in_place;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage};
-use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::Path;
@@ -11,7 +10,7 @@ use crate::{Comic, ProcessedImage};
 
 /// Process all images in the source directory
 pub fn process_images(comic: &mut Comic) -> Result<()> {
-    info!("Processing images in {}", comic.directory.display());
+    log::debug!("Processing images in {}", comic.directory.display());
 
     // Create a processed directory
     let images_dir = comic.images_dir();
@@ -34,14 +33,14 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
             ) {
                 Ok(img) => Some((output_path, img.dimensions())),
                 Err(e) => {
-                    warn!("Failed to process {}: {}", input_path.display(), e);
+                    log::warn!("Failed to process {}: {}", input_path.display(), e);
                     None
                 }
             }
         })
         .collect::<Vec<_>>();
 
-    info!("Processed {} images", processed.len());
+    log::debug!("Processed {} images", processed.len());
 
     if processed.is_empty() {
         anyhow::bail!("No images were processed");

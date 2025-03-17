@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use log::info;
 use std::fs;
 use std::process::Command;
 
@@ -44,7 +43,7 @@ pub fn create_mobi(comic: &Comic) -> Result<()> {
         ))?;
     }
 
-    info!("MOBI creation successful: {}", output_path.display());
+    log::debug!("MOBI creation successful: {}", output_path.display());
 
     Ok(())
 }

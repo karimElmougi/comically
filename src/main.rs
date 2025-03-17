@@ -1,4 +1,5 @@
 use clap::Parser;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{env, path::PathBuf};
 
 mod comic_archive;
@@ -13,13 +14,16 @@ mod mobi_converter;
     version
 )]
 struct Cli {
+    /// the input files to process. can be a directory or a file
     #[arg(required = true)]
-    input: PathBuf,
+    input: Vec<PathBuf>,
 
-    #[arg(short, default_value_t = true)]
+    /// whether to read the comic from right to left
+    #[arg(long, short, default_value_t = true)]
     manga_mode: bool,
 
-    #[arg(short, default_value_t = 50)]
+    /// the quality of the images, between 0 and 100
+    #[arg(long, short, default_value_t = 50)]
     quality: u8,
 }
 
@@ -42,16 +46,70 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    log::info!("Converting {}", cli.input.display());
+    // Collect all files to process
+    let files_to_process: Vec<PathBuf> = cli
+        .input
+        .iter()
+        .flat_map(|path| {
+            if path.is_dir() {
+                std::fs::read_dir(path)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| {
+                        let entry = entry.ok()?;
+                        let path = entry.path();
+                        let extension = path.extension().unwrap_or_default();
+                        if extension == "cbz" || extension == "zip" {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![path.clone()]
+            }
+        })
+        .collect();
 
-    time_it("Convert to MOBI", || {
-        convert_to_mobi(cli.input, cli.manga_mode, cli.quality)
-    })?;
+    let (mut results, total_duration) = timer_result(|| {
+        files_to_process
+            .into_par_iter()
+            .map(|file| timer_result(|| convert_to_mobi(file, cli.manga_mode, cli.quality)))
+            .collect::<Vec<_>>()
+    });
+
+    results.sort_by_key(|(result, _)| result.as_ref().map_or(String::new(), |c| c.title.clone()));
+
+    let mut summary = String::new();
+    for (result, duration) in &results {
+        summary.push_str(&match result {
+            Ok(comic) => format!(
+                "✓ {} ({})\n",
+                comic.input.display(),
+                display_duration(*duration)
+            ),
+            Err(e) => format!("✗ {}\n", e),
+        });
+    }
+
+    let successful_count = results.iter().filter(|(r, _)| r.is_ok()).count();
+    let failed_count = results.len() - successful_count;
+    summary.push_str(&format!(
+        "\nProcessed {} file(s) ({} succeeded, {} failed) in {}",
+        results.len(),
+        successful_count,
+        failed_count,
+        display_duration(total_duration)
+    ));
+
+    log::info!("\n{}", summary);
 
     Ok(())
 }
 
-fn convert_to_mobi(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Result<()> {
+fn convert_to_mobi(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Result<Comic> {
+    log::debug!("Converting {}", file.display());
     let quality = quality.clamp(0, 100);
     let title = file.file_stem().unwrap().to_string_lossy().to_string();
 
@@ -69,20 +127,20 @@ fn convert_to_mobi(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Resu
         compression_quality: quality,
     };
 
-    time_it("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
+    timer_log("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
 
     // Process images
-    time_it("Process Images", || {
+    timer_log("Process Images", || {
         image_processor::process_images(&mut comic)
     })?;
 
     // Create EPUB
-    time_it("Create EPUB", || epub_builder::build_epub(&comic))?;
+    timer_log("Create EPUB", || epub_builder::build_epub(&comic))?;
 
     // Convert to MOBI
-    time_it("Create MOBI", || mobi_converter::create_mobi(&comic))?;
+    timer_log("Create MOBI", || mobi_converter::create_mobi(&comic))?;
 
-    Ok(())
+    Ok(comic)
 }
 
 pub struct Comic {
@@ -131,13 +189,29 @@ impl Comic {
     }
 }
 
-fn time_it<F, T>(label: &str, func: F) -> T
+fn timer_log<F, T>(label: &str, func: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let (result, duration) = timer_result(func);
+    log::debug!("{}: {}ms", label, duration.as_millis());
+    result
+}
+
+fn timer_result<F, T>(func: F) -> (T, std::time::Duration)
 where
     F: FnOnce() -> T,
 {
     let start = std::time::Instant::now();
     let result = func();
     let duration = start.elapsed();
-    log::debug!("{}: {}ms", label, duration.as_millis());
-    result
+    (result, duration)
+}
+
+fn display_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
 }
