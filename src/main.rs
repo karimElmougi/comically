@@ -41,8 +41,10 @@ fn main() -> anyhow::Result<()> {
 
     let temp_dir = tempfile::tempdir()?;
 
+    let title = cli.input.file_stem().unwrap().to_string_lossy().to_string();
+
     let mut comic = Comic {
-        title: cli.input.file_name().unwrap().to_string_lossy().to_string(),
+        title,
         input: cli.input,
         directory: temp_dir.path().to_path_buf(),
         input_page_names: Vec::new(),
