@@ -72,12 +72,53 @@ fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    let (mut results, total_duration) = timer_result(|| {
+    // PHASE 1: Process all files up to EPUB creation in parallel
+    let (pending_conversions, phase1_duration) = timer_result(|| {
         files_to_process
             .into_par_iter()
-            .map(|file| timer_result(|| convert_to_mobi(file, cli.manga_mode, cli.quality)))
+            .map(|file| timer_result(|| process_to_epub(file, cli.manga_mode, cli.quality)))
             .collect::<Vec<_>>()
     });
+
+    log::info!(
+        "Phase 1 (CBZ extraction, image processing, EPUB creation) completed in {}",
+        display_duration(phase1_duration)
+    );
+
+    // Filter out any failed conversions from phase 1
+    let successful_comics: Vec<_> = pending_conversions
+        .into_iter()
+        .filter_map(|(result, duration)| match result {
+            Ok(comic) => Some((comic, duration)),
+            Err(e) => {
+                log::error!("Failed in phase 1: {}", e);
+                None
+            }
+        })
+        .collect();
+
+    // PHASE 2: Convert all EPUBs to MOBI in parallel
+    let (mut results, phase2_duration) = timer_result(|| {
+        successful_comics
+            .into_par_iter()
+            .map(|(comic, phase1_duration)| {
+                let (mobi_result, mobi_duration) =
+                    timer_result(|| mobi_converter::create_mobi(&comic));
+                match mobi_result {
+                    Ok(_) => (Ok(comic), phase1_duration + mobi_duration),
+                    Err(e) => (
+                        Err(anyhow::anyhow!("MOBI conversion failed: {}", e)),
+                        phase1_duration + mobi_duration,
+                    ),
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+
+    log::info!(
+        "Phase 2 (MOBI conversion) completed in {}",
+        display_duration(phase2_duration)
+    );
 
     results.sort_by_key(|(result, _)| result.as_ref().map_or(String::new(), |c| c.title.clone()));
 
@@ -100,7 +141,7 @@ fn main() -> anyhow::Result<()> {
         results.len(),
         successful_count,
         failed_count,
-        display_duration(total_duration)
+        display_duration(phase1_duration + phase2_duration)
     ));
 
     log::info!("\n{}", summary);
@@ -108,8 +149,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn convert_to_mobi(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Result<Comic> {
-    log::debug!("Converting {}", file.display());
+fn process_to_epub(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Result<Comic> {
+    log::debug!("Processing {} to EPUB", file.display());
     let quality = quality.clamp(0, 100);
     let title = file.file_stem().unwrap().to_string_lossy().to_string();
 
@@ -118,27 +159,19 @@ fn convert_to_mobi(file: PathBuf, manga_mode: bool, quality: u8) -> anyhow::Resu
     let mut comic = Comic {
         title,
         input: file,
-        directory: temp_dir.path().to_path_buf(),
+        directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
-        // kindle paperwhite signature edition
         device_dimensions: (1236, 1648),
         right_to_left: manga_mode,
         compression_quality: quality,
     };
 
     timer_log("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
-
-    // Process images
     timer_log("Process Images", || {
         image_processor::process_images(&mut comic)
     })?;
-
-    // Create EPUB
     timer_log("Create EPUB", || epub_builder::build_epub(&comic))?;
-
-    // Convert to MOBI
-    timer_log("Create MOBI", || mobi_converter::create_mobi(&comic))?;
 
     Ok(comic)
 }
@@ -155,6 +188,12 @@ pub struct Comic {
     right_to_left: bool,
     // number between 0 and 100
     compression_quality: u8,
+}
+
+impl Drop for Comic {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
 }
 
 #[derive(Debug, Clone)]
