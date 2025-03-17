@@ -41,16 +41,20 @@ fn main() -> anyhow::Result<()> {
 
     let temp_dir = tempfile::tempdir()?;
 
-    let comic = Comic {
+    let mut comic = Comic {
         title: cli.input.file_name().unwrap().to_string_lossy().to_string(),
         input: cli.input,
         directory: temp_dir.path().to_path_buf(),
+        input_page_names: Vec::new(),
+        processed_files: Vec::new(),
     };
 
-    time_it("Extract CBZ", || comic_archive::extract_cbz(&comic))?;
+    time_it("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
 
     // Process images
-    time_it("Process Images", || image_processor::process_images(&comic))?;
+    time_it("Process Images", || {
+        image_processor::process_images(&mut comic)
+    })?;
 
     // Create EPUB
     time_it("Create EPUB", || epub_builder::build_epub(&comic))?;
@@ -65,6 +69,8 @@ pub struct Comic {
     title: String,
     input: PathBuf,
     directory: PathBuf,
+    input_page_names: Vec<String>,
+    processed_files: Vec<PathBuf>,
 }
 
 impl Comic {

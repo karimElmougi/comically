@@ -6,7 +6,6 @@ use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::Path;
-use walkdir::WalkDir;
 
 use crate::Comic;
 
@@ -15,7 +14,7 @@ const TARGET_WIDTH: u32 = 1236;
 const TARGET_HEIGHT: u32 = 1648;
 
 /// Process all images in the source directory
-pub fn process_images(comic: &Comic) -> Result<()> {
+pub fn process_images(comic: &mut Comic) -> Result<()> {
     info!("Processing images in {}", comic.directory.display());
 
     // Create a processed directory
@@ -23,55 +22,39 @@ pub fn process_images(comic: &Comic) -> Result<()> {
     let processed_dir = comic.processed_dir();
     create_dir_all(&processed_dir).context("Failed to create processed directory")?;
 
-    // Process each image file
-    let image_files: Vec<_> = WalkDir::new(&images_dir)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file())
-        .map(|entry| entry.path().to_path_buf())
-        .collect();
-
-    let processed_count = image_files
-        .into_iter()
+    let mut processed = comic
+        .input_page_names
+        .iter()
         .enumerate()
         .par_bridge()
-        .map(|(idx, path)| {
-            let filename = format!("page{:03}.jpg", idx + 1);
-            let output_path = processed_dir.join(filename);
-            match process_image(&path, &output_path) {
-                Ok(_) => {
-                    if idx == 6 {
-                        // copy input file to working directory
-                        let copy_path = format!("TEST_INPUT_{}.jpg", idx + 1);
-                        std::fs::copy(&path, &copy_path).expect("Failed to copy image");
-
-                        // copy output file to working directory
-                        let copy_path = format!("TEST_OUTPUT_{}.jpg", idx + 1);
-                        std::fs::copy(&output_path, &copy_path).expect("Failed to copy image");
-                    }
-                    1
-                }
+        .filter_map(|(idx, file_name)| {
+            let input_path = images_dir.join(file_name);
+            let output_path = processed_dir.join(format!("page{:03}.jpg", idx + 1));
+            match process_image(&input_path, &output_path) {
+                Ok(_) => Some(output_path),
                 Err(e) => {
-                    warn!("Failed to process {}: {}", path.display(), e);
-                    0
+                    warn!("Failed to process {}: {}", input_path.display(), e);
+                    None
                 }
             }
         })
-        .reduce(|| 0, |acc, res| acc + res);
+        .collect::<Vec<_>>();
 
-    info!("Processed {} images", processed_count);
+    info!("Processed {} images", processed.len());
 
-    if processed_count == 0 {
+    if processed.is_empty() {
         anyhow::bail!("No images were processed");
     }
+
+    processed.sort();
+
+    comic.processed_files = processed;
 
     Ok(())
 }
 
 /// Process a single image file with Kindle-optimized transformations
 fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
-    // Load the image
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
 

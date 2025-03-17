@@ -13,7 +13,6 @@ use crate::Comic;
 pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create EPUB working directory
     let epub_dir = comic.epub_dir();
-    let images_dir = comic.processed_dir();
 
     create_dir_all(&epub_dir)?;
 
@@ -30,42 +29,24 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create container.xml
     create_container_xml(&meta_inf_dir)?;
 
-    // Copy images to OEBPS/Images
-    let images_output_dir = oebps_dir.join("Images");
-    create_dir_all(&images_output_dir)?;
-
-    let mut image_paths = Vec::new();
-    for entry in WalkDir::new(&images_dir)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let path = entry.path();
-        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-        if ["jpg", "jpeg", "png"].contains(&extension.to_lowercase().as_str()) {
-            let filename = path.file_name().unwrap();
-            let dest_path = images_output_dir.join(filename);
-            fs::copy(path, &dest_path)?;
-            image_paths.push(dest_path);
-        }
-    }
-
     // Create a cover page
-    let cover_path = create_cover_page(&oebps_dir, &image_paths)?;
+    let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
 
     // Generate HTML for each image
     let html_dir = oebps_dir.clone();
-    let html_files = create_html_files(&html_dir, &image_paths)?;
+    let html_files = create_html_files(&html_dir, &comic.processed_files)?;
 
     // Create toc.ncx
-    create_toc_ncx(&comic, &oebps_dir, &cover_path, &html_files)?;
+    create_toc_ncx(&comic, &oebps_dir, &cover_html_path, &html_files)?;
 
     // Create content.opf
-    create_content_opf(&comic, &oebps_dir, &cover_path, &html_files, &image_paths)?;
+    create_content_opf(
+        &comic,
+        &oebps_dir,
+        &cover_html_path,
+        &html_files,
+        &comic.processed_files,
+    )?;
 
     // Package as EPUB
     let epub_path = comic.epub_file();
@@ -106,10 +87,8 @@ fn create_cover_page(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<PathBu
 
     // Use first image as cover
     let cover_img_path = &image_paths[0];
-    let cover_img_filename = cover_img_path.file_name().unwrap().to_string_lossy();
 
     // Create cover HTML
-    let cover_html_path = oebps_dir.join("cover.html");
     let cover_html = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -120,13 +99,14 @@ fn create_cover_page(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<PathBu
 </head>
 <body>
   <div class="cover">
-    <img src="Images/{}" alt="Cover"/>
+    <img src="{}" alt="Cover"/>
   </div>
 </body>
 </html>"#,
-        cover_img_filename
+        cover_img_path.display()
     );
 
+    let cover_html_path = oebps_dir.join("cover.html");
     let mut file = File::create(&cover_html_path)?;
     file.write_all(cover_html.as_bytes())?;
 
@@ -140,9 +120,6 @@ fn create_html_files(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<Vec<Pa
     for (i, image_path) in image_paths.iter().enumerate() {
         let filename = format!("page{:03}.html", i + 1);
         let html_path = oebps_dir.join(&filename);
-
-        let image_filename = image_path.file_name().unwrap().to_string_lossy();
-        let image_rel_path = format!("Images/{}", image_filename);
 
         // Get image dimensions
         let img = image::open(image_path)?;
@@ -164,7 +141,7 @@ fn create_html_files(oebps_dir: &Path, image_paths: &[PathBuf]) -> Result<Vec<Pa
 </body>
 </html>"#,
             page_num = i + 1,
-            image_src = image_rel_path
+            image_src = image_path.display()
         );
 
         let mut file = File::create(&html_path)?;
@@ -277,7 +254,6 @@ fn create_content_opf(
 
     // Add images
     for (i, image_path) in image_paths.iter().enumerate() {
-        let filename = image_path.file_name().unwrap().to_string_lossy();
         let extension = image_path
             .extension()
             .unwrap()
@@ -293,14 +269,16 @@ fn create_content_opf(
         // Special handling for the first image (cover)
         if i == 0 {
             manifest.push_str(&format!(
-                r#"    <item id="cover-image" href="Images/{}" media-type="{}" properties="cover-image"/>"#,
-                filename,
+                r#"    <item id="cover-image" href="{}" media-type="{}" properties="cover-image"/>"#,
+                image_path.display(),
                 media_type
             ));
         } else {
             manifest.push_str(&format!(
-                r#"    <item id="image{}" href="Images/{}" media-type="{}"/>"#,
-                i, filename, media_type
+                r#"    <item id="image{}" href="{}" media-type="{}"/>"#,
+                i,
+                image_path.display(),
+                media_type
             ));
         }
         manifest.push_str("\n");

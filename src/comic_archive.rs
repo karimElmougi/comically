@@ -8,7 +8,7 @@ use zip::ZipArchive;
 use crate::Comic;
 
 /// Extracts a CBZ file to the target directory
-pub fn extract_cbz(comic: &Comic) -> Result<()> {
+pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
     info!("Extracting CBZ: {}", comic.input.display());
 
     // Create the images directory
@@ -20,7 +20,6 @@ pub fn extract_cbz(comic: &Comic) -> Result<()> {
     let mut archive = ZipArchive::new(file).context("Failed to parse CBZ file as ZIP archive")?;
 
     // Extract all image files
-    let valid_extensions = [".jpg", ".jpeg", ".png", ".gif"];
     let mut extracted_count = 0;
 
     for i in 0..archive.len() {
@@ -31,7 +30,7 @@ pub fn extract_cbz(comic: &Comic) -> Result<()> {
         };
 
         // Skip directories and non-image files
-        if file.is_dir() || !has_image_extension(&outpath, &valid_extensions) {
+        if file.is_dir() || !has_image_extension(&outpath) {
             continue;
         }
 
@@ -46,8 +45,9 @@ pub fn extract_cbz(comic: &Comic) -> Result<()> {
         }
 
         // Create sanitized filename (page001.jpg, page002.jpg, etc.)
-        let target_filename = format!("page{:03}.jpg", extracted_count + 1);
-        let target_path = images_dir.join(&target_filename);
+        let target_path = images_dir.join(&*file_name);
+
+        comic.input_page_names.push(file_name.to_string());
 
         // Extract the file
         let mut outfile = File::create(&target_path)
@@ -72,10 +72,11 @@ pub fn extract_cbz(comic: &Comic) -> Result<()> {
 }
 
 /// Helper function to check if a file has an image extension
-fn has_image_extension(path: &Path, valid_extensions: &[&str]) -> bool {
+fn has_image_extension(path: &Path) -> bool {
+    static VALID_EXTENSIONS: &[&str] = &[".jpg", ".jpeg", ".png", ".gif"];
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
-        for valid_ext in valid_extensions {
+        for valid_ext in VALID_EXTENSIONS {
             if valid_ext.contains(&ext_str) {
                 return true;
             }
