@@ -34,6 +34,10 @@ struct Cli {
     /// defaults to the number of logical CPUs
     #[arg(short)]
     threads: Option<usize>,
+
+    /// auto-crop the dead space on the left and right of the pages
+    #[arg(long, default_value_t = true)]
+    auto_crop: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -94,7 +98,13 @@ fn main() -> anyhow::Result<()> {
             .into_par_iter()
             .map(|file| {
                 timer_result(|| {
-                    process_to_epub(file, cli.manga_mode, cli.quality, cli.prefix.as_deref())
+                    process_to_epub(
+                        file,
+                        cli.manga_mode,
+                        cli.quality,
+                        cli.prefix.as_deref(),
+                        cli.auto_crop,
+                    )
                 })
             })
             .collect::<Vec<_>>()
@@ -174,6 +184,7 @@ fn process_to_epub(
     manga_mode: bool,
     quality: u8,
     title_prefix: Option<&str>,
+    auto_crop: bool,
 ) -> anyhow::Result<Comic> {
     log::debug!("Processing {} to EPUB", file.display());
     let quality = quality.clamp(0, 100);
@@ -203,6 +214,7 @@ fn process_to_epub(
         device_dimensions: (1236, 1648),
         right_to_left: manga_mode,
         compression_quality: quality,
+        auto_crop,
     };
 
     timer_log("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
@@ -227,6 +239,7 @@ pub struct Comic {
     right_to_left: bool,
     // number between 0 and 100
     compression_quality: u8,
+    auto_crop: bool,
 }
 
 impl Drop for Comic {

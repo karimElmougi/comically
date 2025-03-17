@@ -30,6 +30,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
                 &output_path,
                 comic.device_dimensions,
                 comic.compression_quality,
+                comic.auto_crop,
             ) {
                 Ok(img) => Some((output_path, img.dimensions())),
                 Err(e) => {
@@ -62,6 +63,7 @@ fn process_image(
     output_path: &Path,
     device_dimensions: (u32, u32),
     compression_quality: u8,
+    auto_crop: bool,
 ) -> Result<DynamicImage> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
@@ -70,12 +72,10 @@ fn process_image(
 
     auto_contrast(&mut img);
 
-    // Apply auto-cropping
-    let img = if let Some(cropped) = auto_crop_sides(&img) {
-        cropped
-    } else {
-        DynamicImage::from(img)
-    };
+    let img = auto_crop
+        .then(|| auto_crop_sides(&img))
+        .flatten()
+        .unwrap_or(DynamicImage::from(img));
 
     let img = resize_image(img, device_dimensions)?;
 
