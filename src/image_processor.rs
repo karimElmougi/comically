@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use image::imageops::colorops::contrast_in_place;
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, GrayImage, Pixel};
+use image::{DynamicImage, GenericImageView, GrayImage};
 use log::{info, warn};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::fs::create_dir_all;
@@ -81,7 +81,7 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
 
     let img = resize_image(DynamicImage::from(img))?;
 
-    let img = quantize(img);
+    // let img = quantize(img);
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, 75);
@@ -94,16 +94,6 @@ fn process_image(input_path: &Path, output_path: &Path) -> Result<()> {
 }
 
 fn auto_contrast(img: &mut GrayImage) {
-    let gamma = 1.5;
-
-    for pixel in img.pixels_mut() {
-        for c in pixel.channels_mut() {
-            let normalized = *c as f32 / 255.0;
-            let corrected = normalized.powf(gamma);
-            *c = (corrected * 255.0).round() as u8;
-        }
-    }
-
     contrast_in_place(img, 20.0);
 }
 
@@ -140,68 +130,4 @@ fn resize_image(img: DynamicImage) -> Result<DynamicImage> {
     };
 
     Ok(processed)
-}
-
-#[rustfmt::skip]
-const KINDLE_PALETTE: [u8; 16] = [
-    0x00, // Black
-    0x11, 
-    0x22, 
-    0x33, 
-    0x44, 
-    0x55, 
-    0x66, 
-    0x77, 
-    0x88, 
-    0x99, 
-    0xaa, 
-    0xbb, 
-    0xcc, 
-    0xdd, 
-    0xee, 
-    0xff, // White
-];
-
-/// Quantize image using the Kindle palette
-fn quantize(img: DynamicImage) -> DynamicImage {
-    let img = img.grayscale();
-    let img = img.as_luma8().unwrap();
-    let (width, height) = img.dimensions();
-
-    let mut result = image::GrayImage::new(width, height);
-
-    // Apply quantization to each pixel
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = img.get_pixel(x, y);
-            let gray_value = pixel[0];
-
-            let closest_color = find_closest_color(gray_value, &KINDLE_PALETTE);
-
-            // Set the pixel in the result image
-            result.put_pixel(x, y, image::Luma([closest_color]));
-        }
-    }
-
-    DynamicImage::from(result)
-}
-
-fn find_closest_color(value: u8, palette: &[u8]) -> u8 {
-    let mut closest = palette[0];
-    let mut min_diff = 255;
-
-    for &color in palette {
-        let diff = if value > color {
-            value - color
-        } else {
-            color - value
-        };
-
-        if diff < min_diff {
-            min_diff = diff;
-            closest = color;
-        }
-    }
-
-    closest
 }
