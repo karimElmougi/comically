@@ -70,7 +70,14 @@ fn process_image(
 
     auto_contrast(&mut img);
 
-    let img = resize_image(DynamicImage::from(img), device_dimensions)?;
+    // Apply auto-cropping
+    let img = if let Some(cropped) = auto_crop_sides(&img) {
+        cropped
+    } else {
+        DynamicImage::from(img)
+    };
+
+    let img = resize_image(img, device_dimensions)?;
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
     let mut encoder =
@@ -85,6 +92,99 @@ fn process_image(
 
 fn auto_contrast(img: &mut GrayImage) {
     contrast_in_place(img, 20.0);
+}
+
+/// Auto-crop white margins from left and right sides of the image
+fn auto_crop_sides(img: &GrayImage) -> Option<DynamicImage> {
+    const WHITE_THRESHOLD: u8 = 230; // Pixel values above this are considered "white"
+    const MIN_MARGIN_WIDTH: u32 = 10; // Minimum width to consider cropping
+
+    let (width, height) = img.dimensions();
+
+    // Find middle y coordinate
+    let mid_y = height / 2;
+
+    // Scan from left edge to find first non-white pixel
+    let mut left_margin = 0;
+    for x in 0..width {
+        if img.get_pixel(x, mid_y)[0] < WHITE_THRESHOLD {
+            left_margin = x;
+            break;
+        }
+    }
+
+    // Scan from right edge to find first non-white pixel
+    let mut right_margin = width;
+    for x in (0..width).rev() {
+        if img.get_pixel(x, mid_y)[0] < WHITE_THRESHOLD {
+            right_margin = x + 1;
+            break;
+        }
+    }
+
+    // Verify these columns are empty (all white) throughout their height
+    let left_margin = verify_vertical_margin(img, left_margin, WHITE_THRESHOLD).unwrap_or(0);
+    let right_margin = verify_vertical_margin(img, right_margin.saturating_sub(1), WHITE_THRESHOLD)
+        .map(|x| x + 1)
+        .unwrap_or(width);
+
+    // Only crop if we found valid margins with sufficient width
+    if left_margin > MIN_MARGIN_WIDTH || width - right_margin > MIN_MARGIN_WIDTH {
+        let crop_width = right_margin - left_margin;
+        if crop_width > 0 && crop_width < width {
+            return Some(DynamicImage::from(
+                image::imageops::crop_imm(img, left_margin, 0, crop_width, height).to_image(),
+            ));
+        }
+    }
+
+    None
+}
+
+/// Verify if a column can be considered a valid margin by checking if it's all white
+/// Returns the adjusted margin position
+fn verify_vertical_margin(img: &GrayImage, initial_x: u32, white_threshold: u8) -> Option<u32> {
+    let (width, height) = img.dimensions();
+    if initial_x >= width {
+        return None;
+    }
+
+    // For left margin: find rightmost column that's all white
+    // For right margin: find leftmost column that's all white
+    let is_left_side = initial_x < width / 2;
+
+    let mut margin_x = if is_left_side { 0 } else { width - 1 };
+
+    let range = if is_left_side {
+        0..initial_x.saturating_add(1)
+    } else {
+        initial_x..width
+    };
+
+    for x in range {
+        let mut is_white_column = true;
+
+        // Check the entire column
+        for y in 0..height {
+            if img.get_pixel(x, y)[0] < white_threshold {
+                is_white_column = false;
+                break;
+            }
+        }
+
+        if is_white_column {
+            margin_x = x;
+            // For left margin, continue to find rightmost white column
+            if !is_left_side {
+                break;
+            }
+        } else if is_left_side {
+            // Found non-white column on left side, stop
+            break;
+        }
+    }
+
+    Some(margin_x)
 }
 
 fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<DynamicImage> {
