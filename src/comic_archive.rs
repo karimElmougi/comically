@@ -55,6 +55,9 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
         extracted_count += 1;
     }
 
+    // sort input_page_names
+    comic.input_page_names.sort();
+
     log::debug!("Extracted {} images", extracted_count);
 
     if extracted_count == 0 {
@@ -77,36 +80,3 @@ fn has_image_extension(path: &Path) -> bool {
     }
     false
 }
-
-// Checks for metadata in the comic archive (ComicInfo.xml)
-// pub fn extract_metadata(cbz_path: &Path) -> Result<Option<PathBuf>> {
-//     let file = File::open(cbz_path)?;
-//     let mut archive = ZipArchive::new(file)?;
-
-//     // archive.by_name("ComicInfo.xml").or_else(|| archive.by_name("comicinfo.xml"))?;
-
-//     // Look for ComicInfo.xml
-//     for i in 0..archive.len() {
-//         let mut file = archive.by_index(i)?;
-//         let outpath = match file.enclosed_name() {
-//             Some(path) => path.to_owned(),
-//             None => continue,
-//         };
-
-//         if outpath
-//             .file_name()
-//             .unwrap()
-//             .to_string_lossy()
-//             .to_lowercase()
-//             == "comicinfo.xml"
-//         {
-//             // Found the metadata file
-//             let metadata_path = cbz_path.with_extension("xml");
-//             let mut outfile = File::create(&metadata_path)?;
-//             io::copy(&mut file, &mut outfile)?;
-//             return Ok(Some(metadata_path));
-//         }
-//     }
-
-//     Ok(None)
-// }
