@@ -13,9 +13,11 @@ mod mobi_converter;
     version
 )]
 struct Cli {
-    /// Input file path (CBZ format)
     #[arg(required = true)]
     input: PathBuf,
+
+    #[arg(short, default_value_t = true)]
+    manga_mode: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -39,12 +41,14 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("Converting {}", cli.input.display());
 
-    time_it("Convert to MOBI", || convert_to_mobi(cli.input))?;
+    time_it("Convert to MOBI", || {
+        convert_to_mobi(cli.input, cli.manga_mode)
+    })?;
 
     Ok(())
 }
 
-fn convert_to_mobi(file: PathBuf) -> anyhow::Result<()> {
+fn convert_to_mobi(file: PathBuf, manga_mode: bool) -> anyhow::Result<()> {
     let title = file.file_stem().unwrap().to_string_lossy().to_string();
 
     let temp_dir = tempfile::tempdir()?;
@@ -57,6 +61,7 @@ fn convert_to_mobi(file: PathBuf) -> anyhow::Result<()> {
         processed_files: Vec::new(),
         // kindle paperwhite signature edition
         device_dimensions: (1236, 1648),
+        right_to_left: manga_mode,
     };
 
     time_it("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
@@ -82,6 +87,7 @@ pub struct Comic {
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
     device_dimensions: (u32, u32),
+    right_to_left: bool,
 }
 
 #[derive(Debug, Clone)]

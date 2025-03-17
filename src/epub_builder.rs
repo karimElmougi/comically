@@ -285,20 +285,38 @@ fn create_content_opf(
         manifest.push_str("\n");
     }
 
-    // Build spine items
+    // Build spine items with page spread properties
     let mut spine = String::new();
 
-    // Add cover as first item in spine
-    spine.push_str(r#"    <itemref idref="cover-html"/>"#);
+    let progression_direction = if c.right_to_left { "rtl" } else { "ltr" };
+    // Add cover as first item in spine (typically center spread)
+    spine.push_str(&format!(
+        r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#
+    ));
     spine.push_str("\n");
 
-    // Add content pages
-    for i in 0..html_files.len() {
-        spine.push_str(&format!(r#"    <itemref idref="page{}"/>"#, i + 1));
+    // Add content pages with alternating spreads
+    let mut right_to_left = c.right_to_left;
+
+    // Start from 1 because cover is already added
+    for i in 1..html_files.len() {
+        let spread_property = match right_to_left {
+            true => "page-spread-right",
+            false => "page-spread-left",
+        };
+
+        spine.push_str(&format!(
+            r#"    <itemref idref="page{}" properties="{}"/>"#,
+            i + 1,
+            spread_property
+        ));
         spine.push_str("\n");
+
+        // Alternate page sides
+        right_to_left = !right_to_left;
     }
 
-    // Create the OPF content
+    // Create the OPF content with page-progression-direction
     let opf_content = format!(
         r###"<?xml version="1.0" encoding="UTF-8"?>
         <package version="3.0" unique-identifier="BookID" xmlns="http://www.idpf.org/2007/opf">
@@ -310,7 +328,7 @@ fn create_content_opf(
             <meta name="fixed-layout" content="true"/>
             <meta name="original-resolution" content="{width}x{height}"/>
             <meta name="book-type" content="comic"/>
-            <meta name="primary-writing-mode" content="horizontal-lr"/>
+            <meta name="primary-writing-mode" content="{writing_mode}"/>
             <meta name="zero-gutter" content="true"/>
             <meta name="zero-margin" content="true"/>
             <meta name="ke-border-color" content="#FFFFFF"/>
@@ -321,11 +339,16 @@ fn create_content_opf(
             <meta property="rendition:layout">pre-paginated</meta>
           </metadata>
           <manifest>{manifest}</manifest>
-          <spine toc="ncx">{spine}</spine>
+          <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
         title = &c.title,
         width = c.device_dimensions.0,
         height = c.device_dimensions.1,
+        writing_mode = if c.right_to_left {
+            "horizontal-rl"
+        } else {
+            "horizontal-lr"
+        },
     );
 
     let mut file = File::create(&opf_path)?;
