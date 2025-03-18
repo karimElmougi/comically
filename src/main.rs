@@ -593,7 +593,6 @@ fn draw(frame: &mut Frame, state: &AppState) {
         return;
     }
 
-    // Calculate layout for comic list and gauges
     let comic_count = state.comic_order.len();
     let constraints = vec![Constraint::Length(1); comic_count];
 
@@ -604,18 +603,9 @@ fn draw(frame: &mut Frame, state: &AppState) {
         let state = &state.comic_states[&id];
         let comic_area = comic_layout[i];
 
-        // Create a layout to place the title and gauge side by side
         let horizontal_layout =
             Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
                 .split(comic_area);
-
-        // Create truncated title
-        let title_width = horizontal_layout[0].width.saturating_sub(2) as usize; // Account for padding
-        let title_display = if state.title.len() > title_width {
-            format!("{}…", &state.title[..title_width.saturating_sub(1)])
-        } else {
-            state.title.clone()
-        };
 
         // Render the title with cleaner status indicators
         let title_style = match &state.status {
@@ -625,13 +615,12 @@ fn draw(frame: &mut Frame, state: &AppState) {
             ComicStatus::Failed { .. } => Style::default().fg(Color::Red),
         };
 
-        let title_paragraph = Paragraph::new(title_display)
+        let title_paragraph = Paragraph::new(state.title.clone())
             .style(title_style)
             .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)));
 
         frame.render_widget(title_paragraph, horizontal_layout[0]);
 
-        // Render the gauge with appropriate styling based on status
         match &state.status {
             ComicStatus::Waiting => {
                 let gauge = Gauge::default()
@@ -642,7 +631,6 @@ fn draw(frame: &mut Frame, state: &AppState) {
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
             ComicStatus::Processing { stage, progress } => {
-                // Compact representation of stage and progress
                 let gauge = Gauge::default()
                     .gauge_style(Style::default().fg(Color::Yellow))
                     .ratio(*progress / 100.0)
@@ -659,19 +647,12 @@ fn draw(frame: &mut Frame, state: &AppState) {
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
             ComicStatus::Failed { error, .. } => {
-                // Truncate error message if too long
-                let error_str = error.to_string();
-                let gauge_width = horizontal_layout[1].width.saturating_sub(10) as usize;
-                let error_msg = if error_str.len() > gauge_width {
-                    format!("failed: {}…", &error_str[..gauge_width.saturating_sub(9)])
-                } else {
-                    format!("failed: {}", error_str)
-                };
+                let error = error.to_string();
 
                 let gauge = Gauge::default()
                     .gauge_style(Style::default().fg(Color::Red))
                     .ratio(1.0)
-                    .label(error_msg);
+                    .label(error);
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
