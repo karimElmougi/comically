@@ -1,6 +1,6 @@
 use clap::Parser;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, time::Duration};
 
 mod comic_archive;
 mod epub_builder;
@@ -94,87 +94,70 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("Processing {} files", files_to_process.len());
 
-    // PHASE 1: Process all files up to EPUB creation
-    let (pending_conversions, phase1_duration) = timer_result(|| {
-        files_to_process
-            .into_par_iter()
-            .map(|file| {
-                timer_result(|| {
-                    process_to_epub(
-                        file,
-                        cli.manga_mode,
-                        cli.quality,
-                        cli.prefix.as_deref(),
-                        cli.auto_crop,
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-    });
+    let (results, duration) = timer_result(|| process_files(files_to_process, &cli));
+    let mut results = results?;
 
-    log::info!(
-        "Phase 1 (CBZ extraction, image processing, EPUB creation) completed in {}",
-        display_duration(phase1_duration)
-    );
-
-    let successful_comics: Vec<_> = pending_conversions
-        .into_iter()
-        .filter_map(|(result, duration)| match result {
-            Ok(comic) => Some((comic, duration)),
-            Err(e) => {
-                log::error!("Failed in phase 1: {}", e);
-                None
-            }
-        })
-        .collect();
-
-    // PHASE 2: Convert all EPUBs to MOBI
-    let (mut results, phase2_duration) = timer_result(|| {
-        successful_comics
-            .into_par_iter()
-            .map(|(comic, phase1_duration)| {
-                let (mobi_result, mobi_duration) =
-                    timer_result(|| mobi_converter::create_mobi(&comic));
-                match mobi_result {
-                    Ok(_) => (Ok(comic), phase1_duration + mobi_duration),
-                    Err(e) => (Err(e), phase1_duration + mobi_duration),
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-
-    log::info!(
-        "Phase 2 (MOBI conversion) completed in {}",
-        display_duration(phase2_duration)
-    );
-
-    results.sort_by_key(|(result, _)| result.as_ref().map_or(String::new(), |c| c.title.clone()));
+    results.sort_by_key(|(c, _)| c.title.clone());
 
     let mut summary = String::new();
-    for (result, duration) in &results {
-        summary.push_str(&match result {
-            Ok(comic) => format!(
-                "✓ {} ({})\n",
-                comic.input.display(),
-                display_duration(*duration)
-            ),
-            Err(e) => format!("✗ {}\n", e),
-        });
+    for (comic, duration) in &results {
+        summary.push_str(&format!(
+            "✓ {} ({})\n",
+            comic.input.display(),
+            display_duration(*duration)
+        ));
     }
 
-    let successful_count = results.iter().filter(|(r, _)| r.is_ok()).count();
+    let successful_count = results.iter().count();
     let failed_count = results.len() - successful_count;
     summary.push_str(&format!(
         "\nProcessed {} file(s) ({} succeeded, {} failed) in {}",
         results.len(),
         successful_count,
         failed_count,
-        display_duration(phase1_duration + phase2_duration)
+        display_duration(duration)
     ));
 
     log::info!("\n{}", summary);
 
     Ok(())
+}
+
+fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<(Comic, Duration)>> {
+    let results = files
+        .into_par_iter()
+        .map(|file| {
+            let (result, duration) = timer_result(|| {
+                let comic = process_to_epub(
+                    file,
+                    cli.manga_mode,
+                    cli.quality,
+                    cli.prefix.as_deref(),
+                    cli.auto_crop,
+                )?;
+
+                let spawned = mobi_converter::create_mobi(&comic)?;
+                anyhow::Ok((comic, spawned))
+            });
+
+            let (comic, spawned) = result?;
+
+            anyhow::Ok((comic, spawned, duration))
+        })
+        .collect::<Vec<_>>();
+
+    let results = results
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .into_par_iter()
+        .map(|(comic, spawned, processing)| {
+            let (result, wait_duration) = timer_result(|| spawned.wait());
+            result?;
+            Ok((comic, processing + wait_duration))
+        })
+        .collect::<Result<Vec<_>, anyhow::Error>>()?;
+
+    Ok(results)
 }
 
 fn process_to_epub(
