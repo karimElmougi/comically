@@ -1,14 +1,13 @@
 use ratatui::{
     backend::Backend,
     buffer::Buffer,
-    crossterm::{event, ExecutableCommand},
+    crossterm::event,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::Line,
     widgets::{Block, Gauge, Paragraph, Widget},
-    Frame, Terminal, Viewport,
+    Frame, Terminal,
 };
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     collections::HashMap,
     sync::mpsc,
@@ -23,7 +22,6 @@ struct AppState {
     comic_states: HashMap<usize, ComicState>,
     processing_complete: Option<Duration>,
 
-    scroll_state: ratatui::widgets::ScrollbarState,
     scroll_offset: usize,
     pending_conversions: Vec<(Comic, SpawnedKindleGen, Instant)>,
 }
@@ -69,7 +67,6 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
         comic_states: HashMap::new(),
         processing_complete: None,
 
-        scroll_state: ratatui::widgets::ScrollbarState::default(),
         scroll_offset: 0,
         pending_conversions: Vec::new(),
     };
@@ -86,17 +83,13 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
                     break;
                 }
                 event::KeyCode::Down | event::KeyCode::Char('j') => {
-                    if !state.comic_order.is_empty()
-                        && state.scroll_offset < state.comic_order.len()
-                    {
+                    if !state.comic_order.is_empty() {
                         state.scroll_offset = state.scroll_offset.saturating_add(1);
-                        state.scroll_state = state.scroll_state.position(state.scroll_offset);
                     }
                 }
                 event::KeyCode::Up | event::KeyCode::Char('k') => {
                     if state.scroll_offset > 0 {
                         state.scroll_offset = state.scroll_offset.saturating_sub(1);
-                        state.scroll_state = state.scroll_state.position(state.scroll_offset);
                     }
                 }
                 _ => {}
@@ -114,8 +107,6 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
                     },
                 );
                 state.comic_order.push(id);
-
-                state.scroll_state = state.scroll_state.content_length(state.comic_order.len());
             }
             Event::ComicUpdate { id, status } => {
                 if let Some(state) = state.comic_states.get_mut(&id) {
@@ -161,11 +152,16 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
     let visible_height = main_area.height as usize;
     let total_comics = state.comic_order.len();
 
+    // Calculate the maximum valid scroll position
+    let max_scroll = total_comics.saturating_sub(visible_height);
+    // Ensure scroll_offset is within bounds
+    if state.scroll_offset > max_scroll {
+        state.scroll_offset = max_scroll;
+    }
+
     let visible_items = {
-        let max_scroll = total_comics.saturating_sub(visible_height);
-        let scroll_offset = state.scroll_offset.min(max_scroll);
-        let end_idx = (scroll_offset + visible_height).min(total_comics);
-        &state.comic_order[scroll_offset..end_idx]
+        let end_idx = (state.scroll_offset + visible_height).min(total_comics);
+        &state.comic_order[state.scroll_offset..end_idx]
     };
 
     let constraints = vec![Constraint::Length(1); visible_items.len()];
@@ -229,13 +225,17 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
     }
 
     if total_comics > visible_height {
+        let mut scroll_state = ratatui::widgets::ScrollbarState::default()
+            .content_length(max_scroll)
+            .position(state.scroll_offset);
+
         frame.render_stateful_widget(
             ratatui::widgets::Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
                 .style(Style::default().fg(Color::White))
                 .thumb_style(Style::default().fg(Color::Blue)),
             main_area,
-            &mut state.scroll_state,
+            &mut scroll_state,
         );
     }
 
