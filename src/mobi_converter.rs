@@ -6,7 +6,6 @@ use std::process::Command;
 use crate::Comic;
 
 /// Converts an EPUB file to MOBI using Amazon's KindleGen
-#[tracing::instrument(skip(comic))]
 pub fn create_mobi(comic: &Comic) -> Result<SpawnedKindleGen> {
     let epub_path = comic.epub_file();
     if !epub_path.exists() {

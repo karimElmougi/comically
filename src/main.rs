@@ -11,9 +11,6 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use tracing::{debug, info, instrument, span, Level};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-// use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -49,14 +46,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber
-    let indicatif_layer =
-        tracing_indicatif::IndicatifLayer::new().with_max_progress_bars(u64::MAX, None);
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(indicatif_layer.get_stderr_writer()))
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(indicatif_layer)
-        .init();
+    env_logger::init();
 
     if cfg!(target_os = "macos") {
         let additional_paths = [
@@ -83,15 +73,30 @@ fn main() -> anyhow::Result<()> {
 
     let files: Vec<PathBuf> = find_files(&cli)?;
 
-    info!("Processing {} comic files", files.len());
-    let results = process_files(files, &cli)?;
+    // Configure a MultiProgress that properly refreshes
+    let multi_progress = MultiProgress::new();
+    multi_progress.set_draw_target(indicatif::ProgressDrawTarget::stderr_with_hz(20));
+    multi_progress.set_move_cursor(true);
+
+    // Overall progress bar - simpler styling
+    let overall_bar = multi_progress.add(ProgressBar::new(files.len() as u64));
+    let overall_style = ProgressStyle::with_template(
+        "✨ [Total: {elapsed_precise}] {wide_bar:.yellow/red} {percent}% ({pos}/{len}) {msg}",
+    )
+    .unwrap()
+    .progress_chars("█▓▒░ ");
+    overall_bar.set_style(overall_style);
+    overall_bar.set_message("converting files");
+
+    let results = process_files(files, &cli, multi_progress.clone(), overall_bar.clone())?;
 
     let _ = results;
+
+    overall_bar.finish_with_message("All files processed");
 
     Ok(())
 }
 
-#[instrument(skip(cli))]
 fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     fn valid_file(path: &std::path::Path) -> bool {
         path.extension()
@@ -126,35 +131,68 @@ fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-#[instrument(skip(files, cli), fields(num_files = files.len()))]
-fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<Comic>> {
-    let results = files
-        .into_par_iter()
+fn process_files(
+    files: Vec<PathBuf>,
+    cli: &Cli,
+    multi_progress: MultiProgress,
+    overall_bar: ProgressBar,
+) -> anyhow::Result<Vec<Comic>> {
+    let style = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:30.cyan/blue} {pos:>4}/{len:4} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-");
+
+    let file_bars: Vec<_> = files
+        .iter()
         .map(|file| {
-            let mut comic = create_comic(
+            let bar = multi_progress.add(ProgressBar::new(5));
+            bar.set_style(style.clone());
+            bar.set_message(format!(
+                "{}",
+                file.file_stem().unwrap_or_default().to_string_lossy()
+            ));
+            (file.clone(), bar)
+        })
+        .collect();
+
+    // Spawn a thread that will tick all active bars every second
+    let ticking = Arc::new(AtomicBool::new(true));
+    let ticker_thread = std::thread::spawn({
+        let overall_bar = overall_bar.clone();
+        let ticking = ticking.clone();
+        let file_bars = file_bars.clone();
+        move || {
+            while ticking.load(std::sync::atomic::Ordering::Acquire) {
+                // // Tick all active bars
+                for (_, bar) in file_bars.iter() {
+                    bar.tick();
+                }
+
+                overall_bar.tick();
+
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+    });
+
+    let results = file_bars
+        .into_par_iter()
+        .map(|(file, file_bar)| {
+            let comic = process_to_epub(
                 file.clone(),
                 cli.manga_mode,
                 cli.quality,
                 cli.prefix.as_deref(),
                 cli.auto_crop,
+                &file_bar,
             )?;
 
-            let span = comic.span.clone();
-            let _guard = span.enter();
-
-            debug!("Extracting CBZ archive");
-            comic_archive::extract_cbz(&mut comic)?;
-
-            debug!("Processing images");
-            image_processor::process_images(&mut comic)?;
-
-            debug!("Building EPUB");
-            epub_builder::build_epub(&comic)?;
-
-            debug!("Creating MOBI for {}", file.display());
             let spawned = mobi_converter::create_mobi(&comic)?;
+            file_bar.inc(1);
+            file_bar.set_message(format!("{} converting to MOBI", comic.title));
 
-            anyhow::Ok((comic, spawned))
+            anyhow::Ok((comic, spawned, file_bar))
         })
         .collect::<Vec<_>>();
 
@@ -162,31 +200,40 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<Comic>> {
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?
         .into_par_iter()
-        .map(|(comic, spawned)| {
-            let span = comic.span.clone();
-            let _guard = span.enter();
-
-            let span = span!(Level::INFO, "wait_for_mobi", file = %comic.input.display());
-            let _guard = span.enter();
-
+        .map(|(comic, spawned, file_bar)| {
             let result = spawned.wait();
+            file_bar.finish_with_message(format!(
+                "{} {}",
+                comic.title,
+                result.is_ok().then_some("✓").unwrap_or("✗")
+            ));
 
             result?;
+
+            // Update overall progress
+            overall_bar.inc(1);
 
             Ok(comic)
         })
         .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
+    overall_bar.finish_with_message("All files processed");
+
+    ticking.store(false, std::sync::atomic::Ordering::Release);
+    ticker_thread.join().unwrap();
+
     Ok(results)
 }
 
-fn create_comic(
+fn process_to_epub(
     file: PathBuf,
     manga_mode: bool,
     quality: u8,
     title_prefix: Option<&str>,
     auto_crop: bool,
+    progress_bar: &ProgressBar,
 ) -> anyhow::Result<Comic> {
+    log::debug!("Processing {} to EPUB", file.display());
     let quality = quality.clamp(0, 100);
 
     let title_prefix = title_prefix
@@ -204,12 +251,11 @@ fn create_comic(
 
     let temp_dir = tempfile::tempdir()?;
 
-    let comic = Comic {
+    let mut comic = Comic {
         directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
 
-        span: span!(Level::INFO, "process_comic", file = %title),
         title,
         prefix: title_prefix,
         input: file,
@@ -219,6 +265,18 @@ fn create_comic(
         auto_crop,
     };
 
+    progress_bar.set_message(format!("{} extracting...", comic.title));
+    comic_archive::extract_cbz(&mut comic)?;
+    progress_bar.inc(1);
+
+    progress_bar.set_message(format!("{} processing images", comic.title));
+    image_processor::process_images(&mut comic)?;
+    progress_bar.inc(1);
+
+    progress_bar.set_message(format!("{} building EPUB", comic.title));
+    epub_builder::build_epub(&comic)?;
+    progress_bar.inc(1);
+
     Ok(comic)
 }
 
@@ -226,7 +284,6 @@ pub struct Comic {
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
-    span: span::Span,
 
     // config
     prefix: Option<String>,
@@ -281,5 +338,32 @@ impl Comic {
         }
         path.set_extension("mobi");
         path
+    }
+}
+
+fn timer_log<F, T>(label: &str, func: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let (result, duration) = timer(func);
+    log::info!("{}: {}ms", label, duration.as_millis());
+    result
+}
+
+fn timer<F, T>(func: F) -> (T, std::time::Duration)
+where
+    F: FnOnce() -> T,
+{
+    let start = std::time::Instant::now();
+    let result = func();
+    let duration = start.elapsed();
+    (result, duration)
+}
+
+fn display_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
     }
 }

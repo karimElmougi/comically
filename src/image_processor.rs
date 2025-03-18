@@ -9,7 +9,6 @@ use std::path::Path;
 use crate::{Comic, ProcessedImage};
 
 /// Process all images in the source directory
-#[tracing::instrument(skip(comic))]
 pub fn process_images(comic: &mut Comic) -> Result<()> {
     log::debug!("Processing images in {}", &comic.title);
 

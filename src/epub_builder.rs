@@ -9,7 +9,6 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::{Comic, ProcessedImage};
 
 /// Builds an EPUB file from the processed images
-#[tracing::instrument(skip(comic))]
 pub fn build_epub(comic: &Comic) -> Result<()> {
     // Create EPUB working directory
     let epub_dir = comic.epub_dir();

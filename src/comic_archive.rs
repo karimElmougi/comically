@@ -7,7 +7,6 @@ use zip::ZipArchive;
 use crate::Comic;
 
 /// Extracts a CBZ file to the target directory
-#[tracing::instrument(skip(comic))]
 pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
     log::debug!("Extracting CBZ: {}", comic.input.display());
 
