@@ -44,7 +44,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
     log::debug!("Processed {} images for {}", processed.len(), &comic.title);
 
     if processed.is_empty() {
-        anyhow::bail!("No images were processed");
+        anyhow::bail!("No images were processed for {}", &comic.title);
     }
 
     processed.sort_by_key(|(a, _)| a.to_string_lossy().into_owned());
@@ -73,12 +73,12 @@ fn process_image(
 
     let img = if crop {
         if let Some(cropped) = auto_crop(&img) {
-            resize_image(&*cropped, device_dimensions)?
+            resize_image(&*cropped, device_dimensions)
         } else {
-            resize_image(&img, device_dimensions)?
+            resize_image(&img, device_dimensions)
         }
     } else {
-        resize_image(&img, device_dimensions)?
+        resize_image(&img, device_dimensions)
     };
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
@@ -235,7 +235,7 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
 fn resize_image<I>(
     img: &I,
     device_dimensions: (u32, u32),
-) -> Result<image::ImageBuffer<I::Pixel, Vec<<I::Pixel as image::Pixel>::Subpixel>>>
+) -> image::ImageBuffer<I::Pixel, Vec<<I::Pixel as image::Pixel>::Subpixel>>
 where
     I: GenericImageView,
     <I as GenericImageView>::Pixel: 'static,
@@ -252,27 +252,14 @@ where
         FilterType::Lanczos3
     };
 
-    // Calculate aspect ratios
-    let ratio_device = target_height as f32 / target_width as f32;
-    let ratio_image = height as f32 / width as f32;
+    let width_ratio = target_width as f32 / width as f32;
+    let height_ratio = target_height as f32 / height as f32;
+    let ratio = width_ratio.min(height_ratio);
 
-    // Determine resize strategy based on aspect ratios
-    let processed = if (ratio_image - ratio_device).abs() < 0.015 {
-        // Similar aspect ratios - use fit to fill the screen
-        image::imageops::resize(img, target_width, target_height, filter)
-    } else {
-        // Different aspect ratios - maintain aspect ratio
-        let width_ratio = target_width as f32 / width as f32;
-        let height_ratio = target_height as f32 / height as f32;
-        let ratio = width_ratio.min(height_ratio);
+    let new_width = (width as f32 * ratio) as u32;
+    let new_height = (height as f32 * ratio) as u32;
 
-        let new_width = (width as f32 * ratio) as u32;
-        let new_height = (height as f32 * ratio) as u32;
-
-        image::imageops::resize(img, new_width, new_height, filter)
-    };
-
-    Ok(processed)
+    image::imageops::resize(img, new_width, new_height, filter)
 }
 
 #[cfg(test)]
