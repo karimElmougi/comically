@@ -69,15 +69,17 @@ fn process_image(
         .context(format!("Failed to open image: {}", input_path.display()))?;
 
     let mut img = img.into_luma8();
-
     auto_contrast(&mut img);
 
-    let img = crop
-        .then(|| auto_crop(&img))
-        .flatten()
-        .unwrap_or(DynamicImage::from(img));
-
-    let img = resize_image(img, device_dimensions)?;
+    let img = if crop {
+        if let Some(cropped) = auto_crop(&img) {
+            resize_image(&*cropped, device_dimensions)?
+        } else {
+            resize_image(&img, device_dimensions)?
+        }
+    } else {
+        resize_image(&img, device_dimensions)?
+    };
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
     let mut encoder =
@@ -88,7 +90,7 @@ fn process_image(
         output_path.display()
     ))?;
 
-    Ok(img)
+    Ok(DynamicImage::from(img))
 }
 
 fn auto_contrast(img: &mut GrayImage) {
@@ -104,7 +106,7 @@ const MIN_MARGIN_WIDTH: u32 = 10;
 const SAFETY_MARGIN: u32 = 2;
 
 /// Auto-crop white margins from all sides of the image
-fn auto_crop(img: &GrayImage) -> Option<DynamicImage> {
+fn auto_crop<'a>(img: &'a GrayImage) -> Option<image::SubImage<&'a GrayImage>> {
     let (width, height) = img.dimensions();
 
     // Left margin: scan from left to right
@@ -181,9 +183,12 @@ fn auto_crop(img: &GrayImage) -> Option<DynamicImage> {
         && crop_height < height;
 
     if should_crop_horizontal || should_crop_vertical {
-        return Some(DynamicImage::from(
-            image::imageops::crop_imm(img, left_margin, top_margin, crop_width, crop_height)
-                .to_image(),
+        return Some(image::imageops::crop_imm(
+            img,
+            left_margin,
+            top_margin,
+            crop_width,
+            crop_height,
         ));
     }
 
@@ -228,7 +233,14 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
     dark_neighbors >= REQUIRED_NEIGHBORS
 }
 
-fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<DynamicImage> {
+fn resize_image<I>(
+    img: &I,
+    device_dimensions: (u32, u32),
+) -> Result<image::ImageBuffer<I::Pixel, Vec<<I::Pixel as image::Pixel>::Subpixel>>>
+where
+    I: GenericImageView,
+    <I as GenericImageView>::Pixel: 'static,
+{
     let (target_width, target_height) = device_dimensions;
     let (width, height) = img.dimensions();
 
@@ -248,7 +260,7 @@ fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<Dyna
     // Determine resize strategy based on aspect ratios
     let processed = if (ratio_image - ratio_device).abs() < 0.015 {
         // Similar aspect ratios - use fit to fill the screen
-        img.resize_exact(target_width, target_height, filter)
+        image::imageops::resize(img, target_width, target_height, filter)
     } else {
         // Different aspect ratios - maintain aspect ratio
         let width_ratio = target_width as f32 / width as f32;
@@ -258,7 +270,7 @@ fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<Dyna
         let new_width = (width as f32 * ratio) as u32;
         let new_height = (height as f32 * ratio) as u32;
 
-        img.resize(new_width, new_height, filter)
+        image::imageops::resize(img, new_width, new_height, filter)
     };
 
     Ok(processed)
