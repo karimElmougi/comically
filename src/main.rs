@@ -4,8 +4,13 @@ mod image_processor;
 mod mobi_converter;
 
 use clap::Parser;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::{env, path::PathBuf, time::Duration};
+use std::{
+    env,
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -68,33 +73,26 @@ fn main() -> anyhow::Result<()> {
 
     let files: Vec<PathBuf> = find_files(&cli)?;
 
-    log::info!("Processing {} files", files.len());
+    // Configure a MultiProgress that properly refreshes
+    let multi_progress = MultiProgress::new();
+    multi_progress.set_draw_target(indicatif::ProgressDrawTarget::stderr_with_hz(20));
+    multi_progress.set_move_cursor(true);
 
-    let (results, duration) = timer(|| process_files(files, &cli));
-    let mut results = results?;
+    // Overall progress bar - simpler styling
+    let overall_bar = multi_progress.add(ProgressBar::new(files.len() as u64));
+    let overall_style = ProgressStyle::with_template(
+        "✨ [Total: {elapsed_precise}] {wide_bar:.yellow/red} {percent}% ({pos}/{len}) {msg}",
+    )
+    .unwrap()
+    .progress_chars("█▓▒░ ");
+    overall_bar.set_style(overall_style);
+    overall_bar.set_message("converting files");
 
-    results.sort_by_key(|(c, _)| c.title.clone());
+    let results = process_files(files, &cli, multi_progress.clone(), overall_bar.clone())?;
 
-    let mut summary = String::new();
-    for (comic, duration) in &results {
-        summary.push_str(&format!(
-            "✓ {} ({})\n",
-            comic.input.display(),
-            display_duration(*duration)
-        ));
-    }
+    let _ = results;
 
-    let successful_count = results.iter().count();
-    let failed_count = results.len() - successful_count;
-    summary.push_str(&format!(
-        "\nProcessed {} file(s) ({} succeeded, {} failed) in {}",
-        results.len(),
-        successful_count,
-        failed_count,
-        display_duration(duration)
-    ));
-
-    log::info!("\n{}", summary);
+    overall_bar.finish_with_message("All files processed");
 
     Ok(())
 }
@@ -123,43 +121,106 @@ fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
         }
     }
 
+    files.sort_by_key(|path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+
     Ok(files)
 }
 
-fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<(Comic, Duration)>> {
-    let results = files
-        .into_par_iter()
+fn process_files(
+    files: Vec<PathBuf>,
+    cli: &Cli,
+    multi_progress: MultiProgress,
+    overall_bar: ProgressBar,
+) -> anyhow::Result<Vec<Comic>> {
+    let style = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:30.cyan/blue} {pos:>4}/{len:4} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-");
+
+    let file_bars: Vec<_> = files
+        .iter()
         .map(|file| {
-            let (result, duration) = timer(|| {
-                let comic = process_to_epub(
-                    file,
-                    cli.manga_mode,
-                    cli.quality,
-                    cli.prefix.as_deref(),
-                    cli.auto_crop,
-                )?;
+            let bar = multi_progress.add(ProgressBar::new(5));
+            bar.set_style(style.clone());
+            bar.set_message(format!(
+                "{}",
+                file.file_stem().unwrap_or_default().to_string_lossy()
+            ));
+            (file.clone(), bar)
+        })
+        .collect();
 
-                let spawned = mobi_converter::create_mobi(&comic)?;
-                anyhow::Ok((comic, spawned))
-            });
+    // Spawn a thread that will tick all active bars every second
+    let ticking = Arc::new(AtomicBool::new(true));
+    let ticker_thread = std::thread::spawn({
+        let overall_bar = overall_bar.clone();
+        let ticking = ticking.clone();
+        let file_bars = file_bars.clone();
+        move || {
+            while ticking.load(std::sync::atomic::Ordering::Acquire) {
+                // // Tick all active bars
+                for (_, bar) in file_bars.iter() {
+                    bar.tick();
+                }
 
-            let (comic, spawned) = result?;
+                overall_bar.tick();
 
-            anyhow::Ok((comic, spawned, duration))
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+    });
+
+    let results = file_bars
+        .into_par_iter()
+        .map(|(file, file_bar)| {
+            let comic = process_to_epub(
+                file.clone(),
+                cli.manga_mode,
+                cli.quality,
+                cli.prefix.as_deref(),
+                cli.auto_crop,
+                &file_bar,
+            )?;
+
+            let spawned = mobi_converter::create_mobi(&comic)?;
+            file_bar.inc(1);
+            file_bar.set_message(format!("{} converting to MOBI", comic.title));
+
+            anyhow::Ok((comic, spawned, file_bar))
         })
         .collect::<Vec<_>>();
 
-    // wait for all mobi calls to finish
     let results = results
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?
         .into_par_iter()
-        .map(|(comic, spawned, processing)| {
-            let (result, wait_duration) = timer(|| spawned.wait());
+        .map(|(comic, spawned, file_bar)| {
+            let result = spawned.wait();
+            file_bar.finish_with_message(format!(
+                "{} {}",
+                comic.title,
+                result.is_ok().then_some("✓").unwrap_or("✗")
+            ));
+
             result?;
-            Ok((comic, processing + wait_duration))
+
+            // Update overall progress
+            overall_bar.inc(1);
+
+            Ok(comic)
         })
         .collect::<Result<Vec<_>, anyhow::Error>>()?;
+
+    overall_bar.finish_with_message("All files processed");
+
+    ticking.store(false, std::sync::atomic::Ordering::Release);
+    ticker_thread.join().unwrap();
 
     Ok(results)
 }
@@ -170,6 +231,7 @@ fn process_to_epub(
     quality: u8,
     title_prefix: Option<&str>,
     auto_crop: bool,
+    progress_bar: &ProgressBar,
 ) -> anyhow::Result<Comic> {
     log::debug!("Processing {} to EPUB", file.display());
     let quality = quality.clamp(0, 100);
@@ -178,6 +240,7 @@ fn process_to_epub(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(String::from);
+
     let title = {
         let file_stem = file.file_stem().unwrap().to_string_lossy();
         match &title_prefix {
@@ -202,11 +265,17 @@ fn process_to_epub(
         auto_crop,
     };
 
-    timer_log("Extract CBZ", || comic_archive::extract_cbz(&mut comic))?;
-    timer_log("Process Images", || {
-        image_processor::process_images(&mut comic)
-    })?;
-    timer_log("Create EPUB", || epub_builder::build_epub(&comic))?;
+    progress_bar.set_message(format!("{} extracting...", comic.title));
+    comic_archive::extract_cbz(&mut comic)?;
+    progress_bar.inc(1);
+
+    progress_bar.set_message(format!("{} processing images", comic.title));
+    image_processor::process_images(&mut comic)?;
+    progress_bar.inc(1);
+
+    progress_bar.set_message(format!("{} building EPUB", comic.title));
+    epub_builder::build_epub(&comic)?;
+    progress_bar.inc(1);
 
     Ok(comic)
 }
@@ -277,7 +346,7 @@ where
     F: FnOnce() -> T,
 {
     let (result, duration) = timer(func);
-    log::debug!("{}: {}ms", label, duration.as_millis());
+    log::info!("{}: {}ms", label, duration.as_millis());
     result
 }
 
