@@ -1,11 +1,11 @@
-use clap::Parser;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::{env, path::PathBuf, time::Duration};
-
 mod comic_archive;
 mod epub_builder;
 mod image_processor;
 mod mobi_converter;
+
+use clap::Parser;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::{env, path::PathBuf, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -66,35 +66,11 @@ fn main() -> anyhow::Result<()> {
             .unwrap();
     }
 
-    // Collect all files to process
-    let files_to_process: Vec<PathBuf> = cli
-        .input
-        .iter()
-        .flat_map(|path| {
-            if path.is_dir() {
-                std::fs::read_dir(path)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|entry| {
-                        let entry = entry.ok()?;
-                        let path = entry.path();
-                        let extension = path.extension().unwrap_or_default();
-                        if extension == "cbz" || extension == "zip" {
-                            Some(path)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![path.clone()]
-            }
-        })
-        .collect();
+    let files: Vec<PathBuf> = find_files(&cli)?;
 
-    log::info!("Processing {} files", files_to_process.len());
+    log::info!("Processing {} files", files.len());
 
-    let (results, duration) = timer_result(|| process_files(files_to_process, &cli));
+    let (results, duration) = timer(|| process_files(files, &cli));
     let mut results = results?;
 
     results.sort_by_key(|(c, _)| c.title.clone());
@@ -123,11 +99,38 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
+    fn valid_file(path: &std::path::Path) -> bool {
+        path.extension()
+            .map_or(false, |ext| ext == "cbz" || ext == "zip")
+    }
+
+    let mut files = Vec::new();
+    for path in &cli.input {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).into_iter().flatten() {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if valid_file(&path) {
+                        files.push(path);
+                    }
+                }
+            }
+        } else {
+            if valid_file(&path) {
+                files.push(path.clone());
+            }
+        }
+    }
+
+    Ok(files)
+}
+
 fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<(Comic, Duration)>> {
     let results = files
         .into_par_iter()
         .map(|file| {
-            let (result, duration) = timer_result(|| {
+            let (result, duration) = timer(|| {
                 let comic = process_to_epub(
                     file,
                     cli.manga_mode,
@@ -151,7 +154,7 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<(Comic, D
         .collect::<Result<Vec<_>, _>>()?
         .into_par_iter()
         .map(|(comic, spawned, processing)| {
-            let (result, wait_duration) = timer_result(|| spawned.wait());
+            let (result, wait_duration) = timer(|| spawned.wait());
             result?;
             Ok((comic, processing + wait_duration))
         })
@@ -272,12 +275,12 @@ fn timer_log<F, T>(label: &str, func: F) -> T
 where
     F: FnOnce() -> T,
 {
-    let (result, duration) = timer_result(func);
+    let (result, duration) = timer(func);
     log::debug!("{}: {}ms", label, duration.as_millis());
     result
 }
 
-fn timer_result<F, T>(func: F) -> (T, std::time::Duration)
+fn timer<F, T>(func: F) -> (T, std::time::Duration)
 where
     F: FnOnce() -> T,
 {
