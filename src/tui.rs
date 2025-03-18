@@ -202,14 +202,14 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
             main_area,
             &mut scroll_state,
         );
+
+        let keys_text = "q: Quit | ↑/k: Up | ↓/j: Down";
+        let keys = Paragraph::new(keys_text)
+            .style(Style::default().fg(Color::White))
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(keys, footer_area);
     }
-
-    let keys_text = "q: Quit | ↑/k: Up | ↓/j: Down";
-    let keys = Paragraph::new(keys_text)
-        .style(Style::default().fg(Color::White))
-        .alignment(ratatui::layout::Alignment::Center);
-
-    frame.render_widget(keys, footer_area);
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
@@ -328,13 +328,13 @@ impl<'a> Widget for StageTimingBar<'a> {
                 if area.width >= 10 {
                     let stage_name = match i {
                         0 => "extract",
-                        1 => "process",
+                        1 => "imgproc",
                         2 => "epub",
                         3 => "mobi",
                         _ => "",
                     };
 
-                    let label = format!("{}: {:.1}s", stage_name, duration);
+                    let label = format!("{} {:.1}s", stage_name, duration);
                     let label_width = label.len() as u16;
 
                     if label_width <= area.width {
