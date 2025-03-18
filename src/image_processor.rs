@@ -10,7 +10,7 @@ use crate::{Comic, ProcessedImage};
 
 /// Process all images in the source directory
 pub fn process_images(comic: &mut Comic) -> Result<()> {
-    log::debug!("Processing images in {}", comic.directory.display());
+    log::debug!("Processing images in {}", &comic.title);
 
     // Create a processed directory
     let images_dir = comic.images_dir();
@@ -41,7 +41,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
         })
         .collect::<Vec<_>>();
 
-    log::debug!("Processed {} images", processed.len());
+    log::debug!("Processed {} images for {}", processed.len(), &comic.title);
 
     if processed.is_empty() {
         anyhow::bail!("No images were processed");
@@ -66,7 +66,7 @@ fn process_image(
     crop: bool,
 ) -> Result<DynamicImage> {
     let img = image::open(input_path)
-        .context(format!("Failed to open image: {}", input_path.display()))?;
+        .with_context(|| format!("Failed to open image: {}", input_path.display()))?;
 
     let mut img = img.into_luma8();
     auto_contrast(&mut img);
@@ -85,10 +85,9 @@ fn process_image(
     let mut encoder =
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, compression_quality);
 
-    encoder.encode_image(&img).context(format!(
-        "Failed to save processed image: {}",
-        output_path.display()
-    ))?;
+    encoder
+        .encode_image(&img)
+        .with_context(|| format!("Failed to save processed image: {}", output_path.display()))?;
 
     Ok(DynamicImage::from(img))
 }

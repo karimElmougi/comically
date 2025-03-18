@@ -22,8 +22,8 @@ struct Cli {
     #[arg(long, short, default_value_t = true)]
     manga_mode: bool,
 
-    /// the quality of the images, between 0 and 100
-    #[arg(long, short, default_value_t = 50)]
+    /// the jpg compression quality of the images, between 0 and 100
+    #[arg(long, short, default_value_t = 75)]
     quality: u8,
 
     /// the prefix to add to the title of the comic + the output file
@@ -149,6 +149,7 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli) -> anyhow::Result<Vec<(Comic, D
         })
         .collect::<Vec<_>>();
 
+    // wait for all mobi calls to finish
     let results = results
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?
