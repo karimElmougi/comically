@@ -368,10 +368,7 @@ fn create_epub_file(
     let writer = BufWriter::new(file);
     let mut zip = ZipWriter::new(writer);
 
-    // Options for no compression
     let options_stored = FileOptions::default().compression_method(CompressionMethod::Stored);
-
-    // Options with compression
     let options_deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add mimetype first (must not be compressed)
@@ -394,8 +391,9 @@ fn create_epub_file(
             let rel_path_str = rel_path.to_str().unwrap();
 
             zip.start_file(rel_path_str, options_deflated)?;
-            let content = fs::read(path)?;
-            zip.write_all(&content)?;
+            let content = fs::File::open(path)?;
+            let mut content = std::io::BufReader::new(content);
+            std::io::copy(&mut content, &mut zip)?;
         }
     }
 
@@ -405,8 +403,9 @@ fn create_epub_file(
         let rel_path = format!("OEBPS/{}", rel_path);
 
         zip.start_file(rel_path, options_stored)?;
-        let content = fs::read(path)?;
-        zip.write_all(&content)?;
+        let content = fs::File::open(path)?;
+        let mut content = std::io::BufReader::new(content);
+        std::io::copy(&mut content, &mut zip)?;
     }
 
     zip.finish()?;

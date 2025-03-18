@@ -16,7 +16,9 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
 
     // Open the zip file
     let file = File::open(&comic.input).context("Failed to open CBZ file")?;
-    let mut archive = ZipArchive::new(file).context("Failed to parse CBZ file as ZIP archive")?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut archive =
+        ZipArchive::new(&mut reader).context("Failed to parse CBZ file as ZIP archive")?;
 
     // Extract all image files
     let mut extracted_count = 0;
@@ -47,8 +49,9 @@ pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
         comic.input_page_names.push(file_name.to_string());
 
         // Extract the file
-        let mut outfile = File::create(&target_path)
+        let outfile = File::create(&target_path)
             .context(format!("Failed to create file: {}", target_path.display()))?;
+        let mut outfile = std::io::BufWriter::new(outfile);
         io::copy(&mut file, &mut outfile)
             .context(format!("Failed to extract file: {}", outpath.display()))?;
 
