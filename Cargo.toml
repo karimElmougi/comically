@@ -21,3 +21,7 @@ walkdir = "2.4"
 chrono = "0.4"
 rayon = "1.10.0"
 color_quant = "1.1"
+tracing = { version = "0.1.41" }
+indicatif = "0.17.11"
+tracing-subscriber = { version = "0.3.19",  features = ["env-filter"] }
+tracing-indicatif = "0.3.9"
