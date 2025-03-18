@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use image::imageops::colorops::contrast_in_place;
+use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -63,7 +63,7 @@ fn process_image(
     output_path: &Path,
     device_dimensions: (u32, u32),
     compression_quality: u8,
-    auto_crop: bool,
+    crop: bool,
 ) -> Result<DynamicImage> {
     let img = image::open(input_path)
         .context(format!("Failed to open image: {}", input_path.display()))?;
@@ -72,8 +72,8 @@ fn process_image(
 
     auto_contrast(&mut img);
 
-    let img = auto_crop
-        .then(|| auto_crop_sides(&img))
+    let img = crop
+        .then(|| auto_crop(&img))
         .flatten()
         .unwrap_or(DynamicImage::from(img));
 
@@ -82,6 +82,7 @@ fn process_image(
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
     let mut encoder =
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, compression_quality);
+
     encoder.encode_image(&img).context(format!(
         "Failed to save processed image: {}",
         output_path.display()
@@ -91,70 +92,140 @@ fn process_image(
 }
 
 fn auto_contrast(img: &mut GrayImage) {
+    brighten_in_place(img, -5);
     contrast_in_place(img, 20.0);
 }
 
-/// Auto-crop white margins from left and right sides of the image
-fn auto_crop_sides(img: &GrayImage) -> Option<DynamicImage> {
-    const WHITE_THRESHOLD: u8 = 230; // Pixel values above this are considered "white"
-    const MIN_MARGIN_WIDTH: u32 = 10; // Minimum width to consider cropping
-    const SAMPLE_ROWS: usize = 5; // Number of rows to sample
-    const SAFETY_MARGIN: u32 = 2; // Extra margin to keep, avoiding cutting content
+// Pixel values above this are considered "white"
+const WHITE_THRESHOLD: u8 = 230;
+// Minimum width to consider cropping
+const MIN_MARGIN_WIDTH: u32 = 10;
+// Extra margin to keep, avoiding cutting content
+const SAFETY_MARGIN: u32 = 2;
 
+/// Auto-crop white margins from all sides of the image
+fn auto_crop(img: &GrayImage) -> Option<DynamicImage> {
     let (width, height) = img.dimensions();
 
-    // Sample multiple rows instead of just the middle
-    let mut sample_ys = Vec::with_capacity(SAMPLE_ROWS);
-    for i in 0..SAMPLE_ROWS {
-        sample_ys.push((height * (i + 1) as u32) / (SAMPLE_ROWS as u32 + 1));
+    // Left margin: scan from left to right
+    let mut left_margin = 0;
+    'left: for x in 0..width {
+        for y in 0..height {
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                left_margin = x;
+                break 'left;
+            }
+        }
     }
 
-    // Find the most conservative margins (closest to content)
-    let mut left_margin = width;
-    let mut right_margin = 0;
+    // Right margin: scan from right to left
+    let mut right_margin = width - 1;
+    'right: for x in (0..width).rev() {
+        for y in 0..height {
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                right_margin = x;
+                break 'right;
+            }
+        }
+    }
 
-    for &y in &sample_ys {
-        // Find leftmost non-white pixel for this row
+    // Top margin: scan from top to bottom
+    let mut top_margin = 0;
+    'top: for y in 0..height {
         for x in 0..width {
-            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD {
-                left_margin = left_margin.min(x);
-                break;
-            }
-        }
-
-        // Find rightmost non-white pixel for this row
-        for x in (0..width).rev() {
-            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD {
-                right_margin = right_margin.max(x);
-                break;
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                top_margin = y;
+                break 'top;
             }
         }
     }
 
-    // Guard against not finding any content
-    if left_margin >= width || right_margin == 0 {
+    // Bottom margin: scan from bottom to top
+    let mut bottom_margin = height - 1;
+    'bottom: for y in (0..height).rev() {
+        for x in 0..width {
+            if img.get_pixel(x, y)[0] < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                bottom_margin = y;
+                break 'bottom;
+            }
+        }
+    }
+
+    // If we didn't find any content, return None
+    if left_margin >= right_margin || top_margin >= bottom_margin {
         return None;
     }
 
     // Apply safety margin
     left_margin = left_margin.saturating_sub(SAFETY_MARGIN);
     right_margin = (right_margin + SAFETY_MARGIN).min(width - 1);
+    top_margin = top_margin.saturating_sub(SAFETY_MARGIN);
+    bottom_margin = (bottom_margin + SAFETY_MARGIN).min(height - 1);
 
     let crop_width = right_margin.saturating_sub(left_margin).saturating_add(1);
+    let crop_height = bottom_margin.saturating_sub(top_margin).saturating_add(1);
+
     let left_margin_size = left_margin;
     let right_margin_size = width.saturating_sub(right_margin).saturating_sub(1);
+    let top_margin_size = top_margin;
+    let bottom_margin_size = height.saturating_sub(bottom_margin).saturating_sub(1);
 
-    // Only crop if margins are wide enough AND we have a positive crop width
-    if (left_margin_size >= MIN_MARGIN_WIDTH || right_margin_size >= MIN_MARGIN_WIDTH)
+    // Only crop if at least one margin is wide enough AND we have positive crop dimensions
+    let should_crop_horizontal = (left_margin_size >= MIN_MARGIN_WIDTH
+        || right_margin_size >= MIN_MARGIN_WIDTH)
         && crop_width > 0
-        && crop_width < width
-    {
+        && crop_width < width;
+    let should_crop_vertical = (top_margin_size >= MIN_MARGIN_WIDTH
+        || bottom_margin_size >= MIN_MARGIN_WIDTH)
+        && crop_height > 0
+        && crop_height < height;
+
+    if should_crop_horizontal || should_crop_vertical {
         return Some(DynamicImage::from(
-            image::imageops::crop_imm(img, left_margin, 0, crop_width, height).to_image(),
+            image::imageops::crop_imm(img, left_margin, top_margin, crop_width, crop_height)
+                .to_image(),
         ));
     }
 
     None
+}
+
+/// Check if a pixel is likely to be content rather than noise
+#[inline]
+fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
+    // how many neighbors need to be dark to consider the pixel content
+    const REQUIRED_NEIGHBORS: i32 = 3;
+    // Look a bit farther for connected pixels
+    const DISTANCE: i32 = 4;
+
+    let (width, height) = img.dimensions();
+    let mut dark_neighbors = 0;
+
+    for dy in -DISTANCE..=DISTANCE {
+        for dx in -DISTANCE..=DISTANCE {
+            // skip center
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+
+            // Make sure coordinates are valid
+            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
+                if img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD {
+                    dark_neighbors += 1;
+
+                    // Early return if we have enough neighbors
+                    if dark_neighbors >= REQUIRED_NEIGHBORS {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    dark_neighbors >= REQUIRED_NEIGHBORS
 }
 
 fn resize_image(img: DynamicImage, device_dimensions: (u32, u32)) -> Result<DynamicImage> {
@@ -203,23 +274,17 @@ mod tests {
         // Create a 100x50 image with 25px left margin and 35px right margin
         let test_img = create_test_image(100, 50, 25, 35, &[]);
 
-        let left = find_leftmost_content(&test_img);
-        let right = find_rightmost_content(&test_img);
-
-        assert_eq!(left, 25, "Left content should start at x=25");
-        assert_eq!(right, 64, "Right content should end at x=64");
-
-        let result = auto_crop_sides(&test_img);
+        let result = auto_crop(&test_img);
         assert!(result.is_some(), "Cropping should have succeeded");
 
         let cropped = result.unwrap();
         let (cropped_width, cropped_height) = cropped.dimensions();
 
         assert_eq!(cropped_height, 50);
-        assert!(
-            cropped_width >= 35 && cropped_width <= 45,
-            "Cropped width {} is outside expected range [35-45]",
-            cropped_width
+        assert_eq!(
+            cropped_width,
+            100 - 60 + 2 * SAFETY_MARGIN,
+            "cropped width should be 60"
         );
     }
 
@@ -231,36 +296,31 @@ mod tests {
             50,
             20,
             20,
-            &[(5, 25), (96, 10)], // Noise in left and right margins
+            &[
+                // left
+                (5, 1),
+                (5, 2),
+                (5, 3),
+                // right
+                (95, 1),
+                (95, 2),
+                (95, 3),
+            ],
         );
 
-        let left = find_leftmost_content(&test_img);
-        let right = find_rightmost_content(&test_img);
+        let result = auto_crop(&test_img);
 
-        assert_eq!(left, 5, "Should detect noise at x=5");
-        assert_eq!(right, 96, "Should detect noise at x=96");
-
-        let result = auto_crop_sides(&test_img);
-        assert!(
-            result.is_some(),
-            "Cropping should succeed with noise pixels"
-        );
-
-        let cropped = result.unwrap();
+        let cropped = result.expect("Cropping should have succeeded");
         let (cropped_width, _) = cropped.dimensions();
 
-        assert!(
-            cropped_width >= 75 && cropped_width <= 85,
-            "Cropped width {} is outside expected range [75-85]",
-            cropped_width
-        );
+        assert_eq!(cropped_width, 100 - 40 + 2 * SAFETY_MARGIN,);
     }
 
     #[test]
     fn test_no_margins() {
         let test_img = create_test_image(100, 50, 0, 0, &[]);
 
-        let cropped_option = auto_crop_sides(&test_img);
+        let cropped_option = auto_crop(&test_img);
 
         assert!(
             cropped_option.is_none(),
@@ -272,20 +332,20 @@ mod tests {
     fn test_large_margin() {
         let test_img = create_test_image(100, 50, 30, 5, &[]);
 
-        let left = find_leftmost_content(&test_img);
-        let right = find_rightmost_content(&test_img);
-        assert_eq!(left, 30);
-        assert_eq!(right, 94);
-
-        let result = auto_crop_sides(&test_img);
+        let result = auto_crop(&test_img);
         assert!(
             result.is_some(),
             "Expected cropping to succeed with one large margin"
         );
+
+        let (width, height) = result.unwrap().dimensions();
+        assert_eq!(width, 100 - 35 + 2 * SAFETY_MARGIN);
+        assert_eq!(height, 50);
     }
 
     #[test]
     fn test_complex_image() {
+        // The shape has a 40px margin on both sides
         let mut img = GrayImage::new(200, 100);
 
         for y in 0..100 {
@@ -301,17 +361,65 @@ mod tests {
         }
 
         // Apply cropping
-        let result = auto_crop_sides(&img);
-        assert!(result.is_some(), "Expected cropping to succeed");
+        let result = auto_crop(&img);
 
-        // The shape has a 40px margin on both sides
-        let cropped = result.unwrap();
+        let cropped = result.expect("Cropping should have succeeded");
         let (cropped_width, _) = cropped.dimensions();
 
-        assert!(
-            cropped_width >= 115 && cropped_width <= 125,
-            "Cropped width {} is outside expected range [115-125]",
+        assert_eq!(
+            cropped_width,
+            200 - 80 + 2 * SAFETY_MARGIN,
+            "invalid cropped width"
+        );
+    }
+
+    #[test]
+    fn test_vertical_cropping() {
+        // Create a 100x100 image with 20px top margin and 30px bottom margin
+        let test_img = create_test_image_with_vertical(100, 100, 0, 0, 20, 30, &[]);
+
+        let top = find_topmost_content(&test_img);
+        let bottom = find_bottommost_content(&test_img);
+
+        assert_eq!(top, 20, "Top content should start at y=20");
+        assert_eq!(bottom, 69, "Bottom content should end at y=69");
+
+        let result = auto_crop(&test_img);
+        assert!(result.is_some(), "Cropping should have succeeded");
+
+        let cropped = result.unwrap();
+        let (_, cropped_height) = cropped.dimensions();
+
+        assert_eq!(
+            cropped_height,
+            100 - 50 + 2 * SAFETY_MARGIN,
+            "Cropped height {} is outside expected range [45-55]",
+            cropped_height
+        );
+    }
+
+    #[test]
+    fn test_all_margins_cropping() {
+        // Create a 200x200 image with margins on all sides
+        let test_img = create_test_image_with_vertical(200, 200, 30, 40, 25, 35, &[]);
+
+        let result = auto_crop(&test_img);
+        assert!(result.is_some(), "Cropping should have succeeded");
+
+        let cropped = result.unwrap();
+        let (cropped_width, cropped_height) = cropped.dimensions();
+
+        assert_eq!(
+            cropped_width,
+            200 - 70 + 2 * SAFETY_MARGIN,
+            "Cropped width {} is outside expected range [125-135]",
             cropped_width
+        );
+        assert_eq!(
+            cropped_height,
+            200 - 60 + 2 * SAFETY_MARGIN,
+            "Cropped height {} is outside expected range [135-145]",
+            cropped_height
         );
     }
 
@@ -342,6 +450,43 @@ mod tests {
 
         // Add noise pixels
         for &(x, y) in noise_positions {
+            img.put_pixel(x, y, Luma([0]));
+        }
+
+        img
+    }
+
+    // Helper function for creating test images with top and bottom margins
+    fn create_test_image_with_vertical(
+        width: u32,
+        height: u32,
+        left_margin: u32,
+        right_margin: u32,
+        top_margin: u32,
+        bottom_margin: u32,
+        noise_positions: &[(u32, u32)],
+    ) -> GrayImage {
+        let mut img = GrayImage::new(width, height);
+
+        // Fill with white
+        for y in 0..height {
+            for x in 0..width {
+                img.put_pixel(x, y, Luma([255]));
+            }
+        }
+
+        // Add content (black area) in the middle
+        let right_boundary = width.saturating_sub(right_margin);
+        let bottom_boundary = height.saturating_sub(bottom_margin);
+
+        for y in top_margin..bottom_boundary {
+            for x in left_margin..right_boundary {
+                img.put_pixel(x, y, Luma([0]));
+            }
+        }
+
+        // Add noise pixels
+        for &(x, y) in noise_positions {
             if x < width && y < height {
                 img.put_pixel(x, y, Luma([0]));
             }
@@ -350,27 +495,27 @@ mod tests {
         img
     }
 
-    fn find_leftmost_content(img: &GrayImage) -> u32 {
+    fn find_topmost_content(img: &GrayImage) -> u32 {
         let (width, height) = img.dimensions();
-        for x in 0..width {
-            for y in 0..height {
+        for y in 0..height {
+            for x in 0..width {
                 if img.get_pixel(x, y)[0] < 230 {
-                    return x;
+                    return y;
                 }
             }
         }
         0
     }
 
-    fn find_rightmost_content(img: &GrayImage) -> u32 {
+    fn find_bottommost_content(img: &GrayImage) -> u32 {
         let (width, height) = img.dimensions();
-        for x in (0..width).rev() {
-            for y in 0..height {
+        for y in (0..height).rev() {
+            for x in 0..width {
                 if img.get_pixel(x, y)[0] < 230 {
-                    return x;
+                    return y;
                 }
             }
         }
-        width - 1
+        height - 1
     }
 }
