@@ -4,9 +4,25 @@ mod image_processor;
 mod mobi_converter;
 
 use clap::Parser;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use ratatui::{
+    backend::Backend,
+    crossterm::{event, ExecutableCommand},
+    layout::{Constraint, Layout},
+    style::{Color, Style},
+    text::Line,
+    widgets::{Block, Gauge, Paragraph},
+    Frame, Terminal, Viewport,
+};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use std::{env, path::PathBuf, time::Instant};
+use std::{
+    collections::HashMap,
+    env,
+    path::PathBuf,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -42,7 +58,27 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    let log_path = "comically.log";
+    let log_file = std::fs::File::create(log_path)?;
+    std::env::set_var(
+        "RUST_LOG",
+        std::env::var("RUST_LOG")
+            .or_else(|_| std::env::var("LOG_ENV".to_string()))
+            .unwrap_or_else(|_| format!("{}=info", env!("CARGO_CRATE_NAME"))),
+    );
+
+    let file_subscriber = tracing_subscriber::fmt::layer()
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(log_file)
+        .with_target(false)
+        .with_ansi(false)
+        .with_filter(tracing_subscriber::filter::EnvFilter::from_default_env());
+
+    tracing_subscriber::registry()
+        .with(file_subscriber)
+        .with(tracing_error::ErrorLayer::default())
+        .init();
 
     if cfg!(target_os = "macos") {
         let additional_paths = [
@@ -69,32 +105,32 @@ fn main() -> anyhow::Result<()> {
 
     let files: Vec<PathBuf> = find_files(&cli)?;
 
-    // Configure a MultiProgress that properly refreshes
-    let multi_progress = MultiProgress::new();
-    multi_progress.set_draw_target(indicatif::ProgressDrawTarget::stderr_with_hz(20));
-    multi_progress.set_move_cursor(true);
+    // Initialize ratatui terminal
+    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
+        viewport: Viewport::Inline(30),
+    });
+    std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
 
-    // Overall progress bar - improved styling
-    let overall_bar = multi_progress.add(ProgressBar::new((files.len() * NUM_STAGES + 1) as u64));
-    let overall_style =
-        ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {msg} ({percent}%)")
-            .unwrap()
-            .progress_chars("█▇▆▅▄▃▂▁ ");
-    overall_bar.set_style(overall_style);
-    overall_bar.set_message("processing comic files");
-    overall_bar.enable_steady_tick(std::time::Duration::from_millis(100));
+    // Create channels for event communication
+    let (tx, rx) = mpsc::channel();
 
-    let results = process_files(files, &cli, multi_progress.clone(), overall_bar.clone());
+    // Set up input handling
+    let input_tx = tx.clone();
+    thread::spawn(move || input_handling(input_tx));
 
-    let num_success = results.iter().filter(|result| result.is_ok()).count();
+    // Process files in a separate thread
+    let process_tx = tx.clone();
+    thread::spawn(move || {
+        process_files(files, &cli, process_tx);
+    });
 
-    overall_bar.finish_with_message(format!(
-        "All files processed ({}/{})",
-        num_success,
-        results.len()
-    ));
+    // Run UI loop
+    let result = run(&mut terminal, rx);
 
-    Ok(())
+    // Restore terminal
+    ratatui::restore();
+
+    result
 }
 
 const NUM_STAGES: usize = 5;
@@ -133,101 +169,112 @@ fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn process_files(
-    files: Vec<PathBuf>,
-    cli: &Cli,
-    multi_progress: MultiProgress,
-    overall_bar: ProgressBar,
-) -> Vec<anyhow::Result<Comic>> {
-    let max_prefix_len = files
-        .iter()
-        .map(|file| {
-            file.file_stem()
-                .map_or(0, |stem| stem.to_string_lossy().len())
-        })
-        .max()
-        .unwrap_or(0);
-
-    let style = ProgressStyle::with_template("{prefix} {bar:30.cyan/blue} {msg}")
-        .unwrap()
-        .progress_chars("##-");
-
-    let comics = files
+fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
+    let comics: Vec<_> = files
         .into_iter()
-        .map(|file| {
-            let bar = multi_progress.add(ProgressBar::new(5));
-            bar.set_style(style.clone());
+        .enumerate()
+        .map(|(id, file)| {
+            let title = file
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
-            let file_name = file.file_stem().unwrap_or_default().to_string_lossy();
-            bar.set_message(format!("{}", file_name));
+            tx.send(Event::RegisterComic {
+                id,
+                file_name: title.clone(),
+            })
+            .unwrap();
 
-            // Pad the prefix to ensure alignment
-            let padded_prefix = format!("{:width$}", file_name, width = max_prefix_len);
-            bar.set_prefix(padded_prefix);
-
-            let c = create_comic(
+            // Create comic
+            match create_comic(
                 file.clone(),
                 cli.manga_mode,
                 cli.quality,
                 cli.prefix.as_deref(),
                 cli.auto_crop,
-                bar,
-            )?;
-
-            c.set_stage("waiting");
-
-            Ok(c)
+                id,
+                tx.clone(),
+                title.clone(),
+            ) {
+                Ok(comic) => Some(comic),
+                Err(e) => {
+                    tx.send(Event::ComicUpdate {
+                        id,
+                        status: ComicStatus::Failed {
+                            duration: Duration::from_secs(0),
+                            error: e,
+                        },
+                    })
+                    .unwrap();
+                    None
+                }
+            }
         })
-        .collect::<Vec<anyhow::Result<Comic>>>();
+        .filter_map(|c| c)
+        .collect();
 
-    let results = comics
-        // not using .into_par_iter() to maintain some semblance of ordering
+    let spawns: Vec<_> = comics
         .into_iter()
         .par_bridge()
-        .map(|comic| {
-            let mut comic = comic?;
+        .flat_map(|mut comic| {
+            // Extract CBZ
+            comic.update_status("extracting archive", 0.0);
+            match comic_archive::extract_cbz(&mut comic) {
+                Ok(_) => {}
+                Err(e) => {
+                    comic.failed(e);
+                    return None;
+                }
+            }
 
-            comic.set_stage("extracting");
-            comic_archive::extract_cbz(&mut comic)?;
-            overall_bar.inc(1);
-            comic.bar.inc(1);
+            // Process images
+            comic.update_status(
+                &format!("processing {} images", comic.input_page_names.len()),
+                25.0,
+            );
+            match image_processor::process_images(&mut comic) {
+                Ok(_) => {}
+                Err(e) => {
+                    comic.failed(e);
+                    return None;
+                }
+            }
 
-            comic.set_stage("processing");
-            image_processor::process_images(&mut comic)?;
-            overall_bar.inc(1);
-            comic.bar.inc(1);
+            // Build EPUB
+            comic.update_status("building epub", 50.0);
+            match epub_builder::build_epub(&comic) {
+                Ok(_) => {}
+                Err(e) => {
+                    comic.failed(e);
+                    return None;
+                }
+            }
+            comic.update_status("building epub", 75.0);
 
-            comic.set_stage("building epub");
-            epub_builder::build_epub(&comic)?;
-            overall_bar.inc(1);
-            comic.bar.inc(1);
+            // Build MOBI
+            comic.update_status("building mobi", 75.0);
+            let spawned = match mobi_converter::create_mobi(&comic) {
+                Ok(spawned) => spawned,
+                Err(e) => {
+                    comic.failed(e);
+                    return None;
+                }
+            };
 
-            comic.set_stage("building mobi");
-            let spawned = mobi_converter::create_mobi(&comic)?;
-            overall_bar.inc(1);
-            comic.bar.inc(1);
-
-            anyhow::Ok((comic, spawned))
+            Some((comic, spawned))
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let results = results
-        .into_par_iter()
-        .map(|result| {
-            let (comic, spawned) = result?;
+    spawns.into_par_iter().for_each(|(comic, spawned)| {
+        let result = spawned.wait();
+        match result {
+            Ok(_) => comic.success(),
+            Err(e) => comic.failed(e),
+        }
+    });
 
-            let result = spawned.wait();
-            comic.bar.inc(1);
-            comic.finish(result.is_ok());
-
-            result?;
-            overall_bar.inc(1);
-
-            Ok(comic)
-        })
-        .collect::<Vec<_>>();
-
-    results
+    tx.send(Event::ProcessingComplete).unwrap();
 }
 
 fn create_comic(
@@ -236,7 +283,9 @@ fn create_comic(
     quality: u8,
     title_prefix: Option<&str>,
     auto_crop: bool,
-    progress_bar: ProgressBar,
+    id: usize,
+    tx: mpsc::Sender<Event>,
+    title: String,
 ) -> anyhow::Result<Comic> {
     let quality = quality.clamp(0, 100);
 
@@ -245,25 +294,21 @@ fn create_comic(
         .filter(|s| !s.is_empty())
         .map(String::from);
 
-    let title = {
-        let file_stem = file.file_stem().unwrap().to_string_lossy();
-        match &title_prefix {
-            Some(prefix) => format!("{} {}", prefix, file_stem),
-            _ => file_stem.to_string(),
-        }
+    let full_title = match &title_prefix {
+        Some(prefix) => format!("{} {}", prefix, title),
+        _ => title,
     };
 
     let temp_dir = tempfile::tempdir()?;
 
     let comic = Comic {
+        id,
+        tx,
         directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
-
         start: Instant::now(),
-        bar: progress_bar,
-
-        title,
+        title: full_title,
         prefix: title_prefix,
         input: file,
         device_dimensions: (1236, 1648),
@@ -276,20 +321,19 @@ fn create_comic(
 }
 
 pub struct Comic {
+    id: usize,
+    tx: mpsc::Sender<Event>,
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
-
     start: Instant,
-    bar: ProgressBar,
 
-    // config
-    prefix: Option<String>,
+    // Config
     title: String,
+    prefix: Option<String>,
     input: PathBuf,
     device_dimensions: (u32, u32),
     right_to_left: bool,
-    // number between 0 and 100
     compression_quality: u8,
     auto_crop: bool,
 }
@@ -338,17 +382,310 @@ impl Comic {
         path
     }
 
-    fn set_stage(&self, stage: &str) {
-        self.bar.set_message(format!("{}", stage));
+    // New status update methods
+    fn update_status(&self, stage: &str, progress: f64) {
+        let _ = self.tx.send(Event::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::Processing {
+                stage: stage.to_string(),
+                progress,
+            },
+        });
     }
 
-    fn finish(&self, success: bool) {
+    fn success(&self) {
         let elapsed = self.start.elapsed();
+        let _ = self.tx.send(Event::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::Success { duration: elapsed },
+        });
+    }
 
-        self.bar.finish_with_message(format!(
-            "{} in {}",
-            success.then(|| "✓").unwrap_or("✗"),
-            indicatif::HumanDuration(elapsed)
-        ));
+    fn failed(&self, error: anyhow::Error) {
+        let elapsed = self.start.elapsed();
+        let _ = self.tx.send(Event::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::Failed {
+                duration: elapsed,
+                error,
+            },
+        });
+    }
+}
+
+fn input_handling(tx: mpsc::Sender<Event>) {
+    let tick_rate = Duration::from_millis(200);
+    let mut last_tick = Instant::now();
+
+    loop {
+        // poll for tick rate duration, if no events, send tick event.
+        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout).unwrap() {
+            match event::read().unwrap() {
+                event::Event::Key(key) => {
+                    if tx.send(Event::Input(key)).is_err() {
+                        break;
+                    }
+                }
+                event::Event::Resize(_, _) => {
+                    if tx.send(Event::Resize).is_err() {
+                        break;
+                    }
+                }
+                _ => {}
+            };
+        }
+        if last_tick.elapsed() >= tick_rate {
+            if tx.send(Event::Tick).is_err() {
+                break;
+            }
+            last_tick = Instant::now();
+        }
+    }
+}
+
+enum Event {
+    Input(event::KeyEvent),
+    Tick,
+    Resize,
+    RegisterComic { id: usize, file_name: String },
+    ComicUpdate { id: usize, status: ComicStatus },
+    ProcessingComplete,
+}
+
+#[derive(Debug)]
+enum ComicStatus {
+    Waiting,
+    Processing {
+        stage: String,
+        progress: f64,
+    },
+    Success {
+        duration: Duration,
+    },
+    Failed {
+        duration: Duration,
+        error: anyhow::Error,
+    },
+}
+
+struct AppState {
+    start: Instant,
+    comic_order: Vec<usize>,
+    comic_states: HashMap<usize, ComicState>,
+    processing_complete: Option<Duration>,
+}
+
+#[derive(Debug)]
+struct ComicState {
+    title: String,
+    status: ComicStatus,
+}
+
+fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
+    let mut app_state = AppState {
+        start: Instant::now(),
+        comic_order: Vec::new(),
+        comic_states: HashMap::new(),
+        processing_complete: None,
+    };
+
+    let mut redraw = true;
+
+    loop {
+        if redraw {
+            terminal.draw(|frame| draw(frame, &app_state))?;
+        }
+        redraw = true;
+
+        match rx.recv()? {
+            Event::Input(event) => {
+                if event.code == event::KeyCode::Char('q') {
+                    break;
+                }
+            }
+            Event::Resize => {
+                terminal.autoresize()?;
+            }
+            Event::Tick => {}
+            Event::RegisterComic { id, file_name } => {
+                let _ = app_state.comic_states.insert(
+                    id,
+                    ComicState {
+                        title: file_name,
+                        status: ComicStatus::Waiting,
+                    },
+                );
+                app_state.comic_order.push(id);
+
+                tracing::info!("Registered comic: {:#?}", app_state.comic_states);
+            }
+            Event::ComicUpdate { id, status } => {
+                if let Some(state) = app_state.comic_states.get_mut(&id) {
+                    state.status = status;
+                } else {
+                    panic!("Comic state not found for id: {}", id);
+                }
+            }
+            Event::ProcessingComplete => {
+                app_state.processing_complete = Some(app_state.start.elapsed());
+                terminal.draw(|frame| draw(frame, &app_state))?;
+                redraw = false;
+            }
+        };
+    }
+    Ok(())
+}
+
+fn draw(frame: &mut Frame, state: &AppState) {
+    let area = frame.area();
+
+    let block = Block::new().title(Line::from("comically").centered());
+    frame.render_widget(block, area);
+
+    let vertical = Layout::vertical([Constraint::Length(2), Constraint::Min(4)]).margin(1);
+
+    let [progress_area, main] = vertical.areas(area);
+
+    // Total progress
+    let total = state.comic_order.len();
+    let completed = state
+        .comic_states
+        .values()
+        .filter(|state| match state.status {
+            ComicStatus::Success { .. } => true,
+            ComicStatus::Failed { .. } => true,
+            _ => false,
+        })
+        .count();
+
+    let successful = state
+        .comic_states
+        .values()
+        .filter(|state| matches!(state.status, ComicStatus::Success { .. }))
+        .count();
+
+    let progress_ratio = if total > 0 {
+        completed as f64 / total as f64
+    } else {
+        0.0
+    };
+
+    let progress = {
+        let elapsed = state
+            .processing_complete
+            .unwrap_or_else(|| state.start.elapsed());
+        Gauge::default()
+            .gauge_style(Style::default().fg(Color::Blue))
+            .label(format!(
+                "{}/{} ({}) - {:.1}s elapsed",
+                successful,
+                total,
+                completed,
+                elapsed.as_secs_f64()
+            ))
+            .ratio(progress_ratio)
+    };
+
+    frame.render_widget(progress, progress_area);
+
+    // if processing complete, show success message
+    if let Some(elapsed) = state.processing_complete {
+        let block = Block::new().title(Line::from(format!(
+            "Processing complete in {:.1}s",
+            elapsed.as_secs_f64()
+        )));
+        frame.render_widget(block, area);
+        return;
+    }
+
+    // Only continue if we have comics to display
+    if state.comic_order.is_empty() {
+        return;
+    }
+
+    // Calculate layout for comic list and gauges
+    let comic_count = state.comic_order.len();
+    let constraints = vec![Constraint::Length(1); comic_count];
+
+    let comic_layout = Layout::vertical(constraints).split(main);
+
+    // Render each comic with its gauge in the order of registration
+    for (i, &id) in state.comic_order.iter().enumerate() {
+        let state = &state.comic_states[&id];
+        let comic_area = comic_layout[i];
+
+        // Create a layout to place the title and gauge side by side
+        let horizontal_layout =
+            Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
+                .split(comic_area);
+
+        // Create truncated title
+        let title_width = horizontal_layout[0].width.saturating_sub(2) as usize; // Account for padding
+        let title_display = if state.title.len() > title_width {
+            format!("{}…", &state.title[..title_width.saturating_sub(1)])
+        } else {
+            state.title.clone()
+        };
+
+        // Render the title with cleaner status indicators
+        let title_style = match &state.status {
+            ComicStatus::Waiting => Style::default().fg(Color::Gray),
+            ComicStatus::Processing { .. } => Style::default().fg(Color::Yellow),
+            ComicStatus::Success { .. } => Style::default().fg(Color::Green),
+            ComicStatus::Failed { .. } => Style::default().fg(Color::Red),
+        };
+
+        let title_paragraph = Paragraph::new(title_display)
+            .style(title_style)
+            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)));
+
+        frame.render_widget(title_paragraph, horizontal_layout[0]);
+
+        // Render the gauge with appropriate styling based on status
+        match &state.status {
+            ComicStatus::Waiting => {
+                let gauge = Gauge::default()
+                    .gauge_style(Style::default().fg(Color::Gray))
+                    .ratio(0.0)
+                    .label("Waiting");
+
+                frame.render_widget(gauge, horizontal_layout[1]);
+            }
+            ComicStatus::Processing { stage, progress } => {
+                // Compact representation of stage and progress
+                let gauge = Gauge::default()
+                    .gauge_style(Style::default().fg(Color::Yellow))
+                    .ratio(*progress / 100.0)
+                    .label(format!("{} - {:.1}%", stage, progress));
+
+                frame.render_widget(gauge, horizontal_layout[1]);
+            }
+            ComicStatus::Success { duration } => {
+                let gauge = Gauge::default()
+                    .gauge_style(Style::default().fg(Color::Green))
+                    .ratio(1.0)
+                    .label(format!("success ({:.1}s)", duration.as_secs_f64()));
+
+                frame.render_widget(gauge, horizontal_layout[1]);
+            }
+            ComicStatus::Failed { error, .. } => {
+                // Truncate error message if too long
+                let error_str = error.to_string();
+                let gauge_width = horizontal_layout[1].width.saturating_sub(10) as usize;
+                let error_msg = if error_str.len() > gauge_width {
+                    format!("failed: {}…", &error_str[..gauge_width.saturating_sub(9)])
+                } else {
+                    format!("failed: {}", error_str)
+                };
+
+                let gauge = Gauge::default()
+                    .gauge_style(Style::default().fg(Color::Red))
+                    .ratio(1.0)
+                    .label(error_msg);
+
+                frame.render_widget(gauge, horizontal_layout[1]);
+            }
+        }
     }
 }
