@@ -6,11 +6,12 @@ mod mobi_converter;
 use clap::Parser;
 use ratatui::{
     backend::Backend,
+    buffer::Buffer,
     crossterm::{event, ExecutableCommand},
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::Line,
-    widgets::{Block, Gauge, Paragraph},
+    widgets::{Block, Gauge, Paragraph, Widget},
     Frame, Terminal, Viewport,
 };
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
@@ -218,61 +219,55 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
         .into_iter()
         .par_bridge()
         .flat_map(|mut comic| {
-            // Extract CBZ
             comic.update_status("extracting archive", 0.0);
-            match comic_archive::extract_cbz(&mut comic) {
-                Ok(_) => {}
-                Err(e) => {
-                    comic.failed(e);
-                    return None;
-                }
-            }
+            let extract_start = Instant::now();
+            comic.with_try(|comic| {
+                comic_archive::extract_cbz(comic)?;
+                comic.record_extract_time(extract_start.elapsed());
+                Ok(())
+            })?;
 
-            // Process images
             comic.update_status(
                 &format!("processing {} images", comic.input_page_names.len()),
                 25.0,
             );
-            match image_processor::process_images(&mut comic) {
-                Ok(_) => {}
-                Err(e) => {
-                    comic.failed(e);
-                    return None;
-                }
-            }
+            comic.with_try(|comic| {
+                let start = Instant::now();
+                image_processor::process_images(comic)?;
+                comic.record_process_time(start.elapsed());
+                Ok(())
+            })?;
 
-            // Build EPUB
             comic.update_status("building epub", 50.0);
-            match epub_builder::build_epub(&comic) {
-                Ok(_) => {}
-                Err(e) => {
-                    comic.failed(e);
-                    return None;
-                }
-            }
-            comic.update_status("building epub", 75.0);
+            comic.with_try(|comic| {
+                let start = Instant::now();
+                epub_builder::build_epub(comic)?;
+                comic.record_epub_time(start.elapsed());
+                Ok(())
+            })?;
 
-            // Build MOBI
             comic.update_status("building mobi", 75.0);
-            let spawned = match mobi_converter::create_mobi(&comic) {
-                Ok(spawned) => spawned,
-                Err(e) => {
-                    comic.failed(e);
-                    return None;
-                }
-            };
+            let (spawned, mobi_start) = comic.with_try(|comic| {
+                let start = Instant::now();
+                let spawned = mobi_converter::create_mobi(comic)?;
+                comic.record_mobi_time(start.elapsed());
+                Ok((spawned, start))
+            })?;
 
-            Some((comic, spawned))
+            Some((comic, spawned, mobi_start))
         })
         .collect();
 
-    spawns.into_par_iter().for_each(|(comic, spawned)| {
-        let result = spawned.wait();
-        match result {
-            Ok(_) => comic.success(),
-            Err(e) => comic.failed(e),
-        }
-    });
+    spawns
+        .into_par_iter()
+        .for_each(|(mut comic, spawned, mobi_start)| {
+            let _ = comic.with_try(|comic| {
+                spawned.wait()?;
+                comic.record_mobi_time(mobi_start.elapsed());
+                comic.success();
+                Ok(())
+            });
+        });
 
     tx.send(Event::ProcessingComplete).unwrap();
 }
@@ -315,6 +310,7 @@ fn create_comic(
         right_to_left: manga_mode,
         compression_quality: quality,
         auto_crop,
+        stage_timing: StageTiming::new(),
     };
 
     Ok(comic)
@@ -336,6 +332,7 @@ pub struct Comic {
     right_to_left: bool,
     compression_quality: u8,
     auto_crop: bool,
+    stage_timing: StageTiming,
 }
 
 impl Drop for Comic {
@@ -351,6 +348,20 @@ pub struct ProcessedImage {
 }
 
 impl Comic {
+    pub fn with_try<F, T>(&mut self, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut Comic) -> anyhow::Result<T>,
+    {
+        let result = f(self);
+        match result {
+            Ok(t) => Some(t),
+            Err(e) => {
+                self.failed(e);
+                None
+            }
+        }
+    }
+
     // where decompressed images are stored
     pub fn images_dir(&self) -> PathBuf {
         self.directory.join("Images")
@@ -397,7 +408,10 @@ impl Comic {
         let elapsed = self.start.elapsed();
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Success { duration: elapsed },
+            status: ComicStatus::Success {
+                duration: elapsed,
+                stage_timing: self.stage_timing.clone(),
+            },
         });
     }
 
@@ -410,6 +424,22 @@ impl Comic {
                 error,
             },
         });
+    }
+
+    fn record_extract_time(&mut self, duration: Duration) {
+        self.stage_timing.extract = duration;
+    }
+
+    fn record_process_time(&mut self, duration: Duration) {
+        self.stage_timing.process = duration;
+    }
+
+    fn record_epub_time(&mut self, duration: Duration) {
+        self.stage_timing.epub = duration;
+    }
+
+    fn record_mobi_time(&mut self, duration: Duration) {
+        self.stage_timing.mobi = duration;
     }
 }
 
@@ -462,6 +492,7 @@ enum ComicStatus {
     },
     Success {
         duration: Duration,
+        stage_timing: StageTiming,
     },
     Failed {
         duration: Duration,
@@ -482,7 +513,13 @@ struct AppState {
 #[derive(Debug)]
 struct ComicState {
     title: String,
-    status: ComicStatus,
+    status: Vec<ComicStatus>,
+}
+
+impl ComicState {
+    fn last_status(&self) -> &ComicStatus {
+        self.status.last().unwrap()
+    }
 }
 
 fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
@@ -529,7 +566,7 @@ fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyh
                     id,
                     ComicState {
                         title: file_name,
-                        status: ComicStatus::Waiting,
+                        status: vec![ComicStatus::Waiting],
                     },
                 );
                 state.comic_order.push(id);
@@ -538,7 +575,7 @@ fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyh
             }
             Event::ComicUpdate { id, status } => {
                 if let Some(state) = state.comic_states.get_mut(&id) {
-                    state.status = status;
+                    state.status.push(status);
                 } else {
                     panic!("Comic state not found for id: {}", id);
                 }
@@ -572,10 +609,12 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
     let visible_height = main_area.height as usize;
     let total_comics = state.comic_order.len();
 
-    let max_scroll = total_comics.saturating_sub(visible_height);
-    let scroll_offset = state.scroll_offset.min(max_scroll);
-    let end_idx = (scroll_offset + visible_height).min(total_comics);
-    let visible_items = &state.comic_order[scroll_offset..end_idx];
+    let visible_items = {
+        let max_scroll = total_comics.saturating_sub(visible_height);
+        let scroll_offset = state.scroll_offset.min(max_scroll);
+        let end_idx = (scroll_offset + visible_height).min(total_comics);
+        &state.comic_order[scroll_offset..end_idx]
+    };
 
     let constraints = vec![Constraint::Length(1); visible_items.len()];
     let comic_layout = Layout::vertical(constraints).split(main_area);
@@ -588,7 +627,7 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
             Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
                 .split(comic_area);
 
-        let title_style = match &state.status {
+        let title_style = match state.last_status() {
             ComicStatus::Waiting => Style::default().fg(Color::Gray),
             ComicStatus::Processing { .. } => Style::default().fg(Color::Yellow),
             ComicStatus::Success { .. } => Style::default().fg(Color::Green),
@@ -601,7 +640,7 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
 
         frame.render_widget(title_paragraph, horizontal_layout[0]);
 
-        match &state.status {
+        match state.last_status() {
             ComicStatus::Waiting => {
                 let gauge = Gauge::default()
                     .gauge_style(Style::default().fg(Color::Gray))
@@ -618,13 +657,14 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
-            ComicStatus::Success { duration } => {
-                let gauge = Gauge::default()
-                    .gauge_style(Style::default().fg(Color::Green))
-                    .ratio(1.0)
-                    .label(format!("success ({:.1}s)", duration.as_secs_f64()));
-
-                frame.render_widget(gauge, horizontal_layout[1]);
+            ComicStatus::Success {
+                duration,
+                stage_timing,
+            } => {
+                frame.render_widget(
+                    StageTimingBar::new(stage_timing).width(horizontal_layout[1].width),
+                    horizontal_layout[1],
+                );
             }
             ComicStatus::Failed { error, .. } => {
                 let error = error.to_string();
@@ -668,17 +708,18 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
     let completed = state
         .comic_states
         .values()
-        .filter(|state| match state.status {
-            ComicStatus::Success { .. } => true,
-            ComicStatus::Failed { .. } => true,
-            _ => false,
+        .filter(|state| {
+            matches!(
+                state.last_status(),
+                ComicStatus::Success { .. } | ComicStatus::Failed { .. }
+            )
         })
         .count();
 
     let successful = state
         .comic_states
         .values()
-        .filter(|state| matches!(state.status, ComicStatus::Success { .. }))
+        .filter(|state| matches!(state.last_status(), ComicStatus::Success { .. }))
         .count();
 
     let progress = {
@@ -702,4 +743,133 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
     };
 
     frame.render_widget(progress, progress_area);
+}
+
+#[derive(Debug, Clone)]
+pub struct StageTiming {
+    extract: Duration,
+    process: Duration,
+    epub: Duration,
+    mobi: Duration,
+}
+
+impl StageTiming {
+    fn new() -> Self {
+        Self {
+            extract: Duration::default(),
+            process: Duration::default(),
+            epub: Duration::default(),
+            mobi: Duration::default(),
+        }
+    }
+
+    fn total(&self) -> Duration {
+        self.extract + self.process + self.epub + self.mobi
+    }
+}
+
+struct StageTimingBar<'a> {
+    timing: &'a StageTiming,
+    width: u16,
+}
+
+impl<'a> StageTimingBar<'a> {
+    fn new(timing: &'a StageTiming) -> Self {
+        Self { timing, width: 0 }
+    }
+
+    fn width(mut self, width: u16) -> Self {
+        self.width = width;
+        self
+    }
+}
+
+impl<'a> Widget for StageTimingBar<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let colors = [
+            Color::Yellow,  // Extract
+            Color::Green,   // Process
+            Color::Blue,    // EPUB
+            Color::Magenta, // MOBI
+        ];
+
+        let total = self.timing.total().as_secs_f64();
+        if total == 0.0 || self.width == 0 {
+            return;
+        }
+
+        let horizontal = Layout::horizontal([Constraint::Fill(4), Constraint::Length(15)])
+            .flex(ratatui::layout::Flex::Start)
+            .split(area);
+
+        let bar_area = horizontal[0];
+        let total_label_area = horizontal[1];
+
+        let stage_durations = [
+            self.timing.extract.as_secs_f64(),
+            self.timing.process.as_secs_f64(),
+            self.timing.epub.as_secs_f64(),
+            self.timing.mobi.as_secs_f64(),
+        ];
+
+        let stages: Vec<_> = stage_durations
+            .iter()
+            .filter(|duration| **duration > 0.0)
+            .collect();
+
+        if !stages.is_empty() {
+            // Create Fill constraints proportional to each stage's duration
+            let constraints: Vec<Constraint> = stages
+                .iter()
+                .map(|duration| Constraint::Fill((*duration / total * 100.0).round() as u16))
+                .collect();
+
+            let stage_areas = Layout::horizontal(&constraints)
+                .flex(ratatui::layout::Flex::Start)
+                .split(bar_area);
+
+            for (i, (duration, area)) in stages.iter().zip(stage_areas.iter()).enumerate() {
+                let color = colors[i];
+
+                buf.set_style(area.clone(), Style::default().bg(color));
+
+                // Add a label if there's enough space (minimum 10 chars width)
+                if area.width >= 10 {
+                    let stage_name = match i {
+                        0 => "extract",
+                        1 => "process",
+                        2 => "epub",
+                        3 => "mobi",
+                        _ => "",
+                    };
+
+                    let label = format!("{}: {:.1}s", stage_name, duration);
+                    let label_width = label.len() as u16;
+
+                    if label_width <= area.width {
+                        // Center the label
+                        let x = area.x + (area.width - label_width) / 2;
+                        buf.set_string(
+                            x,
+                            area.y + area.height / 2,
+                            label,
+                            Style::default().fg(Color::Black).bg(color),
+                        );
+                    }
+                }
+            }
+        }
+
+        Block::default()
+            .style(Style::default().bg(Color::DarkGray))
+            .render(total_label_area, buf);
+
+        let total_label = format!("Total: {:.1}s", total);
+        buf.set_string(
+            total_label_area.x + 2,
+            total_label_area.y + total_label_area.height / 2,
+            total_label,
+            Style::default().fg(Color::White).bg(Color::DarkGray),
+        );
+    }
 }
