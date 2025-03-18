@@ -45,6 +45,11 @@ pub struct SpawnedKindleGen {
 }
 
 impl SpawnedKindleGen {
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        let output = self.child.try_wait()?;
+        Ok(output)
+    }
+
     pub fn wait(self) -> Result<()> {
         let output = self.child.wait_with_output()?;
         let output_str = String::from_utf8_lossy(&output.stdout);

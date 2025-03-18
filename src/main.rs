@@ -14,7 +14,7 @@ use ratatui::{
     widgets::{Block, Gauge, Paragraph, Widget},
     Frame, Terminal, Viewport,
 };
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     collections::HashMap,
     env,
@@ -134,8 +134,6 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-const NUM_STAGES: usize = 5;
-
 fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     fn valid_file(path: &std::path::Path) -> bool {
         path.extension()
@@ -202,10 +200,7 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
                 Err(e) => {
                     tx.send(Event::ComicUpdate {
                         id,
-                        status: ComicStatus::Failed {
-                            duration: Duration::from_secs(0),
-                            error: e,
-                        },
+                        status: ComicStatus::Failed { error: e },
                     })
                     .unwrap();
                     None
@@ -215,7 +210,7 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
         .filter_map(|c| c)
         .collect();
 
-    let spawns: Vec<_> = comics
+    comics
         .into_iter()
         .par_bridge()
         .flat_map(|mut comic| {
@@ -254,20 +249,16 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
                 Ok((spawned, start))
             })?;
 
-            Some((comic, spawned, mobi_start))
-        })
-        .collect();
+            tx.send(Event::MonitorConversion {
+                comic,
+                spawned,
+                start_time: mobi_start,
+            })
+            .unwrap();
 
-    spawns
-        .into_par_iter()
-        .for_each(|(mut comic, spawned, mobi_start)| {
-            let _ = comic.with_try(|comic| {
-                spawned.wait()?;
-                comic.record_mobi_time(mobi_start.elapsed());
-                comic.success();
-                Ok(())
-            });
-        });
+            Some(())
+        })
+        .collect::<Vec<_>>();
 
     tx.send(Event::ProcessingComplete).unwrap();
 }
@@ -302,7 +293,8 @@ fn create_comic(
         directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
-        start: Instant::now(),
+        stage_timing: StageTiming::new(),
+
         title: full_title,
         prefix: title_prefix,
         input: file,
@@ -310,7 +302,6 @@ fn create_comic(
         right_to_left: manga_mode,
         compression_quality: quality,
         auto_crop,
-        stage_timing: StageTiming::new(),
     };
 
     Ok(comic)
@@ -322,7 +313,7 @@ pub struct Comic {
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
-    start: Instant,
+    stage_timing: StageTiming,
 
     // Config
     title: String,
@@ -332,7 +323,6 @@ pub struct Comic {
     right_to_left: bool,
     compression_quality: u8,
     auto_crop: bool,
-    stage_timing: StageTiming,
 }
 
 impl Drop for Comic {
@@ -405,24 +395,18 @@ impl Comic {
     }
 
     fn success(&self) {
-        let elapsed = self.start.elapsed();
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
             status: ComicStatus::Success {
-                duration: elapsed,
                 stage_timing: self.stage_timing.clone(),
             },
         });
     }
 
     fn failed(&self, error: anyhow::Error) {
-        let elapsed = self.start.elapsed();
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Failed {
-                duration: elapsed,
-                error,
-            },
+            status: ComicStatus::Failed { error },
         });
     }
 
@@ -478,26 +462,28 @@ enum Event {
     Input(event::KeyEvent),
     Tick,
     Resize,
-    RegisterComic { id: usize, file_name: String },
-    ComicUpdate { id: usize, status: ComicStatus },
+    RegisterComic {
+        id: usize,
+        file_name: String,
+    },
+    ComicUpdate {
+        id: usize,
+        status: ComicStatus,
+    },
+    MonitorConversion {
+        comic: Comic,
+        spawned: mobi_converter::SpawnedKindleGen,
+        start_time: Instant,
+    },
     ProcessingComplete,
 }
 
 #[derive(Debug)]
 enum ComicStatus {
     Waiting,
-    Processing {
-        stage: String,
-        progress: f64,
-    },
-    Success {
-        duration: Duration,
-        stage_timing: StageTiming,
-    },
-    Failed {
-        duration: Duration,
-        error: anyhow::Error,
-    },
+    Processing { stage: String, progress: f64 },
+    Success { stage_timing: StageTiming },
+    Failed { error: anyhow::Error },
 }
 
 struct AppState {
@@ -508,6 +494,7 @@ struct AppState {
 
     scroll_state: ratatui::widgets::ScrollbarState,
     scroll_offset: usize,
+    pending_conversions: Vec<(Comic, mobi_converter::SpawnedKindleGen, Instant)>,
 }
 
 #[derive(Debug)]
@@ -522,6 +509,28 @@ impl ComicState {
     }
 }
 
+impl AppState {
+    fn process_completed_conversions(&mut self, completed_indices: &mut Vec<usize>) {
+        // Check if any pending conversions have completed
+        for (i, (_comic, spawned, _start_time)) in self.pending_conversions.iter_mut().enumerate() {
+            if let Ok(Some(_)) = spawned.try_wait() {
+                completed_indices.push(i);
+            }
+        }
+
+        // Remove and process each completed conversion
+        for idx in completed_indices.drain(..).rev() {
+            let (mut comic, spawned, start_time) = self.pending_conversions.remove(idx);
+            let _ = comic.with_try(|comic| {
+                spawned.wait()?;
+                comic.record_mobi_time(start_time.elapsed());
+                comic.success();
+                Ok(())
+            });
+        }
+    }
+}
+
 fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
     let mut state = AppState {
         start: Instant::now(),
@@ -531,9 +540,13 @@ fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyh
 
         scroll_state: ratatui::widgets::ScrollbarState::default(),
         scroll_offset: 0,
+        pending_conversions: Vec::new(),
     };
 
+    let mut completed_indices = Vec::new();
     loop {
+        state.process_completed_conversions(&mut completed_indices);
+
         terminal.draw(|frame| draw(frame, &mut state))?;
 
         match rx.recv()? {
@@ -582,6 +595,14 @@ fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyh
             }
             Event::ProcessingComplete => {
                 state.processing_complete = Some(state.start.elapsed());
+            }
+            Event::MonitorConversion {
+                comic,
+                spawned,
+                start_time,
+            } => {
+                log::info!("Monitoring conversion for comic: {}", comic.id);
+                state.pending_conversions.push((comic, spawned, start_time));
             }
         };
     }
@@ -657,10 +678,7 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
-            ComicStatus::Success {
-                duration,
-                stage_timing,
-            } => {
+            ComicStatus::Success { stage_timing } => {
                 frame.render_widget(
                     StageTimingBar::new(stage_timing).width(horizontal_layout[1].width),
                     horizontal_layout[1],
@@ -864,7 +882,7 @@ impl<'a> Widget for StageTimingBar<'a> {
             .style(Style::default().bg(Color::DarkGray))
             .render(total_label_area, buf);
 
-        let total_label = format!("Total: {:.1}s", total);
+        let total_label = format!("{:.1}s", total);
         buf.set_string(
             total_label_area.x + 2,
             total_label_area.y + total_label_area.height / 2,
