@@ -77,11 +77,11 @@ fn main() -> anyhow::Result<()> {
     // Overall progress bar - improved styling
     let overall_bar = multi_progress.add(ProgressBar::new((files.len() * NUM_STAGES + 1) as u64));
     let overall_style =
-        ProgressStyle::with_template("[{elapsed}] [{bar:40.cyan/blue}] {msg} ({percent}%)")
+        ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {msg} ({percent}%)")
             .unwrap()
             .progress_chars("█▇▆▅▄▃▂▁ ");
     overall_bar.set_style(overall_style);
-    overall_bar.set_message("converting files");
+    overall_bar.set_message("processing comic files");
     overall_bar.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let results = process_files(files, &cli, multi_progress.clone(), overall_bar.clone());
@@ -139,10 +139,12 @@ fn process_files(
     multi_progress: MultiProgress,
     overall_bar: ProgressBar,
 ) -> Vec<anyhow::Result<Comic>> {
-    // Calculate maximum prefix length for alignment
     let max_prefix_len = files
         .iter()
-        .map(|file| file.file_stem().unwrap_or_default().to_string_lossy().len())
+        .map(|file| {
+            file.file_stem()
+                .map_or(0, |stem| stem.to_string_lossy().len())
+        })
         .max()
         .unwrap_or(0);
 
