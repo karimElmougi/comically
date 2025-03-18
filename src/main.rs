@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
 
     // Initialize ratatui terminal
     let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
-        viewport: Viewport::Inline(30),
+        viewport: Viewport::Fullscreen,
     });
     std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
 
@@ -578,26 +578,15 @@ fn draw(frame: &mut Frame, state: &AppState) {
         Gauge::default()
             .gauge_style(Style::default().fg(Color::Blue))
             .label(format!(
-                "{}/{} ({}) - {:.1}s elapsed",
+                "{}/{} ({:.1}s)",
                 successful,
                 total,
-                completed,
                 elapsed.as_secs_f64()
             ))
             .ratio(progress_ratio)
     };
 
     frame.render_widget(progress, progress_area);
-
-    // if processing complete, show success message
-    if let Some(elapsed) = state.processing_complete {
-        let block = Block::new().title(Line::from(format!(
-            "Processing complete in {:.1}s",
-            elapsed.as_secs_f64()
-        )));
-        frame.render_widget(block, area);
-        return;
-    }
 
     // Only continue if we have comics to display
     if state.comic_order.is_empty() {
