@@ -474,6 +474,9 @@ struct AppState {
     comic_order: Vec<usize>,
     comic_states: HashMap<usize, ComicState>,
     processing_complete: Option<Duration>,
+
+    scroll_state: ratatui::widgets::ScrollbarState,
+    scroll_offset: usize,
 }
 
 #[derive(Debug)]
@@ -483,123 +486,101 @@ struct ComicState {
 }
 
 fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
-    let mut app_state = AppState {
+    let mut state = AppState {
         start: Instant::now(),
         comic_order: Vec::new(),
         comic_states: HashMap::new(),
         processing_complete: None,
+
+        scroll_state: ratatui::widgets::ScrollbarState::default(),
+        scroll_offset: 0,
     };
 
-    let mut redraw = true;
-
     loop {
-        if redraw {
-            terminal.draw(|frame| draw(frame, &app_state))?;
-        }
-        redraw = true;
+        terminal.draw(|frame| draw(frame, &mut state))?;
 
         match rx.recv()? {
-            Event::Input(event) => {
-                if event.code == event::KeyCode::Char('q') {
+            Event::Input(event) => match event.code {
+                event::KeyCode::Char('q') => {
                     break;
                 }
-            }
+                event::KeyCode::Down | event::KeyCode::Char('j') => {
+                    if !state.comic_order.is_empty()
+                        && state.scroll_offset < state.comic_order.len()
+                    {
+                        state.scroll_offset = state.scroll_offset.saturating_add(1);
+                        state.scroll_state = state.scroll_state.position(state.scroll_offset);
+                    }
+                }
+                event::KeyCode::Up | event::KeyCode::Char('k') => {
+                    if state.scroll_offset > 0 {
+                        state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                        state.scroll_state = state.scroll_state.position(state.scroll_offset);
+                    }
+                }
+                _ => {}
+            },
             Event::Resize => {
                 terminal.autoresize()?;
             }
             Event::Tick => {}
             Event::RegisterComic { id, file_name } => {
-                let _ = app_state.comic_states.insert(
+                let _ = state.comic_states.insert(
                     id,
                     ComicState {
                         title: file_name,
                         status: ComicStatus::Waiting,
                     },
                 );
-                app_state.comic_order.push(id);
+                state.comic_order.push(id);
 
-                tracing::info!("Registered comic: {:#?}", app_state.comic_states);
+                state.scroll_state = state.scroll_state.content_length(state.comic_order.len());
             }
             Event::ComicUpdate { id, status } => {
-                if let Some(state) = app_state.comic_states.get_mut(&id) {
+                if let Some(state) = state.comic_states.get_mut(&id) {
                     state.status = status;
                 } else {
                     panic!("Comic state not found for id: {}", id);
                 }
             }
             Event::ProcessingComplete => {
-                app_state.processing_complete = Some(app_state.start.elapsed());
-                terminal.draw(|frame| draw(frame, &app_state))?;
-                redraw = false;
+                state.processing_complete = Some(state.start.elapsed());
             }
         };
     }
     Ok(())
 }
 
-fn draw(frame: &mut Frame, state: &AppState) {
+fn draw(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
 
-    let block = Block::new().title(Line::from("comically").centered());
-    frame.render_widget(block, area);
+    let vertical = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(4),
+        Constraint::Length(1),
+    ])
+    .margin(1);
 
-    let vertical = Layout::vertical([Constraint::Length(2), Constraint::Min(4)]).margin(1);
+    let [header_area, main_area, footer_area] = vertical.areas(area);
 
-    let [progress_area, main] = vertical.areas(area);
+    draw_header(frame, state, header_area);
 
-    // Total progress
-    let total = state.comic_order.len();
-    let completed = state
-        .comic_states
-        .values()
-        .filter(|state| match state.status {
-            ComicStatus::Success { .. } => true,
-            ComicStatus::Failed { .. } => true,
-            _ => false,
-        })
-        .count();
-
-    let successful = state
-        .comic_states
-        .values()
-        .filter(|state| matches!(state.status, ComicStatus::Success { .. }))
-        .count();
-
-    let progress_ratio = if total > 0 {
-        completed as f64 / total as f64
-    } else {
-        0.0
-    };
-
-    let progress = {
-        let elapsed = state
-            .processing_complete
-            .unwrap_or_else(|| state.start.elapsed());
-        Gauge::default()
-            .gauge_style(Style::default().fg(Color::Blue))
-            .label(format!(
-                "{}/{} ({:.1}s)",
-                successful,
-                total,
-                elapsed.as_secs_f64()
-            ))
-            .ratio(progress_ratio)
-    };
-
-    frame.render_widget(progress, progress_area);
-
-    // Only continue if we have comics to display
     if state.comic_order.is_empty() {
         return;
     }
 
-    let comic_count = state.comic_order.len();
-    let constraints = vec![Constraint::Length(1); comic_count];
+    let visible_height = main_area.height as usize;
+    let total_comics = state.comic_order.len();
 
-    let comic_layout = Layout::vertical(constraints).split(main);
+    let max_scroll = total_comics.saturating_sub(visible_height);
+    let scroll_offset = state.scroll_offset.min(max_scroll);
+    let end_idx = (scroll_offset + visible_height).min(total_comics);
+    let visible_items = &state.comic_order[scroll_offset..end_idx];
 
-    // Render each comic with its gauge in the order of registration
-    for (i, &id) in state.comic_order.iter().enumerate() {
+    let constraints = vec![Constraint::Length(1); visible_items.len()];
+    let comic_layout = Layout::vertical(constraints).split(main_area);
+
+    for (i, &id) in visible_items.iter().enumerate() {
         let state = &state.comic_states[&id];
         let comic_area = comic_layout[i];
 
@@ -607,7 +588,6 @@ fn draw(frame: &mut Frame, state: &AppState) {
             Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
                 .split(comic_area);
 
-        // Render the title with cleaner status indicators
         let title_style = match &state.status {
             ComicStatus::Waiting => Style::default().fg(Color::Gray),
             ComicStatus::Processing { .. } => Style::default().fg(Color::Yellow),
@@ -626,7 +606,7 @@ fn draw(frame: &mut Frame, state: &AppState) {
                 let gauge = Gauge::default()
                     .gauge_style(Style::default().fg(Color::Gray))
                     .ratio(0.0)
-                    .label("Waiting");
+                    .label("waiting");
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
@@ -658,4 +638,68 @@ fn draw(frame: &mut Frame, state: &AppState) {
             }
         }
     }
+
+    if total_comics > visible_height {
+        frame.render_stateful_widget(
+            ratatui::widgets::Scrollbar::default()
+                .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
+                .style(Style::default().fg(Color::White))
+                .thumb_style(Style::default().fg(Color::Blue)),
+            main_area,
+            &mut state.scroll_state,
+        );
+    }
+
+    let keys_text = "q: Quit | ↑/k: Up | ↓/j: Down";
+    let keys = Paragraph::new(keys_text)
+        .style(Style::default().fg(Color::White))
+        .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(keys, footer_area);
+}
+
+fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
+    let block = Block::new().title(Line::from("comically").centered());
+    frame.render_widget(block, frame.area());
+
+    let [progress_area] = Layout::vertical([Constraint::Length(1)]).areas(header_area);
+
+    let total = state.comic_order.len();
+    let completed = state
+        .comic_states
+        .values()
+        .filter(|state| match state.status {
+            ComicStatus::Success { .. } => true,
+            ComicStatus::Failed { .. } => true,
+            _ => false,
+        })
+        .count();
+
+    let successful = state
+        .comic_states
+        .values()
+        .filter(|state| matches!(state.status, ComicStatus::Success { .. }))
+        .count();
+
+    let progress = {
+        let progress_ratio = if total > 0 {
+            completed as f64 / total as f64
+        } else {
+            0.0
+        };
+        let elapsed = state
+            .processing_complete
+            .unwrap_or_else(|| state.start.elapsed());
+        Gauge::default()
+            .gauge_style(Style::default().fg(Color::Blue))
+            .label(format!(
+                "{}/{} ({:.1}s)",
+                successful,
+                total,
+                elapsed.as_secs_f64()
+            ))
+            .ratio(progress_ratio)
+    };
+
+    frame.render_widget(progress, progress_area);
 }
