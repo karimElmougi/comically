@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{mobi_converter::SpawnedKindleGen, Comic, ComicStatus, Event, StageTiming};
+use crate::{ComicStatus, Event, StageTiming};
 
 struct AppState {
     start: Instant,
@@ -23,7 +23,6 @@ struct AppState {
     processing_complete: Option<Duration>,
 
     scroll_offset: usize,
-    pending_conversions: Vec<(Comic, SpawnedKindleGen, Instant)>,
 }
 
 #[derive(Debug)]
@@ -38,28 +37,6 @@ impl ComicState {
     }
 }
 
-impl AppState {
-    fn process_completed_conversions(&mut self, completed_indices: &mut Vec<usize>) {
-        // Check if any pending conversions have completed
-        for (i, (_comic, spawned, _start_time)) in self.pending_conversions.iter_mut().enumerate() {
-            if let Ok(Some(_)) = spawned.try_wait() {
-                completed_indices.push(i);
-            }
-        }
-
-        // Remove and process each completed conversion
-        for idx in completed_indices.drain(..).rev() {
-            let (mut comic, spawned, start_time) = self.pending_conversions.remove(idx);
-            let _ = comic.with_try(|comic| {
-                spawned.wait()?;
-                comic.record_mobi_time(start_time.elapsed());
-                comic.success();
-                Ok(())
-            });
-        }
-    }
-}
-
 pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
     let mut state = AppState {
         start: Instant::now(),
@@ -68,13 +45,9 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
         processing_complete: None,
 
         scroll_offset: 0,
-        pending_conversions: Vec::new(),
     };
 
-    let mut completed_indices = Vec::new();
     loop {
-        state.process_completed_conversions(&mut completed_indices);
-
         terminal.draw(|frame| draw(frame, &mut state))?;
 
         match rx.recv()? {
@@ -117,14 +90,6 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
             }
             Event::ProcessingComplete => {
                 state.processing_complete = Some(state.start.elapsed());
-            }
-            Event::MonitorConversion {
-                comic,
-                spawned,
-                start_time,
-            } => {
-                log::info!("Monitoring conversion for comic: {}", comic.id);
-                state.pending_conversions.push((comic, spawned, start_time));
             }
         };
     }

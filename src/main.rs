@@ -105,17 +105,26 @@ fn main() -> anyhow::Result<()> {
     });
     std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
 
-    let (tx, rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    let (kindlegen_tx, kindlegen_rx) = mpsc::channel();
 
-    let input_tx = tx.clone();
-    thread::spawn(move || input_handling(input_tx));
-
-    let process_tx = tx.clone();
-    thread::spawn(move || {
-        process_files(files, &cli, process_tx);
+    thread::spawn({
+        let event_tx = event_tx.clone();
+        move || input_handling(event_tx)
     });
 
-    let result = tui::run(&mut terminal, rx);
+    thread::spawn({
+        let event_tx = event_tx.clone();
+        let kindlegen_tx = kindlegen_tx.clone();
+        move || {
+            process_files(files, &cli, event_tx, kindlegen_tx);
+        }
+    });
+
+    // polling thread
+    thread::spawn(move || poll_kindlegen(kindlegen_rx));
+
+    let result = tui::run(&mut terminal, event_rx);
 
     // Restore terminal
     ratatui::restore();
@@ -157,7 +166,12 @@ fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
+fn process_files(
+    files: Vec<PathBuf>,
+    cli: &Cli,
+    event_tx: mpsc::Sender<Event>,
+    kindlegen_tx: mpsc::Sender<KindleGenStatus>,
+) {
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
@@ -168,11 +182,12 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
                 .to_string_lossy()
                 .to_string();
 
-            tx.send(Event::RegisterComic {
-                id,
-                file_name: title.clone(),
-            })
-            .unwrap();
+            event_tx
+                .send(Event::RegisterComic {
+                    id,
+                    file_name: title.clone(),
+                })
+                .unwrap();
 
             // Create comic
             match create_comic(
@@ -182,16 +197,17 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
                 cli.prefix.as_deref(),
                 cli.auto_crop,
                 id,
-                tx.clone(),
+                event_tx.clone(),
                 title.clone(),
             ) {
                 Ok(comic) => Some(comic),
                 Err(e) => {
-                    tx.send(Event::ComicUpdate {
-                        id,
-                        status: ComicStatus::Failed { error: e },
-                    })
-                    .unwrap();
+                    event_tx
+                        .send(Event::ComicUpdate {
+                            id,
+                            status: ComicStatus::Failed { error: e },
+                        })
+                        .unwrap();
                     None
                 }
             }
@@ -238,18 +254,20 @@ fn process_files(files: Vec<PathBuf>, cli: &Cli, tx: mpsc::Sender<Event>) {
                 Ok((spawned, start))
             })?;
 
-            tx.send(Event::MonitorConversion {
-                comic,
-                spawned,
-                start_time: mobi_start,
-            })
-            .unwrap();
+            // instead of blocking the rayon thread, we send this to a polling thread so that it can be polled for completion.
+            kindlegen_tx
+                .send(KindleGenStatus {
+                    comic,
+                    spawned,
+                    start_time: mobi_start,
+                })
+                .unwrap();
 
             Some(())
         })
         .collect::<Vec<_>>();
 
-    tx.send(Event::ProcessingComplete).unwrap();
+    event_tx.send(Event::ProcessingComplete).unwrap();
 }
 
 fn create_comic(
@@ -416,6 +434,12 @@ impl Comic {
     }
 }
 
+struct KindleGenStatus {
+    comic: Comic,
+    spawned: mobi_converter::SpawnedKindleGen,
+    start_time: Instant,
+}
+
 fn input_handling(tx: mpsc::Sender<Event>) {
     let tick_rate = Duration::from_millis(200);
     let mut last_tick = Instant::now();
@@ -447,23 +471,45 @@ fn input_handling(tx: mpsc::Sender<Event>) {
     }
 }
 
+fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
+    let mut pending = Vec::<Option<KindleGenStatus>>::new();
+    loop {
+        while let Ok(status) = tx.try_recv() {
+            pending.push(Some(status));
+        }
+
+        for s in pending.iter_mut() {
+            let is_done = match s {
+                Some(status) => {
+                    matches!(status.spawned.try_wait(), Ok(Some(_)))
+                }
+                _ => false,
+            };
+
+            if is_done {
+                if let Some(mut status) = s.take() {
+                    let _ = status.comic.with_try(|comic| {
+                        status.spawned.wait()?;
+                        comic.record_mobi_time(status.start_time.elapsed());
+                        comic.success();
+                        Ok(())
+                    });
+                }
+            }
+        }
+
+        pending.retain(|s| s.is_some());
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 enum Event {
     Input(event::KeyEvent),
     Tick,
     Resize,
-    RegisterComic {
-        id: usize,
-        file_name: String,
-    },
-    ComicUpdate {
-        id: usize,
-        status: ComicStatus,
-    },
-    MonitorConversion {
-        comic: Comic,
-        spawned: mobi_converter::SpawnedKindleGen,
-        start_time: Instant,
-    },
+    RegisterComic { id: usize, file_name: String },
+    ComicUpdate { id: usize, status: ComicStatus },
     ProcessingComplete,
 }
 
