@@ -5,7 +5,7 @@ mod mobi_converter;
 
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::{env, path::PathBuf, time::Instant};
 
 #[derive(Parser, Debug)]
@@ -76,11 +76,10 @@ fn main() -> anyhow::Result<()> {
 
     // Overall progress bar - improved styling
     let overall_bar = multi_progress.add(ProgressBar::new((files.len() * NUM_STAGES + 1) as u64));
-    let overall_style = ProgressStyle::with_template(
-        "[{elapsed}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({percent}%)",
-    )
-    .unwrap()
-    .progress_chars("█▇▆▅▄▃▂▁ ");
+    let overall_style =
+        ProgressStyle::with_template("[{elapsed}] [{bar:40.cyan/blue}] {msg} ({percent}%)")
+            .unwrap()
+            .progress_chars("█▇▆▅▄▃▂▁ ");
     overall_bar.set_style(overall_style);
     overall_bar.set_message("converting files");
     overall_bar.enable_steady_tick(std::time::Duration::from_millis(100));
@@ -140,7 +139,14 @@ fn process_files(
     multi_progress: MultiProgress,
     overall_bar: ProgressBar,
 ) -> Vec<anyhow::Result<Comic>> {
-    let style = ProgressStyle::with_template("{prefix} {bar:30.cyan/blue} {pos:>4}/{len:4} {msg}")
+    // Calculate maximum prefix length for alignment
+    let max_prefix_len = files
+        .iter()
+        .map(|file| file.file_stem().unwrap_or_default().to_string_lossy().len())
+        .max()
+        .unwrap_or(0);
+
+    let style = ProgressStyle::with_template("{prefix} {bar:30.cyan/blue} {msg}")
         .unwrap()
         .progress_chars("##-");
 
@@ -149,16 +155,13 @@ fn process_files(
         .map(|file| {
             let bar = multi_progress.add(ProgressBar::new(5));
             bar.set_style(style.clone());
-            bar.set_message(format!(
-                "{}",
-                file.file_stem().unwrap_or_default().to_string_lossy()
-            ));
-            bar.set_prefix(
-                file.file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-            );
+
+            let file_name = file.file_stem().unwrap_or_default().to_string_lossy();
+            bar.set_message(format!("{}", file_name));
+
+            // Pad the prefix to ensure alignment
+            let padded_prefix = format!("{:width$}", file_name, width = max_prefix_len);
+            bar.set_prefix(padded_prefix);
 
             let c = create_comic(
                 file.clone(),
@@ -167,7 +170,6 @@ fn process_files(
                 cli.prefix.as_deref(),
                 cli.auto_crop,
                 bar,
-                overall_bar.clone(),
             )?;
 
             c.set_stage("waiting");
@@ -177,24 +179,30 @@ fn process_files(
         .collect::<Vec<anyhow::Result<Comic>>>();
 
     let results = comics
-        .into_par_iter()
+        // not using .into_par_iter() to maintain some semblance of ordering
+        .into_iter()
+        .par_bridge()
         .map(|comic| {
             let mut comic = comic?;
 
             comic.set_stage("extracting");
             comic_archive::extract_cbz(&mut comic)?;
+            overall_bar.inc(1);
             comic.bar.inc(1);
 
             comic.set_stage("processing");
             image_processor::process_images(&mut comic)?;
+            overall_bar.inc(1);
             comic.bar.inc(1);
 
             comic.set_stage("building epub");
             epub_builder::build_epub(&comic)?;
+            overall_bar.inc(1);
             comic.bar.inc(1);
 
             comic.set_stage("building mobi");
             let spawned = mobi_converter::create_mobi(&comic)?;
+            overall_bar.inc(1);
             comic.bar.inc(1);
 
             anyhow::Ok((comic, spawned))
@@ -227,7 +235,6 @@ fn create_comic(
     title_prefix: Option<&str>,
     auto_crop: bool,
     progress_bar: ProgressBar,
-    overall_bar: ProgressBar,
 ) -> anyhow::Result<Comic> {
     let quality = quality.clamp(0, 100);
 
@@ -253,7 +260,6 @@ fn create_comic(
 
         start: Instant::now(),
         bar: progress_bar,
-        overall_bar,
 
         title,
         prefix: title_prefix,
@@ -274,7 +280,6 @@ pub struct Comic {
 
     start: Instant,
     bar: ProgressBar,
-    overall_bar: ProgressBar,
 
     // config
     prefix: Option<String>,
@@ -332,7 +337,6 @@ impl Comic {
     }
 
     fn set_stage(&self, stage: &str) {
-        self.overall_bar.inc(1);
         self.bar.set_message(format!("{}", stage));
     }
 
