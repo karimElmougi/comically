@@ -35,6 +35,7 @@ pub fn unarchive_comic(comic: &mut Comic) -> Result<()> {
     log::debug!("Found {} images", comic.input_page_names.len());
 
     comic.input_page_names.sort();
+    comic.input_page_names.dedup();
 
     Ok(())
 }
