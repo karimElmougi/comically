@@ -147,17 +147,43 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
     let [header_area, main_area, footer_area] = vertical.areas(area);
 
     draw_header(frame, state, header_area);
+    draw_main_content(frame, state, main_area);
+    draw_footer(frame, state, footer_area);
+}
+
+fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
+    let [names_area, status_area, scrollbar_area] = Layout::horizontal([
+        Constraint::Percentage(15),
+        Constraint::Percentage(85),
+        Constraint::Length(1),
+    ])
+    .spacing(1)
+    .areas(area);
+
+    let names_block = Block::default()
+        .borders(Borders::ALL)
+        .title("files")
+        .title_alignment(Alignment::Center);
+
+    let status_block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from("status").centered())
+        .title(Line::from("total").right_aligned());
+
+    frame.render_widget(names_block.clone(), names_area);
+    frame.render_widget(status_block.clone(), status_area);
 
     if state.comic_order.is_empty() {
         return;
     }
 
-    let visible_height = main_area.height as usize;
+    let names_inner_area = names_block.inner(names_area);
+    let status_inner_area = status_block.inner(status_area);
+
+    let visible_height = names_inner_area.height as usize;
     let total_comics = state.comic_order.len();
 
-    // Calculate the maximum valid scroll position
     let max_scroll = total_comics.saturating_sub(visible_height);
-    // Ensure scroll_offset is within bounds
     if state.scroll_offset > max_scroll {
         state.scroll_offset = max_scroll;
     }
@@ -167,68 +193,87 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.comic_order[state.scroll_offset..end_idx]
     };
 
-    let comic_layout =
-        Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(main_area);
+    let names_layout =
+        Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(names_inner_area);
+    let status_layout =
+        Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(status_inner_area);
 
     for (i, &id) in visible_items.iter().enumerate() {
-        let state = &state.comic_states[&id];
-        let comic_area = comic_layout[i];
-
-        let horizontal_layout =
-            Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
-                .split(comic_area);
-
-        Paragraph::new(state.title.clone())
-            .style(
-                Style::default()
-                    .fg(palette::tailwind::STONE.c200)
-                    .bg(palette::tailwind::STONE.c800),
-            )
-            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
-            .render(horizontal_layout[0], frame.buffer_mut());
-
-        match state.current_status() {
-            ComicStatus::Waiting => {
-                let gauge = Gauge::default()
-                    .gauge_style(palette::tailwind::GRAY.c400)
-                    .ratio(0.0)
-                    .label("waiting");
-
-                frame.render_widget(gauge, horizontal_layout[1]);
-            }
-            ComicStatus::Processing { stage, progress } => {
-                let stage_color = stage_color(*stage);
-                let gauge = Gauge::default()
-                    .gauge_style(stage_color)
-                    .ratio(*progress / 100.0)
-                    .label(format!("{}", stage));
-
-                frame.render_widget(gauge, horizontal_layout[1]);
-            }
-            ComicStatus::StageCompleted { .. } => unreachable!(),
-            ComicStatus::Success => {
-                frame.render_widget(
-                    StageTimingBar::new(&state.timings).width(horizontal_layout[1].width),
-                    horizontal_layout[1],
-                );
-            }
-            ComicStatus::Failed { error, .. } => {
-                let error = error.to_string();
-
-                let gauge = Gauge::default()
-                    .gauge_style(palette::tailwind::RED.c500)
-                    .ratio(1.0)
-                    .label(error);
-
-                frame.render_widget(gauge, horizontal_layout[1]);
-            }
-        }
+        let comic_state = &state.comic_states[&id];
+        draw_file_title(frame, comic_state, names_layout[i]);
     }
 
-    let show_scrollbar = total_comics > visible_height;
+    for (i, &id) in visible_items.iter().enumerate() {
+        let comic_state = &state.comic_states[&id];
+        draw_file_status(frame, comic_state, status_layout[i]);
+    }
+
+    draw_scrollbar(frame, state, scrollbar_area, total_comics, visible_height);
+}
+
+fn draw_file_title(frame: &mut Frame, comic_state: &ComicState, area: Rect) {
+    Paragraph::new(comic_state.title.clone())
+        .style(Style::default().fg(palette::tailwind::STONE.c200))
+        .alignment(Alignment::Left)
+        .block(Block::default().padding(Padding::horizontal(1)))
+        .render(area, frame.buffer_mut());
+}
+
+fn draw_file_status(frame: &mut Frame, comic_state: &ComicState, area: Rect) {
+    match comic_state.current_status() {
+        ComicStatus::Waiting => {
+            let gauge = Gauge::default()
+                .gauge_style(palette::tailwind::GRAY.c400)
+                .ratio(0.0)
+                .label("waiting");
+
+            frame.render_widget(gauge, area);
+        }
+        ComicStatus::Processing {
+            stage,
+            progress,
+            start,
+        } => {
+            let elapsed = start.elapsed();
+            let style: Style = stage_color(*stage).into();
+            let gauge = Gauge::default()
+                .gauge_style(style)
+                .ratio(*progress / 100.0)
+                .label(format!("{} {:.1}s", stage, elapsed.as_secs_f64()));
+
+            frame.render_widget(gauge, area);
+        }
+        ComicStatus::StageCompleted { .. } => unreachable!(),
+        ComicStatus::Success => {
+            frame.render_widget(
+                StageTimingBar::new(&comic_state.timings).width(area.width),
+                area,
+            );
+        }
+        ComicStatus::Failed { error, .. } => {
+            let error = error.to_string();
+
+            let gauge = Gauge::default()
+                .gauge_style(palette::tailwind::RED.c500)
+                .ratio(1.0)
+                .label(error);
+
+            frame.render_widget(gauge, area);
+        }
+    }
+}
+
+fn draw_scrollbar(
+    frame: &mut Frame,
+    state: &mut AppState,
+    area: Rect,
+    total_items: usize,
+    visible_height: usize,
+) {
+    let show_scrollbar = total_items > visible_height;
     if show_scrollbar {
         let mut scroll_state = ratatui::widgets::ScrollbarState::default()
-            .content_length(max_scroll)
+            .content_length(total_items.saturating_sub(visible_height))
             .position(state.scroll_offset);
 
         frame.render_stateful_widget(
@@ -236,11 +281,14 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
                 .style(Style::default().fg(Color::White))
                 .thumb_style(Style::default().fg(Color::Blue)),
-            main_area,
+            area,
             &mut scroll_state,
         );
     }
+}
 
+fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
+    let show_scrollbar = !state.comic_order.is_empty();
     let keys = if show_scrollbar {
         "q: quit | ↑/k: up | ↓/j: down"
     } else {
@@ -251,15 +299,15 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
         .style(Style::default().fg(Color::White))
         .alignment(ratatui::layout::Alignment::Center);
 
-    frame.render_widget(keys, footer_area);
+    frame.render_widget(keys, area);
 }
 
 fn stage_color(stage: ComicStage) -> Color {
     match stage {
-        ComicStage::Extract => palette::tailwind::STONE.c300,
-        ComicStage::Process => palette::tailwind::STONE.c400,
-        ComicStage::Epub => palette::tailwind::STONE.c500,
-        ComicStage::Mobi => palette::tailwind::STONE.c600,
+        ComicStage::Extract => palette::tailwind::GREEN.c500,
+        ComicStage::Process => palette::tailwind::GREEN.c600,
+        ComicStage::Epub => palette::tailwind::GREEN.c700,
+        ComicStage::Mobi => palette::tailwind::GREEN.c800,
     }
 }
 
@@ -442,7 +490,7 @@ impl<'a> Widget for StageTimingBar<'a> {
             .style(
                 Style::default()
                     .fg(palette::tailwind::GREEN.c100)
-                    .bg(palette::tailwind::GREEN.c900),
+                    .bg(palette::tailwind::GREEN.c950),
             )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);

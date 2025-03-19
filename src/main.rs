@@ -392,7 +392,11 @@ impl Comic {
     fn update_status(&self, stage: ComicStage, progress: f64) {
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Processing { stage, progress },
+            status: ComicStatus::Processing {
+                stage,
+                progress,
+                start: Instant::now(),
+            },
         });
     }
 
@@ -522,6 +526,7 @@ enum ComicStatus {
     Processing {
         stage: ComicStage,
         progress: f64,
+        start: Instant,
     },
 
     // stage completed
