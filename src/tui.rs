@@ -134,8 +134,15 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
     Ok(())
 }
 
+const BORDER: Color = palette::tailwind::STONE.c300;
+const CONTENT: Color = palette::tailwind::STONE.c100;
+
 fn draw(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
+
+    frame
+        .buffer_mut()
+        .set_style(area, Style::default().bg(palette::tailwind::STONE.c950));
 
     let vertical = Layout::vertical([
         Constraint::Length(3),
@@ -162,11 +169,13 @@ fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
     let names_block = Block::default()
         .borders(Borders::ALL)
+        .border_style(BORDER)
         .title("files")
         .title_alignment(Alignment::Center);
 
     let status_block = Block::default()
         .borders(Borders::ALL)
+        .border_style(BORDER)
         .title(Line::from("status").centered())
         .title(Line::from("total").right_aligned());
 
@@ -213,7 +222,7 @@ fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
 fn draw_file_title(frame: &mut Frame, comic_state: &ComicState, area: Rect) {
     Paragraph::new(comic_state.title.clone())
-        .style(Style::default().fg(palette::tailwind::STONE.c200))
+        .style(CONTENT)
         .alignment(Alignment::Left)
         .block(Block::default().padding(Padding::horizontal(1)))
         .render(area, frame.buffer_mut());
@@ -223,7 +232,7 @@ fn draw_file_status(frame: &mut Frame, comic_state: &ComicState, area: Rect) {
     match comic_state.current_status() {
         ComicStatus::Waiting => {
             let gauge = Gauge::default()
-                .gauge_style(palette::tailwind::GRAY.c400)
+                .gauge_style(palette::tailwind::STONE.c500)
                 .ratio(0.0)
                 .label("waiting");
 
@@ -280,7 +289,7 @@ fn draw_scrollbar(
             ratatui::widgets::Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
                 .style(Style::default().fg(Color::White))
-                .thumb_style(Style::default().fg(Color::Blue)),
+                .thumb_style(Style::default().fg(palette::tailwind::STONE.c300)),
             area,
             &mut scroll_state,
         );
@@ -300,7 +309,7 @@ fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
     };
 
     let keys = Paragraph::new(keys)
-        .style(Style::default().fg(Color::White))
+        .style(CONTENT)
         .alignment(ratatui::layout::Alignment::Center);
 
     frame.render_widget(keys, controls_area);
@@ -335,19 +344,10 @@ fn draw_stage_legend(frame: &mut Frame, area: Rect) {
             .set_style(block_area, Style::default().bg(color));
 
         Paragraph::new(stage.to_string())
-            .style(Style::default())
+            .style(CONTENT)
             .alignment(Alignment::Left)
             .block(Block::default().padding(Padding::horizontal(1)))
             .render(text_area, frame.buffer_mut());
-    }
-}
-
-fn stage_color(stage: ComicStage) -> Color {
-    match stage {
-        ComicStage::Extract => palette::tailwind::CYAN.c400,
-        ComicStage::Process => palette::tailwind::BLUE.c400,
-        ComicStage::Mobi => palette::tailwind::INDIGO.c500,
-        ComicStage::Epub => palette::tailwind::PURPLE.c500,
     }
 }
 
@@ -386,7 +386,7 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
         .unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
-        .gauge_style(Style::default().fg(Color::Blue))
+        .gauge_style(Style::default().fg(palette::tailwind::SKY.c200))
         .label(format!(
             "{}/{} ({:.1}s)",
             successful,
@@ -397,70 +397,83 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
         .block(
             Block::new()
                 .borders(Borders::ALL)
+                .border_style(BORDER)
                 .title("progress")
                 .title_alignment(Alignment::Center),
         )
         .render(progress, frame.buffer_mut());
 }
 
+fn stage_color(stage: ComicStage) -> Color {
+    match stage {
+        ComicStage::Extract => palette::tailwind::STONE.c100,
+        ComicStage::Process => palette::tailwind::STONE.c300,
+        ComicStage::Mobi => palette::tailwind::STONE.c400,
+        ComicStage::Epub => palette::tailwind::STONE.c500,
+    }
+}
+
 fn render_title() -> impl Widget {
+    let modifier = Modifier::BOLD | Modifier::ITALIC;
     let styled_title = Line::from(vec![
         Span::styled(
             "c",
             Style::default()
-                .fg(palette::tailwind::CYAN.c400)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c100)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "o",
             Style::default()
-                .fg(palette::tailwind::CYAN.c500)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c100)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "m",
             Style::default()
-                .fg(palette::tailwind::BLUE.c400)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c200)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "i",
             Style::default()
-                .fg(palette::tailwind::BLUE.c500)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c200)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "c",
             Style::default()
-                .fg(palette::tailwind::INDIGO.c500)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c300)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "a",
             Style::default()
-                .fg(palette::tailwind::INDIGO.c500)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c300)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "l",
             Style::default()
-                .fg(palette::tailwind::PURPLE.c500)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c400)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "l",
             Style::default()
-                .fg(palette::tailwind::PURPLE.c400)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c400)
+                .add_modifier(modifier),
         ),
         Span::styled(
             "y",
             Style::default()
-                .fg(palette::tailwind::PURPLE.c300)
-                .add_modifier(Modifier::BOLD),
+                .fg(palette::tailwind::STONE.c500)
+                .add_modifier(modifier),
         ),
     ]);
-    Paragraph::new(styled_title.centered()).block(Block::new().borders(Borders::ALL))
+
+    Paragraph::new(styled_title.centered())
+        .block(Block::new().borders(Borders::ALL).border_style(BORDER))
 }
 
 struct StageTimingBar<'a> {
