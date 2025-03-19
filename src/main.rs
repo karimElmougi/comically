@@ -473,9 +473,21 @@ fn input_handling(tx: mpsc::Sender<Event>) {
 
 fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
     let mut pending = Vec::<Option<KindleGenStatus>>::new();
-    loop {
-        while let Ok(status) = tx.try_recv() {
-            pending.push(Some(status));
+    'outer: loop {
+        loop {
+            let result = tx.try_recv();
+
+            match result {
+                Ok(status) => {
+                    pending.push(Some(status));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    break 'outer;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    break;
+                }
+            }
         }
 
         for s in pending.iter_mut() {
