@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{palette, Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Gauge, Paragraph, Widget},
+    widgets::{Block, Borders, Gauge, Padding, Paragraph, Widget},
     Frame, Terminal,
 };
 use std::{
@@ -264,70 +264,55 @@ fn stage_color(stage: ComicStage) -> Color {
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
-    let [title_area, progress_area, table_headers] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(header_area);
+    let [title_area, progress] =
+        Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
+            .areas(header_area);
 
     frame.render_widget(render_title(), title_area);
 
-    {
-        let layout = Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
-            .split(table_headers);
+    let total = state.comic_order.len();
+    let completed = state
+        .comic_states
+        .values()
+        .filter(|state| {
+            matches!(
+                state.current_status(),
+                ComicStatus::Success { .. } | ComicStatus::Failed { .. }
+            )
+        })
+        .count();
 
-        Paragraph::new("file")
-            .style(Style::default().fg(Color::White))
-            .alignment(Alignment::Left)
-            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
-            .render(layout[0], frame.buffer_mut());
+    let successful = state
+        .comic_states
+        .values()
+        .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
+        .count();
 
-        Paragraph::new("progress")
-            .style(Style::default().fg(Color::White))
-            .alignment(Alignment::Center)
-            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
-            .render(layout[1], frame.buffer_mut());
-    }
+    let progress_ratio = if total > 0 {
+        completed as f64 / total as f64
+    } else {
+        0.0
+    };
+    let elapsed = state
+        .processing_complete
+        .unwrap_or_else(|| state.start.elapsed());
 
-    {
-        let total = state.comic_order.len();
-        let completed = state
-            .comic_states
-            .values()
-            .filter(|state| {
-                matches!(
-                    state.current_status(),
-                    ComicStatus::Success { .. } | ComicStatus::Failed { .. }
-                )
-            })
-            .count();
-
-        let successful = state
-            .comic_states
-            .values()
-            .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
-            .count();
-
-        let progress_ratio = if total > 0 {
-            completed as f64 / total as f64
-        } else {
-            0.0
-        };
-        let elapsed = state
-            .processing_complete
-            .unwrap_or_else(|| state.start.elapsed());
-        Gauge::default()
-            .gauge_style(Style::default().fg(Color::Blue))
-            .label(format!(
-                "{}/{} ({:.1}s)",
-                successful,
-                total,
-                elapsed.as_secs_f64()
-            ))
-            .ratio(progress_ratio)
-            .render(progress_area, frame.buffer_mut());
-    }
+    Gauge::default()
+        .gauge_style(Style::default().fg(Color::Blue))
+        .label(format!(
+            "{}/{} ({:.1}s)",
+            successful,
+            total,
+            elapsed.as_secs_f64()
+        ))
+        .ratio(progress_ratio)
+        .block(
+            Block::new()
+                .borders(Borders::ALL)
+                .title("progress")
+                .title_alignment(Alignment::Center),
+        )
+        .render(progress, frame.buffer_mut());
 }
 
 fn render_title() -> impl Widget {
@@ -387,10 +372,7 @@ fn render_title() -> impl Widget {
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
-
-    let block = Block::new().title(styled_title.centered());
-
-    block
+    Paragraph::new(styled_title.centered()).block(Block::new().borders(Borders::ALL))
 }
 
 struct StageTimingBar<'a> {
