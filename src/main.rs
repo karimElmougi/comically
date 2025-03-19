@@ -226,33 +226,29 @@ fn process_files(
         .into_iter()
         .par_bridge()
         .flat_map(|mut comic| {
-            comic.update_status(ComicStage::Extract, 0.0);
             comic.with_try(|comic| {
-                let start = Instant::now();
+                let start = comic.update_status(ComicStage::Extract, 0.0);
                 comic_archive::extract_cbz(comic)?;
                 comic.stage_completed(ComicStage::Extract, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status(ComicStage::Process, 25.0);
             comic.with_try(|comic| {
-                let start = Instant::now();
+                let start = comic.update_status(ComicStage::Process, 25.0);
                 image_processor::process_images(comic)?;
                 comic.stage_completed(ComicStage::Process, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status(ComicStage::Epub, 50.0);
             comic.with_try(|comic| {
-                let start = Instant::now();
+                let start = comic.update_status(ComicStage::Epub, 50.0);
                 epub_builder::build_epub(comic)?;
                 comic.stage_completed(ComicStage::Epub, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status(ComicStage::Mobi, 75.0);
             let (spawned, mobi_start) = comic.with_try(|comic| {
-                let start = Instant::now();
+                let start = comic.update_status(ComicStage::Mobi, 75.0);
                 let spawned = mobi_converter::create_mobi(comic)?;
                 Ok((spawned, start))
             })?;
@@ -389,15 +385,17 @@ impl Comic {
         path
     }
 
-    fn update_status(&self, stage: ComicStage, progress: f64) {
+    fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {
+        let start = Instant::now();
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
             status: ComicStatus::Processing {
                 stage,
                 progress,
-                start: Instant::now(),
+                start,
             },
         });
+        start
     }
 
     fn stage_completed(&self, stage: ComicStage, duration: Duration) {
