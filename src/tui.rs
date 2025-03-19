@@ -9,7 +9,6 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{
-    collections::HashMap,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -18,8 +17,7 @@ use crate::{ComicStage, ComicStatus, Event};
 
 struct AppState {
     start: Instant,
-    comic_order: Vec<usize>,
-    comic_states: HashMap<usize, ComicState>,
+    comics: Vec<ComicState>,
     processing_complete: Option<Duration>,
 
     scroll_offset: usize,
@@ -71,8 +69,7 @@ impl ComicState {
 pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
     let mut state = AppState {
         start: Instant::now(),
-        comic_order: Vec::new(),
-        comic_states: HashMap::new(),
+        comics: Vec::new(),
         processing_complete: None,
 
         scroll_offset: 0,
@@ -87,7 +84,7 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
                     break;
                 }
                 event::KeyCode::Down | event::KeyCode::Char('j') => {
-                    if !state.comic_order.is_empty() {
+                    if !state.comics.is_empty() {
                         state.scroll_offset = state.scroll_offset.saturating_add(1);
                     }
                 }
@@ -103,18 +100,24 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
             }
             Event::Tick => {}
             Event::RegisterComic { id, file_name } => {
-                let _ = state.comic_states.insert(
-                    id,
-                    ComicState {
+                debug_assert!(state.comics.get(id).is_none(), "comic already registered");
+
+                if id == state.comics.len() {
+                    state.comics.push(ComicState {
                         title: file_name,
                         status: vec![ComicStatus::Waiting],
                         timings: StageTimings::new(),
-                    },
-                );
-                state.comic_order.push(id);
+                    });
+                } else {
+                    state.comics[id] = ComicState {
+                        title: file_name,
+                        status: vec![ComicStatus::Waiting],
+                        timings: StageTimings::new(),
+                    };
+                }
             }
             Event::ComicUpdate { id, status } => {
-                if let Some(state) = state.comic_states.get_mut(&id) {
+                if let Some(state) = state.comics.get_mut(id) {
                     match status {
                         ComicStatus::StageCompleted { stage, duration } => {
                             state.timings.add_stage(stage, duration);
@@ -182,7 +185,7 @@ fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
     frame.render_widget(names_block.clone(), names_area);
     frame.render_widget(status_block.clone(), status_area);
 
-    if state.comic_order.is_empty() {
+    if state.comics.is_empty() {
         return;
     }
 
@@ -190,16 +193,15 @@ fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
     let status_inner_area = status_block.inner(status_area);
 
     let visible_height = names_inner_area.height as usize;
-    let total_comics = state.comic_order.len();
 
-    let max_scroll = total_comics.saturating_sub(visible_height);
+    let max_scroll = state.comics.len().saturating_sub(visible_height);
     if state.scroll_offset > max_scroll {
         state.scroll_offset = max_scroll;
     }
 
     let visible_items = {
-        let end_idx = (state.scroll_offset + visible_height).min(total_comics);
-        &state.comic_order[state.scroll_offset..end_idx]
+        let end_idx = (state.scroll_offset + visible_height).min(state.comics.len());
+        &state.comics[state.scroll_offset..end_idx]
     };
 
     let names_layout =
@@ -207,17 +209,21 @@ fn draw_main_content(frame: &mut Frame, state: &mut AppState, area: Rect) {
     let status_layout =
         Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(status_inner_area);
 
-    for (i, &id) in visible_items.iter().enumerate() {
-        let comic_state = &state.comic_states[&id];
-        draw_file_title(frame, comic_state, names_layout[i]);
+    for (i, comic) in visible_items.iter().enumerate() {
+        draw_file_title(frame, comic, names_layout[i]);
     }
 
-    for (i, &id) in visible_items.iter().enumerate() {
-        let comic_state = &state.comic_states[&id];
-        draw_file_status(frame, comic_state, status_layout[i]);
+    for (i, comic) in visible_items.iter().enumerate() {
+        draw_file_status(frame, comic, status_layout[i]);
     }
 
-    draw_scrollbar(frame, state, scrollbar_area, total_comics, visible_height);
+    draw_scrollbar(
+        frame,
+        state,
+        scrollbar_area,
+        state.comics.len(),
+        visible_height,
+    );
 }
 
 fn draw_file_title(frame: &mut Frame, comic_state: &ComicState, area: Rect) {
@@ -297,7 +303,7 @@ fn draw_scrollbar(
 }
 
 fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
-    let show_scrollbar = !state.comic_order.is_empty();
+    let show_scrollbar = !state.comics.is_empty();
 
     let [controls_area, legend_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
@@ -314,7 +320,7 @@ fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
 
     frame.render_widget(keys, controls_area);
 
-    if !state.comic_order.is_empty() {
+    if !state.comics.is_empty() {
         draw_stage_legend(frame, legend_area);
     }
 }
@@ -358,10 +364,10 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
 
     frame.render_widget(render_title(), title_area);
 
-    let total = state.comic_order.len();
+    let total = state.comics.len();
     let completed = state
-        .comic_states
-        .values()
+        .comics
+        .iter()
         .filter(|state| {
             matches!(
                 state.current_status(),
@@ -371,8 +377,8 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
         .count();
 
     let successful = state
-        .comic_states
-        .values()
+        .comics
+        .iter()
         .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
         .count();
 
