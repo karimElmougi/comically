@@ -71,17 +71,49 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
         start: Instant::now(),
         comics: Vec::new(),
         processing_complete: None,
-
         scroll_offset: 0,
     };
 
-    loop {
-        terminal.draw(|frame| draw(frame, &mut state))?;
+    let mut pending_events = Vec::with_capacity(50);
 
-        match rx.recv()? {
+    'outer: loop {
+        loop {
+            match rx.try_recv() {
+                Ok(event) => pending_events.push(event),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break 'outer,
+            }
+        }
+
+        let pending = !pending_events.is_empty();
+
+        if !process_events(terminal, &mut state, &mut pending_events)? {
+            break 'outer;
+        }
+
+        if pending {
+            terminal.draw(|frame| draw(frame, &mut state))?;
+        }
+
+        match rx.recv() {
+            Ok(event) => pending_events.push(event),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn process_events(
+    terminal: &mut Terminal<impl Backend>,
+    state: &mut AppState,
+    pending_events: &mut Vec<Event>,
+) -> anyhow::Result<bool> {
+    for event in pending_events.drain(..) {
+        match event {
             Event::Input(event) => match event.code {
                 event::KeyCode::Char('q') => {
-                    break;
+                    return Ok(false);
                 }
                 event::KeyCode::Down | event::KeyCode::Char('j') => {
                     if !state.comics.is_empty() {
@@ -101,6 +133,7 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
             Event::Tick => {}
             Event::RegisterComic { id, file_name } => {
                 debug_assert!(state.comics.get(id).is_none(), "comic already registered");
+                debug_assert!(id <= state.comics.len(), "id out of bounds");
 
                 if id == state.comics.len() {
                     state.comics.push(ComicState {
@@ -117,14 +150,14 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
                 }
             }
             Event::ComicUpdate { id, status } => {
-                if let Some(state) = state.comics.get_mut(id) {
+                if let Some(comic) = state.comics.get_mut(id) {
                     match status {
                         ComicStatus::StageCompleted { stage, duration } => {
-                            state.timings.add_stage(stage, duration);
+                            comic.timings.add_stage(stage, duration);
                         }
                         _ => {}
                     }
-                    state.status.push(status);
+                    comic.status.push(status);
                 } else {
                     panic!("Comic state not found for id: {}", id);
                 }
@@ -132,9 +165,9 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
             Event::ProcessingComplete => {
                 state.processing_complete = Some(state.start.elapsed());
             }
-        };
+        }
     }
-    Ok(())
+    Ok(true)
 }
 
 const BORDER: Color = palette::tailwind::STONE.c300;
