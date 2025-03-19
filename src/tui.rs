@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{ComicStatus, Event, StageTiming};
+use crate::{ComicStage, ComicStatus, Event};
 
 struct AppState {
     start: Instant,
@@ -29,11 +29,42 @@ struct AppState {
 struct ComicState {
     title: String,
     status: Vec<ComicStatus>,
+    timings: StageTimings,
+}
+
+#[derive(Debug, Clone)]
+pub struct StageTimings {
+    stages: Vec<StageMetrics>,
+}
+
+impl StageTimings {
+    pub fn add_stage(&mut self, stage: ComicStage, duration: Duration) {
+        self.stages.push(StageMetrics { stage, duration });
+    }
+
+    pub fn new() -> Self {
+        Self { stages: Vec::new() }
+    }
+
+    pub fn total(&self) -> Duration {
+        self.stages.iter().map(|s| s.duration).sum()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StageMetrics {
+    stage: ComicStage,
+    duration: Duration,
 }
 
 impl ComicState {
-    fn last_status(&self) -> &ComicStatus {
-        self.status.last().unwrap()
+    // search for non-completed stage status
+    fn current_status(&self) -> &ComicStatus {
+        self.status
+            .iter()
+            .rev()
+            .find(|status| !matches!(status, ComicStatus::StageCompleted { .. }))
+            .unwrap()
     }
 }
 
@@ -77,12 +108,19 @@ pub fn run(terminal: &mut Terminal<impl Backend>, rx: mpsc::Receiver<Event>) -> 
                     ComicState {
                         title: file_name,
                         status: vec![ComicStatus::Waiting],
+                        timings: StageTimings::new(),
                     },
                 );
                 state.comic_order.push(id);
             }
             Event::ComicUpdate { id, status } => {
                 if let Some(state) = state.comic_states.get_mut(&id) {
+                    match status {
+                        ComicStatus::StageCompleted { stage, duration } => {
+                            state.timings.add_stage(stage, duration);
+                        }
+                        _ => {}
+                    }
                     state.status.push(status);
                 } else {
                     panic!("Comic state not found for id: {}", id);
@@ -140,10 +178,11 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
             Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
                 .split(comic_area);
 
-        let title_style = match state.last_status() {
+        let title_style = match state.current_status() {
             ComicStatus::Waiting => Style::default().fg(Color::Gray),
             ComicStatus::Processing { .. } => Style::default().fg(Color::Yellow),
-            ComicStatus::Success { .. } => Style::default().fg(Color::Green),
+            ComicStatus::StageCompleted { .. } => unreachable!(),
+            ComicStatus::Success => Style::default().fg(Color::Green),
             ComicStatus::Failed { .. } => Style::default().fg(Color::Red),
         };
 
@@ -153,7 +192,7 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
 
         frame.render_widget(title_paragraph, horizontal_layout[0]);
 
-        match state.last_status() {
+        match state.current_status() {
             ComicStatus::Waiting => {
                 let gauge = Gauge::default()
                     .gauge_style(Style::default().fg(Color::Gray))
@@ -170,9 +209,10 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
-            ComicStatus::Success { stage_timing } => {
+            ComicStatus::StageCompleted { .. } => unreachable!(),
+            ComicStatus::Success => {
                 frame.render_widget(
-                    StageTimingBar::new(stage_timing).width(horizontal_layout[1].width),
+                    StageTimingBar::new(&state.timings).width(horizontal_layout[1].width),
                     horizontal_layout[1],
                 );
             }
@@ -189,7 +229,8 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
         }
     }
 
-    if total_comics > visible_height {
+    let show_scrollbar = total_comics > visible_height;
+    if show_scrollbar {
         let mut scroll_state = ratatui::widgets::ScrollbarState::default()
             .content_length(max_scroll)
             .position(state.scroll_offset);
@@ -202,14 +243,19 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
             main_area,
             &mut scroll_state,
         );
-
-        let keys_text = "q: Quit | ↑/k: Up | ↓/j: Down";
-        let keys = Paragraph::new(keys_text)
-            .style(Style::default().fg(Color::White))
-            .alignment(ratatui::layout::Alignment::Center);
-
-        frame.render_widget(keys, footer_area);
     }
+
+    let keys = if show_scrollbar {
+        "q: quit | ↑/k: up | ↓/j: down"
+    } else {
+        "q: quit"
+    };
+
+    let keys = Paragraph::new(keys)
+        .style(Style::default().fg(Color::White))
+        .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(keys, footer_area);
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
@@ -224,7 +270,7 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
         .values()
         .filter(|state| {
             matches!(
-                state.last_status(),
+                state.current_status(),
                 ComicStatus::Success { .. } | ComicStatus::Failed { .. }
             )
         })
@@ -233,7 +279,7 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
     let successful = state
         .comic_states
         .values()
-        .filter(|state| matches!(state.last_status(), ComicStatus::Success { .. }))
+        .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
         .count();
 
     let progress = {
@@ -260,12 +306,12 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
 }
 
 struct StageTimingBar<'a> {
-    timing: &'a StageTiming,
+    timing: &'a StageTimings,
     width: u16,
 }
 
 impl<'a> StageTimingBar<'a> {
-    fn new(timing: &'a StageTiming) -> Self {
+    fn new(timing: &'a StageTimings) -> Self {
         Self { timing, width: 0 }
     }
 
@@ -296,57 +342,33 @@ impl<'a> Widget for StageTimingBar<'a> {
         let bar_area = horizontal[0];
         let total_label_area = horizontal[1];
 
-        let stage_durations = [
-            self.timing.extract.as_secs_f64(),
-            self.timing.process.as_secs_f64(),
-            self.timing.epub.as_secs_f64(),
-            self.timing.mobi.as_secs_f64(),
-        ];
-
-        let stages: Vec<_> = stage_durations
-            .iter()
-            .filter(|duration| **duration > 0.0)
-            .collect();
-
-        if !stages.is_empty() {
+        if !self.timing.stages.is_empty() {
             // Create Fill constraints proportional to each stage's duration
-            let constraints: Vec<Constraint> = stages
+            let constraints: Vec<Constraint> = self
+                .timing
+                .stages
                 .iter()
-                .map(|duration| Constraint::Fill((*duration / total * 100.0).round() as u16))
+                .map(|stage| {
+                    Constraint::Fill((stage.duration.as_secs_f64() / total * 100.0).round() as u16)
+                })
                 .collect();
 
             let stage_areas = Layout::horizontal(&constraints)
                 .flex(ratatui::layout::Flex::Start)
                 .split(bar_area);
 
-            for (i, (duration, area)) in stages.iter().zip(stage_areas.iter()).enumerate() {
-                let color = colors[i];
+            for (stage, area) in self.timing.stages.iter().zip(stage_areas.iter()) {
+                let color = colors[stage.stage as usize];
 
                 buf.set_style(area.clone(), Style::default().bg(color));
 
-                // Add a label if there's enough space (minimum 10 chars width)
                 if area.width >= 10 {
-                    let stage_name = match i {
-                        0 => "extract",
-                        1 => "imgproc",
-                        2 => "epub",
-                        3 => "mobi",
-                        _ => "",
-                    };
+                    let stage_name = stage.stage.to_string();
+                    let label = format!("{} {:.1}s", stage_name, stage.duration.as_secs_f64());
 
-                    let label = format!("{} {:.1}s", stage_name, duration);
-                    let label_width = label.len() as u16;
-
-                    if label_width <= area.width {
-                        // Center the label
-                        let x = area.x + (area.width - label_width) / 2;
-                        buf.set_string(
-                            x,
-                            area.y + area.height / 2,
-                            label,
-                            Style::default().fg(Color::Black).bg(color),
-                        );
-                    }
+                    Paragraph::new(label)
+                        .alignment(ratatui::layout::Alignment::Center)
+                        .render(area.clone(), buf);
                 }
             }
         }
@@ -356,11 +378,10 @@ impl<'a> Widget for StageTimingBar<'a> {
             .render(total_label_area, buf);
 
         let total_label = format!("{:.1}s", total);
-        buf.set_string(
-            total_label_area.x + 2,
-            total_label_area.y + total_label_area.height / 2,
-            total_label,
-            Style::default().fg(Color::White).bg(Color::DarkGray),
-        );
+
+        Paragraph::new(total_label)
+            .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+            .alignment(ratatui::layout::Alignment::Center)
+            .render(total_label_area, buf);
     }
 }

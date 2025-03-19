@@ -115,14 +115,21 @@ fn main() -> anyhow::Result<()> {
 
     thread::spawn({
         let event_tx = event_tx.clone();
-        let kindlegen_tx = kindlegen_tx.clone();
         move || {
             process_files(files, &cli, event_tx, kindlegen_tx);
         }
     });
 
     // polling thread
-    thread::spawn(move || poll_kindlegen(kindlegen_rx));
+    thread::spawn({
+        let event_tx = event_tx.clone();
+        move || {
+            poll_kindlegen(kindlegen_rx);
+            // once the worker thread has completed, poll kindlegen will stop looping
+            // then send the ProcessingComplete event
+            event_tx.send(Event::ProcessingComplete).unwrap();
+        }
+    });
 
     let result = tui::run(&mut terminal, event_rx);
 
@@ -219,38 +226,34 @@ fn process_files(
         .into_iter()
         .par_bridge()
         .flat_map(|mut comic| {
-            comic.update_status("extracting archive", 0.0);
-            let extract_start = Instant::now();
+            comic.update_status(ComicStage::Extract, 0.0);
             comic.with_try(|comic| {
+                let start = Instant::now();
                 comic_archive::extract_cbz(comic)?;
-                comic.record_extract_time(extract_start.elapsed());
+                comic.stage_completed(ComicStage::Extract, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status(
-                &format!("processing {} images", comic.input_page_names.len()),
-                25.0,
-            );
+            comic.update_status(ComicStage::Process, 25.0);
             comic.with_try(|comic| {
                 let start = Instant::now();
                 image_processor::process_images(comic)?;
-                comic.record_process_time(start.elapsed());
+                comic.stage_completed(ComicStage::Process, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status("building epub", 50.0);
+            comic.update_status(ComicStage::Epub, 50.0);
             comic.with_try(|comic| {
                 let start = Instant::now();
                 epub_builder::build_epub(comic)?;
-                comic.record_epub_time(start.elapsed());
+                comic.stage_completed(ComicStage::Epub, start.elapsed());
                 Ok(())
             })?;
 
-            comic.update_status("building mobi", 75.0);
+            comic.update_status(ComicStage::Mobi, 75.0);
             let (spawned, mobi_start) = comic.with_try(|comic| {
                 let start = Instant::now();
                 let spawned = mobi_converter::create_mobi(comic)?;
-                comic.record_mobi_time(start.elapsed());
                 Ok((spawned, start))
             })?;
 
@@ -266,8 +269,6 @@ fn process_files(
             Some(())
         })
         .collect::<Vec<_>>();
-
-    event_tx.send(Event::ProcessingComplete).unwrap();
 }
 
 fn create_comic(
@@ -300,7 +301,6 @@ fn create_comic(
         directory: temp_dir.into_path(),
         input_page_names: Vec::new(),
         processed_files: Vec::new(),
-        stage_timing: StageTiming::new(),
 
         title: full_title,
         prefix: title_prefix,
@@ -320,7 +320,6 @@ pub struct Comic {
     directory: PathBuf,
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
-    stage_timing: StageTiming,
 
     // Config
     title: String,
@@ -390,23 +389,24 @@ impl Comic {
         path
     }
 
-    // New status update methods
-    fn update_status(&self, stage: &str, progress: f64) {
+    fn update_status(&self, stage: ComicStage, progress: f64) {
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Processing {
-                stage: stage.to_string(),
-                progress,
-            },
+            status: ComicStatus::Processing { stage, progress },
+        });
+    }
+
+    fn stage_completed(&self, stage: ComicStage, duration: Duration) {
+        let _ = self.tx.send(Event::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::StageCompleted { stage, duration },
         });
     }
 
     fn success(&self) {
         let _ = self.tx.send(Event::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Success {
-                stage_timing: self.stage_timing.clone(),
-            },
+            status: ComicStatus::Success,
         });
     }
 
@@ -415,22 +415,6 @@ impl Comic {
             id: self.id,
             status: ComicStatus::Failed { error },
         });
-    }
-
-    fn record_extract_time(&mut self, duration: Duration) {
-        self.stage_timing.extract = duration;
-    }
-
-    fn record_process_time(&mut self, duration: Duration) {
-        self.stage_timing.process = duration;
-    }
-
-    fn record_epub_time(&mut self, duration: Duration) {
-        self.stage_timing.epub = duration;
-    }
-
-    fn record_mobi_time(&mut self, duration: Duration) {
-        self.stage_timing.mobi = duration;
     }
 }
 
@@ -482,7 +466,11 @@ fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
                     pending.push(Some(status));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    break 'outer;
+                    if pending.is_empty() {
+                        break 'outer;
+                    } else {
+                        break;
+                    }
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     break;
@@ -502,7 +490,7 @@ fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
                 if let Some(mut status) = s.take() {
                     let _ = status.comic.with_try(|comic| {
                         status.spawned.wait()?;
-                        comic.record_mobi_time(status.start_time.elapsed());
+                        comic.stage_completed(ComicStage::Mobi, status.start_time.elapsed());
                         comic.success();
                         Ok(())
                     });
@@ -527,31 +515,43 @@ enum Event {
 
 #[derive(Debug)]
 enum ComicStatus {
+    // initial state
     Waiting,
-    Processing { stage: String, progress: f64 },
-    Success { stage_timing: StageTiming },
-    Failed { error: anyhow::Error },
+
+    // currently processing a specific stage
+    Processing {
+        stage: ComicStage,
+        progress: f64,
+    },
+
+    // stage completed
+    StageCompleted {
+        stage: ComicStage,
+        duration: Duration,
+    },
+
+    // final states
+    Success,
+    Failed {
+        error: anyhow::Error,
+    },
 }
 
-#[derive(Debug, Clone)]
-pub struct StageTiming {
-    extract: Duration,
-    process: Duration,
-    epub: Duration,
-    mobi: Duration,
+#[derive(Debug, Clone, Copy)]
+pub enum ComicStage {
+    Extract,
+    Process,
+    Epub,
+    Mobi,
 }
 
-impl StageTiming {
-    fn new() -> Self {
-        Self {
-            extract: Duration::default(),
-            process: Duration::default(),
-            epub: Duration::default(),
-            mobi: Duration::default(),
+impl std::fmt::Display for ComicStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComicStage::Extract => write!(f, "extract"),
+            ComicStage::Process => write!(f, "process"),
+            ComicStage::Epub => write!(f, "epub"),
+            ComicStage::Mobi => write!(f, "mobi"),
         }
-    }
-
-    fn total(&self) -> Duration {
-        self.extract + self.process + self.epub + self.mobi
     }
 }
