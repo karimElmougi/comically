@@ -425,7 +425,7 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
         .unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
-        .gauge_style(Style::default().fg(palette::tailwind::SKY.c200))
+        .gauge_style(Style::default().fg(palette::tailwind::SKY.c300))
         .label(format!(
             "{}/{} ({:.1}s)",
             successful,
