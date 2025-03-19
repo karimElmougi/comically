@@ -3,7 +3,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::{palette, Color, Style},
     text::Line,
     widgets::{Block, Gauge, Paragraph, Widget},
     Frame, Terminal,
@@ -178,34 +178,30 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
             Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
                 .split(comic_area);
 
-        let title_style = match state.current_status() {
-            ComicStatus::Waiting => Style::default().fg(Color::Gray),
-            ComicStatus::Processing { .. } => Style::default().fg(Color::Yellow),
-            ComicStatus::StageCompleted { .. } => unreachable!(),
-            ComicStatus::Success => Style::default().fg(Color::Green),
-            ComicStatus::Failed { .. } => Style::default().fg(Color::Red),
-        };
-
-        let title_paragraph = Paragraph::new(state.title.clone())
-            .style(title_style)
-            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)));
-
-        frame.render_widget(title_paragraph, horizontal_layout[0]);
+        Paragraph::new(state.title.clone())
+            .style(
+                Style::default()
+                    .fg(palette::tailwind::STONE.c200)
+                    .bg(palette::tailwind::STONE.c800),
+            )
+            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
+            .render(horizontal_layout[0], frame.buffer_mut());
 
         match state.current_status() {
             ComicStatus::Waiting => {
                 let gauge = Gauge::default()
-                    .gauge_style(Style::default().fg(Color::Gray))
+                    .gauge_style(palette::tailwind::GRAY.c400)
                     .ratio(0.0)
                     .label("waiting");
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
             ComicStatus::Processing { stage, progress } => {
+                let stage_color = stage_color(*stage);
                 let gauge = Gauge::default()
-                    .gauge_style(Style::default().fg(Color::Yellow))
+                    .gauge_style(stage_color)
                     .ratio(*progress / 100.0)
-                    .label(format!("{} - {:.1}%", stage, progress));
+                    .label(format!("{}", stage));
 
                 frame.render_widget(gauge, horizontal_layout[1]);
             }
@@ -220,7 +216,7 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
                 let error = error.to_string();
 
                 let gauge = Gauge::default()
-                    .gauge_style(Style::default().fg(Color::Red))
+                    .gauge_style(palette::tailwind::RED.c500)
                     .ratio(1.0)
                     .label(error);
 
@@ -256,6 +252,15 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
         .alignment(ratatui::layout::Alignment::Center);
 
     frame.render_widget(keys, footer_area);
+}
+
+fn stage_color(stage: ComicStage) -> Color {
+    match stage {
+        ComicStage::Extract => palette::tailwind::STONE.c300,
+        ComicStage::Process => palette::tailwind::STONE.c400,
+        ComicStage::Epub => palette::tailwind::STONE.c500,
+        ComicStage::Mobi => palette::tailwind::STONE.c600,
+    }
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
@@ -323,13 +328,6 @@ impl<'a> StageTimingBar<'a> {
 
 impl<'a> Widget for StageTimingBar<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let colors = [
-            Color::Yellow,  // Extract
-            Color::Green,   // Process
-            Color::Blue,    // EPUB
-            Color::Magenta, // MOBI
-        ];
-
         let total = self.timing.total().as_secs_f64();
         if total == 0.0 || self.width == 0 {
             return;
@@ -358,7 +356,7 @@ impl<'a> Widget for StageTimingBar<'a> {
                 .split(bar_area);
 
             for (stage, area) in self.timing.stages.iter().zip(stage_areas.iter()) {
-                let color = colors[stage.stage as usize];
+                let color = stage_color(stage.stage);
 
                 buf.set_style(area.clone(), Style::default().bg(color));
 
@@ -373,14 +371,14 @@ impl<'a> Widget for StageTimingBar<'a> {
             }
         }
 
-        Block::default()
-            .style(Style::default().bg(Color::DarkGray))
-            .render(total_label_area, buf);
-
         let total_label = format!("{:.1}s", total);
 
         Paragraph::new(total_label)
-            .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+            .style(
+                Style::default()
+                    .fg(palette::tailwind::GREEN.c100)
+                    .bg(palette::tailwind::GREEN.c900),
+            )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
     }
