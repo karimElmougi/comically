@@ -289,6 +289,10 @@ fn draw_scrollbar(
 
 fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
     let show_scrollbar = !state.comic_order.is_empty();
+
+    let [controls_area, legend_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
+
     let keys = if show_scrollbar {
         "q: quit | ↑/k: up | ↓/j: down"
     } else {
@@ -299,15 +303,51 @@ fn draw_footer(frame: &mut Frame, state: &AppState, area: Rect) {
         .style(Style::default().fg(Color::White))
         .alignment(ratatui::layout::Alignment::Center);
 
-    frame.render_widget(keys, area);
+    frame.render_widget(keys, controls_area);
+
+    if !state.comic_order.is_empty() {
+        draw_stage_legend(frame, legend_area);
+    }
+}
+
+fn draw_stage_legend(frame: &mut Frame, area: Rect) {
+    let stages = [
+        ComicStage::Extract,
+        ComicStage::Process,
+        ComicStage::Epub,
+        ComicStage::Mobi,
+    ];
+
+    let constraints = vec![Constraint::Length(16); stages.len()];
+
+    let layout = Layout::horizontal(constraints).flex(ratatui::layout::Flex::Start);
+
+    let areas = layout.split(area);
+
+    for (i, &stage) in stages.iter().enumerate() {
+        let color = stage_color(stage);
+
+        let [block_area, text_area] =
+            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(areas[i]);
+
+        frame
+            .buffer_mut()
+            .set_style(block_area, Style::default().bg(color));
+
+        Paragraph::new(stage.to_string())
+            .style(Style::default())
+            .alignment(Alignment::Left)
+            .block(Block::default().padding(Padding::horizontal(1)))
+            .render(text_area, frame.buffer_mut());
+    }
 }
 
 fn stage_color(stage: ComicStage) -> Color {
     match stage {
-        ComicStage::Extract => palette::tailwind::GREEN.c500,
-        ComicStage::Process => palette::tailwind::GREEN.c600,
-        ComicStage::Epub => palette::tailwind::GREEN.c700,
-        ComicStage::Mobi => palette::tailwind::GREEN.c800,
+        ComicStage::Extract => palette::tailwind::CYAN.c400,
+        ComicStage::Process => palette::tailwind::BLUE.c400,
+        ComicStage::Mobi => palette::tailwind::INDIGO.c500,
+        ComicStage::Epub => palette::tailwind::PURPLE.c500,
     }
 }
 
@@ -368,55 +408,55 @@ fn render_title() -> impl Widget {
         Span::styled(
             "c",
             Style::default()
-                .fg(Color::Rgb(252, 186, 3))
+                .fg(palette::tailwind::CYAN.c400)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "o",
             Style::default()
-                .fg(Color::Rgb(252, 152, 3))
+                .fg(palette::tailwind::CYAN.c500)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "m",
             Style::default()
-                .fg(Color::Rgb(252, 119, 3))
+                .fg(palette::tailwind::BLUE.c400)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "i",
             Style::default()
-                .fg(Color::Rgb(252, 86, 3))
+                .fg(palette::tailwind::BLUE.c500)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "c",
             Style::default()
-                .fg(Color::Rgb(252, 52, 3))
+                .fg(palette::tailwind::INDIGO.c500)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "a",
             Style::default()
-                .fg(Color::Rgb(252, 3, 69))
+                .fg(palette::tailwind::INDIGO.c500)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "l",
             Style::default()
-                .fg(Color::Rgb(252, 3, 111))
+                .fg(palette::tailwind::PURPLE.c500)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "l",
             Style::default()
-                .fg(Color::Rgb(252, 3, 153))
+                .fg(palette::tailwind::PURPLE.c400)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "y",
             Style::default()
-                .fg(Color::Rgb(252, 3, 202))
+                .fg(palette::tailwind::PURPLE.c300)
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
@@ -474,8 +514,7 @@ impl<'a> Widget for StageTimingBar<'a> {
                 buf.set_style(area.clone(), Style::default().bg(color));
 
                 if area.width >= 10 {
-                    let stage_name = stage.stage.to_string();
-                    let label = format!("{} {:.1}s", stage_name, stage.duration.as_secs_f64());
+                    let label = format!("{:.1}s", stage.duration.as_secs_f64());
 
                     Paragraph::new(label)
                         .alignment(ratatui::layout::Alignment::Center)
@@ -490,7 +529,7 @@ impl<'a> Widget for StageTimingBar<'a> {
             .style(
                 Style::default()
                     .fg(palette::tailwind::GREEN.c100)
-                    .bg(palette::tailwind::GREEN.c950),
+                    .bg(palette::tailwind::GREEN.c700),
             )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
