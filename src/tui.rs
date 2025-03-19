@@ -2,7 +2,7 @@ use ratatui::{
     backend::Backend,
     buffer::Buffer,
     crossterm::event,
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{palette, Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Gauge, Paragraph, Widget},
@@ -264,30 +264,51 @@ fn stage_color(stage: ComicStage) -> Color {
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
-    let title = render_title();
-    frame.render_widget(title, frame.area());
+    let [title_area, progress_area, table_headers] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(header_area);
 
-    let [progress_area] = Layout::vertical([Constraint::Length(1)]).areas(header_area);
+    frame.render_widget(render_title(), title_area);
 
-    let total = state.comic_order.len();
-    let completed = state
-        .comic_states
-        .values()
-        .filter(|state| {
-            matches!(
-                state.current_status(),
-                ComicStatus::Success { .. } | ComicStatus::Failed { .. }
-            )
-        })
-        .count();
+    {
+        let layout = Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
+            .split(table_headers);
 
-    let successful = state
-        .comic_states
-        .values()
-        .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
-        .count();
+        Paragraph::new("file")
+            .style(Style::default().fg(Color::White))
+            .alignment(Alignment::Left)
+            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
+            .render(layout[0], frame.buffer_mut());
 
-    let progress = {
+        Paragraph::new("progress")
+            .style(Style::default().fg(Color::White))
+            .alignment(Alignment::Center)
+            .block(Block::default().padding(ratatui::widgets::Padding::horizontal(1)))
+            .render(layout[1], frame.buffer_mut());
+    }
+
+    {
+        let total = state.comic_order.len();
+        let completed = state
+            .comic_states
+            .values()
+            .filter(|state| {
+                matches!(
+                    state.current_status(),
+                    ComicStatus::Success { .. } | ComicStatus::Failed { .. }
+                )
+            })
+            .count();
+
+        let successful = state
+            .comic_states
+            .values()
+            .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
+            .count();
+
         let progress_ratio = if total > 0 {
             completed as f64 / total as f64
         } else {
@@ -305,9 +326,8 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
                 elapsed.as_secs_f64()
             ))
             .ratio(progress_ratio)
-    };
-
-    frame.render_widget(progress, progress_area);
+            .render(progress_area, frame.buffer_mut());
+    }
 }
 
 fn render_title() -> impl Widget {
