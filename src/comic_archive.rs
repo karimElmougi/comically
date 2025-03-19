@@ -1,82 +1,143 @@
 use anyhow::{Context, Result};
 use std::fs::{create_dir_all, File};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use unrar::Archive;
 use zip::ZipArchive;
 
 use crate::Comic;
 
-/// Extracts a CBZ file to the target directory
-pub fn extract_cbz(comic: &mut Comic) -> Result<()> {
-    log::debug!("Extracting CBZ: {}", comic.input.display());
+/// Extracts a comic archive to the target directory
+/// supports cbz, zip, cbr, rar
+pub fn unarchive_comic(comic: &mut Comic) -> Result<()> {
+    log::debug!("Extracting comic: {}", comic.input.display());
 
-    // Create the images directory
     let images_dir = comic.images_dir();
     create_dir_all(&images_dir).context("Failed to create images directory")?;
 
-    // Open the zip file
-    let file = File::open(&comic.input).context("Failed to open CBZ file")?;
+    let ext = comic
+        .input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "cbz" | "zip" => extract_zip(comic, &images_dir)?,
+        "cbr" | "rar" => extract_rar(comic, &images_dir)?,
+        _ => anyhow::bail!("Unsupported archive format: {}", ext),
+    }
+
+    if comic.input_page_names.is_empty() {
+        anyhow::bail!("No images found in the archive");
+    }
+
+    log::debug!("Found {} images", comic.input_page_names.len());
+
+    comic.input_page_names.sort();
+
+    Ok(())
+}
+
+fn extract_zip(comic: &mut Comic, images_dir: &Path) -> Result<()> {
+    log::info!("extracting cbz/zip file");
+    let file = File::open(&comic.input).context("Failed to open zip file")?;
     let mut reader = std::io::BufReader::new(file);
     let mut archive =
-        ZipArchive::new(&mut reader).context("Failed to parse CBZ file as ZIP archive")?;
-
-    // Extract all image files
-    let mut extracted_count = 0;
+        ZipArchive::new(&mut reader).context("Failed to parse file as zip archive")?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => path.to_owned(),
-            None => continue,
+            None => {
+                continue;
+            }
         };
 
-        // Skip directories and non-image files
-        if file.is_dir() || !has_image_extension(&outpath) {
+        if file.is_dir() {
             continue;
         }
 
-        // Skip system files
-        let file_name = outpath.file_name().unwrap().to_string_lossy();
-        if file_name.starts_with(".")
-            || file_name.contains("__MACOSX")
-            || file_name.contains("thumbs.db")
-            || file_name.contains(".DS_Store")
-        {
+        let Some(file_name) = get_file_name(&outpath) else {
             continue;
-        }
+        };
 
-        let target_path = images_dir.join(&*file_name);
-        comic.input_page_names.push(file_name.to_string());
+        let target_path = images_dir.join(&file_name);
 
-        // Extract the file
         let outfile = File::create(&target_path)
             .context(format!("Failed to create file: {}", target_path.display()))?;
         let mut outfile = std::io::BufWriter::new(outfile);
+
         io::copy(&mut file, &mut outfile)
             .context(format!("Failed to extract file: {}", outpath.display()))?;
 
-        extracted_count += 1;
-    }
-
-    // sort input_page_names
-    comic.input_page_names.sort();
-
-    log::debug!("Extracted {} images", extracted_count);
-
-    if extracted_count == 0 {
-        anyhow::bail!("No images found in the CBZ file");
+        comic.input_page_names.push(file_name);
     }
 
     Ok(())
 }
 
-/// Helper function to check if a file has an image extension
+fn extract_rar(comic: &mut Comic, images_dir: &Path) -> Result<()> {
+    log::info!("processing as rar/cbr file");
+
+    let input_path = comic.input.to_str().unwrap_or_default();
+    let mut archive = Archive::new(input_path)
+        .open_for_processing()
+        .context("Failed to open RAR file")?;
+
+    while let Some(header) = archive.read_header()? {
+        let file_path = PathBuf::from(&header.entry().filename);
+
+        if header.entry().is_directory() {
+            archive = header.skip()?;
+            continue;
+        }
+
+        let Some(file_name) = get_file_name(&file_path) else {
+            archive = header.skip()?;
+            continue;
+        };
+
+        let target_path = images_dir.join(&file_name);
+
+        // Extract the file and get the archive back for the next iteration
+        match header.extract_to(target_path.as_path()) {
+            Ok(next_archive) => {
+                archive = next_archive;
+            }
+            Err(err) => {
+                anyhow::bail!("Failed to extract {}: {}", file_name, err);
+            }
+        }
+
+        comic.input_page_names.push(file_name);
+    }
+
+    Ok(())
+}
+
+fn get_file_name(path: &Path) -> Option<String> {
+    path.file_name()
+        .map(|f| f.to_string_lossy())
+        .filter(|f| !should_skip_file(&f))
+        .filter(|_| has_image_extension(path))
+        .map(|f| f.to_string())
+}
+
+fn should_skip_file(file_name: &str) -> bool {
+    file_name.starts_with(".")
+        || file_name.contains("__MACOSX")
+        || file_name.contains("thumbs.db")
+        || file_name.contains(".DS_Store")
+}
+
 fn has_image_extension(path: &Path) -> bool {
-    static VALID_EXTENSIONS: &[&str] = &[".jpg", ".jpeg", ".png", ".gif"];
+    static VALID_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png"];
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
         for valid_ext in VALID_EXTENSIONS {
-            if valid_ext.contains(&ext_str) {
+            if valid_ext == &ext_str {
                 return true;
             }
         }

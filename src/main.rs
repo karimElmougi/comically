@@ -141,8 +141,9 @@ fn main() -> anyhow::Result<()> {
 
 fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
     fn valid_file(path: &std::path::Path) -> bool {
-        path.extension()
-            .map_or(false, |ext| ext == "cbz" || ext == "zip")
+        path.extension().map_or(false, |ext| {
+            ext == "cbz" || ext == "zip" || ext == "cbr" || ext == "rar"
+        })
     }
 
     let mut files = Vec::new();
@@ -228,7 +229,7 @@ fn process_files(
         .flat_map(|mut comic| {
             comic.with_try(|comic| {
                 let start = comic.update_status(ComicStage::Extract, 0.0);
-                comic_archive::extract_cbz(comic)?;
+                comic_archive::unarchive_comic(comic)?;
                 comic.stage_completed(ComicStage::Extract, start.elapsed());
                 Ok(())
             })?;
