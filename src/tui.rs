@@ -3,8 +3,8 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event,
     layout::{Constraint, Layout, Rect},
-    style::{palette, Color, Style},
-    text::Line,
+    style::{palette, Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Gauge, Paragraph, Widget},
     Frame, Terminal,
 };
@@ -167,8 +167,8 @@ fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.comic_order[state.scroll_offset..end_idx]
     };
 
-    let constraints = vec![Constraint::Length(1); visible_items.len()];
-    let comic_layout = Layout::vertical(constraints).split(main_area);
+    let comic_layout =
+        Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(main_area);
 
     for (i, &id) in visible_items.iter().enumerate() {
         let state = &state.comic_states[&id];
@@ -264,8 +264,8 @@ fn stage_color(stage: ComicStage) -> Color {
 }
 
 fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::layout::Rect) {
-    let block = Block::new().title(Line::from("comically").centered());
-    frame.render_widget(block, frame.area());
+    let title = render_title();
+    frame.render_widget(title, frame.area());
 
     let [progress_area] = Layout::vertical([Constraint::Length(1)]).areas(header_area);
 
@@ -308,6 +308,69 @@ fn draw_header(frame: &mut Frame, state: &mut AppState, header_area: ratatui::la
     };
 
     frame.render_widget(progress, progress_area);
+}
+
+fn render_title() -> impl Widget {
+    let styled_title = Line::from(vec![
+        Span::styled(
+            "c",
+            Style::default()
+                .fg(Color::Rgb(252, 186, 3))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "o",
+            Style::default()
+                .fg(Color::Rgb(252, 152, 3))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "m",
+            Style::default()
+                .fg(Color::Rgb(252, 119, 3))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "i",
+            Style::default()
+                .fg(Color::Rgb(252, 86, 3))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "c",
+            Style::default()
+                .fg(Color::Rgb(252, 52, 3))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "a",
+            Style::default()
+                .fg(Color::Rgb(252, 3, 69))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "l",
+            Style::default()
+                .fg(Color::Rgb(252, 3, 111))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "l",
+            Style::default()
+                .fg(Color::Rgb(252, 3, 153))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "y",
+            Style::default()
+                .fg(Color::Rgb(252, 3, 202))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    let block = Block::new().title(styled_title.centered());
+
+    block
 }
 
 struct StageTimingBar<'a> {
