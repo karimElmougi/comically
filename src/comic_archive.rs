@@ -11,11 +11,46 @@ pub struct ArchiveFile {
     pub data: Vec<u8>,
 }
 
-pub trait ArchiveReader: Send {
-    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>>;
+enum ArchiveIter {
+    Zip(ZipReader),
+    Rar(RarReader),
 }
 
-pub struct ZipReader {
+pub trait ArchiveReader: Send + Iterator<Item = anyhow::Result<ArchiveFile>> {}
+impl<T: Send + Iterator<Item = anyhow::Result<ArchiveFile>>> ArchiveReader for T {}
+
+impl Iterator for ArchiveIter {
+    type Item = anyhow::Result<ArchiveFile>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ArchiveIter::Zip(reader) => reader.next(),
+            ArchiveIter::Rar(reader) => reader.next(),
+        }
+    }
+}
+
+pub fn unarchive_comic_iter(comic_file: impl AsRef<Path>) -> anyhow::Result<impl ArchiveReader> {
+    let path = comic_file.as_ref();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    let reader = match ext.as_str() {
+        "cbz" | "zip" => {
+            let file = File::open(path).context("Failed to open zip file")?;
+            ArchiveIter::Zip(ZipReader::new(file)?)
+        }
+        "cbr" | "rar" => ArchiveIter::Rar(RarReader::new(path)?),
+        _ => anyhow::bail!("Unsupported archive format: {}", ext),
+    };
+
+    Ok(reader)
+}
+
+struct ZipReader {
     index: usize,
     archive: ZipArchive<BufReader<File>>,
 }
@@ -28,15 +63,17 @@ impl ZipReader {
     }
 }
 
-impl ArchiveReader for ZipReader {
-    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>> {
+impl Iterator for ZipReader {
+    type Item = anyhow::Result<ArchiveFile>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         while self.index < self.archive.len() {
             let current_index = self.index;
             self.index += 1;
 
             let mut file = match self.archive.by_index(current_index) {
                 Ok(f) => f,
-                Err(e) => return Err(e.into()),
+                Err(e) => return Some(Err(e.into())),
             };
 
             if file.is_dir() {
@@ -54,16 +91,18 @@ impl ArchiveReader for ZipReader {
             };
 
             let mut data = Vec::new();
-            io::Read::read_to_end(&mut file, &mut data).context("Failed to read file")?;
+            if let Err(e) = io::Read::read_to_end(&mut file, &mut data) {
+                return Some(Err(e.into()));
+            }
 
-            return Ok(Some(ArchiveFile { file_name, data }));
+            return Some(Ok(ArchiveFile { file_name, data }));
         }
 
-        Ok(None)
+        None
     }
 }
 
-pub struct RarReader {
+struct RarReader {
     archive: Option<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>>,
     finished: bool,
 }
@@ -86,83 +125,55 @@ impl RarReader {
     }
 }
 
-impl ArchiveReader for RarReader {
-    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>> {
+impl Iterator for RarReader {
+    type Item = anyhow::Result<ArchiveFile>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         if self.finished {
-            return Ok(None);
+            return None;
         }
 
         let archive = match self.archive.take() {
             Some(archive) => archive,
             None => {
                 self.finished = true;
-                return Ok(None);
+                return None;
             }
         };
 
-        match archive.read_header()? {
-            Some(header) => {
+        match archive.read_header() {
+            Ok(Some(header)) => {
                 let file_path = Path::new(&header.entry().filename);
 
                 if header.entry().is_directory() {
-                    self.archive = Some(header.skip()?);
-                    return self.next_file();
+                    let Ok(archive) = header.skip() else {
+                        return None;
+                    };
+                    self.archive = Some(archive);
+                    return self.next();
                 }
 
                 let Some(file_name) = get_file_name(file_path) else {
-                    self.archive = Some(header.skip()?);
-                    return self.next_file();
+                    let Ok(archive) = header.skip() else {
+                        return None;
+                    };
+                    self.archive = Some(archive);
+                    return self.next();
                 };
 
-                let (data, new_archive) = header.read()?;
+                let Ok((data, new_archive)) = header.read() else {
+                    return None;
+                };
                 self.archive = Some(new_archive);
 
-                Ok(Some(ArchiveFile { file_name, data }))
+                Some(Ok(ArchiveFile { file_name, data }))
             }
-            None => {
+            _ => {
                 self.finished = true;
-                Ok(None)
+                None
             }
         }
     }
-}
-
-pub struct ArchiveIter {
-    reader: Box<dyn ArchiveReader>,
-}
-
-impl Iterator for ArchiveIter {
-    type Item = anyhow::Result<ArchiveFile>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.reader.next_file() {
-            Ok(Some(file)) => Some(Ok(file)),
-            Ok(None) => None,
-            Err(e) => Some(Err(e)),
-        }
-    }
-}
-
-pub fn unarchive_comic_iter(
-    comic_file: impl AsRef<Path>,
-) -> anyhow::Result<impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send> {
-    let path = comic_file.as_ref();
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-
-    let reader: Box<dyn ArchiveReader> = match ext.as_str() {
-        "cbz" | "zip" => {
-            let file = File::open(path).context("Failed to open zip file")?;
-            Box::new(ZipReader::new(file)?)
-        }
-        "cbr" | "rar" => Box::new(RarReader::new(path)?),
-        _ => anyhow::bail!("Unsupported archive format: {}", ext),
-    };
-
-    Ok(ArchiveIter { reader })
 }
 
 fn get_file_name(path: &Path) -> Option<String> {
