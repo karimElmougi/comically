@@ -9,7 +9,7 @@ use ratatui::{
     crossterm::{event, ExecutableCommand},
     Viewport,
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     env,
     path::PathBuf,
@@ -237,7 +237,8 @@ fn process_files(
         .collect();
 
     comics
-        .into_par_iter()
+        .into_iter()
+        .par_bridge()
         .filter_map(|mut comic| {
             let images = comic.with_try(|comic| {
                 let start = comic.update_status(ComicStage::Process, 50.0);
@@ -248,7 +249,7 @@ fn process_files(
                 Ok(images)
             })?;
 
-            log::info!("Processed {} images", images.len());
+            log::info!("Processed {} images for {}", images.len(), comic.title);
 
             comic.processed_files = images;
 
@@ -456,10 +457,7 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
         start: Instant,
     }
 
-    const MAX_ACTIVE_PROCESSES: usize = 8;
-
     let mut pending = Vec::<Option<KindleGenStatus>>::new();
-    let mut waiting_comics = Vec::new();
 
     'outer: loop {
         // get new comics from the channel
@@ -467,12 +465,22 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
             let result = tx.try_recv();
 
             match result {
-                Ok(comic) => {
-                    // Add to waiting queue instead of processing immediately
-                    waiting_comics.push(comic);
+                Ok(mut comic) => {
+                    let result = comic.with_try(|comic| {
+                        let start = comic.update_status(ComicStage::Mobi, 75.0);
+                        let spawned = mobi_converter::create_mobi(comic)?;
+                        Ok((spawned, start))
+                    });
+                    if let Some((spawned, start)) = result {
+                        pending.push(Some(KindleGenStatus {
+                            comic,
+                            spawned,
+                            start,
+                        }));
+                    }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    if pending.is_empty() && waiting_comics.is_empty() {
+                    if pending.is_empty() {
                         break 'outer;
                     } else {
                         break;
@@ -481,27 +489,6 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
                 Err(mpsc::TryRecvError::Empty) => {
                     break;
                 }
-            }
-        }
-
-        // start new processes if under the limit
-        while {
-            pending.iter().filter(|s| s.is_some()).count() < MAX_ACTIVE_PROCESSES
-                && !waiting_comics.is_empty()
-        } {
-            let mut comic = waiting_comics.pop().unwrap();
-            let result = comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Mobi, 75.0);
-                let spawned = mobi_converter::create_mobi(comic)?;
-                Ok((spawned, start))
-            });
-
-            if let Some((spawned, start)) = result {
-                pending.push(Some(KindleGenStatus {
-                    comic,
-                    spawned,
-                    start,
-                }));
             }
         }
 
