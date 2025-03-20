@@ -1,121 +1,168 @@
-use anyhow::{Context, Result};
-use std::fs::{create_dir_all, File};
-use std::io;
-use std::path::{Path, PathBuf};
+use anyhow::Context;
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::path::Path;
 use unrar::Archive;
 use zip::ZipArchive;
 
-use crate::Comic;
+#[derive(Debug)]
+pub struct ArchiveFile {
+    pub file_name: String,
+    pub data: Vec<u8>,
+}
 
-/// Extracts a comic archive to the target directory
-/// supports cbz, zip, cbr, rar
-pub fn unarchive_comic(comic: &mut Comic) -> Result<()> {
-    log::debug!("Extracting comic: {}", comic.input.display());
+pub trait ArchiveReader: Send {
+    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>>;
+}
 
-    let images_dir = comic.images_dir();
-    create_dir_all(&images_dir).context("Failed to create images directory")?;
+pub struct ZipReader {
+    index: usize,
+    archive: ZipArchive<BufReader<File>>,
+}
 
-    let ext = comic
-        .input
+impl ZipReader {
+    fn new(file: File) -> anyhow::Result<Self> {
+        let reader = BufReader::new(file);
+        let archive = ZipArchive::new(reader).context("Failed to parse file as zip archive")?;
+        Ok(Self { index: 0, archive })
+    }
+}
+
+impl ArchiveReader for ZipReader {
+    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>> {
+        while self.index < self.archive.len() {
+            let current_index = self.index;
+            self.index += 1;
+
+            let mut file = match self.archive.by_index(current_index) {
+                Ok(f) => f,
+                Err(e) => return Err(e.into()),
+            };
+
+            if file.is_dir() {
+                continue;
+            }
+
+            let outpath = match file.enclosed_name() {
+                Some(path) => path.to_owned(),
+                None => continue,
+            };
+
+            let file_name = match get_file_name(&outpath) {
+                Some(name) => name,
+                None => continue,
+            };
+
+            let mut data = Vec::new();
+            io::Read::read_to_end(&mut file, &mut data).context("Failed to read file")?;
+
+            return Ok(Some(ArchiveFile { file_name, data }));
+        }
+
+        Ok(None)
+    }
+}
+
+pub struct RarReader {
+    archive: Option<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>>,
+    finished: bool,
+}
+
+// whoops
+unsafe impl Send for RarReader {}
+
+impl RarReader {
+    fn new(path: &Path) -> anyhow::Result<Self> {
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+        let archive = Archive::new(path_str)
+            .open_for_processing()
+            .context("Failed to open RAR file")?;
+        Ok(Self {
+            archive: Some(archive),
+            finished: false,
+        })
+    }
+}
+
+impl ArchiveReader for RarReader {
+    fn next_file(&mut self) -> anyhow::Result<Option<ArchiveFile>> {
+        if self.finished {
+            return Ok(None);
+        }
+
+        let archive = match self.archive.take() {
+            Some(archive) => archive,
+            None => {
+                self.finished = true;
+                return Ok(None);
+            }
+        };
+
+        match archive.read_header()? {
+            Some(header) => {
+                let file_path = Path::new(&header.entry().filename);
+
+                if header.entry().is_directory() {
+                    self.archive = Some(header.skip()?);
+                    return self.next_file();
+                }
+
+                let Some(file_name) = get_file_name(file_path) else {
+                    self.archive = Some(header.skip()?);
+                    return self.next_file();
+                };
+
+                let (data, new_archive) = header.read()?;
+                self.archive = Some(new_archive);
+
+                Ok(Some(ArchiveFile { file_name, data }))
+            }
+            None => {
+                self.finished = true;
+                Ok(None)
+            }
+        }
+    }
+}
+
+pub struct ArchiveIter {
+    reader: Box<dyn ArchiveReader>,
+}
+
+impl Iterator for ArchiveIter {
+    type Item = anyhow::Result<ArchiveFile>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.reader.next_file() {
+            Ok(Some(file)) => Some(Ok(file)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+pub fn unarchive_comic_iter(
+    comic_file: impl AsRef<Path>,
+) -> anyhow::Result<impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send> {
+    let path = comic_file.as_ref();
+    let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    match ext.as_str() {
-        "cbz" | "zip" => extract_zip(comic, &images_dir)?,
-        "cbr" | "rar" => extract_rar(comic, &images_dir)?,
+    let reader: Box<dyn ArchiveReader> = match ext.as_str() {
+        "cbz" | "zip" => {
+            let file = File::open(path).context("Failed to open zip file")?;
+            Box::new(ZipReader::new(file)?)
+        }
+        "cbr" | "rar" => Box::new(RarReader::new(path)?),
         _ => anyhow::bail!("Unsupported archive format: {}", ext),
-    }
+    };
 
-    if comic.input_page_names.is_empty() {
-        anyhow::bail!("No images found in the archive");
-    }
-
-    log::debug!("Found {} images", comic.input_page_names.len());
-
-    comic.input_page_names.sort();
-    comic.input_page_names.dedup();
-
-    Ok(())
-}
-
-fn extract_zip(comic: &mut Comic, images_dir: &Path) -> Result<()> {
-    log::info!("extracting cbz/zip file");
-    let file = File::open(&comic.input).context("Failed to open zip file")?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut archive =
-        ZipArchive::new(&mut reader).context("Failed to parse file as zip archive")?;
-
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => path.to_owned(),
-            None => {
-                continue;
-            }
-        };
-
-        if file.is_dir() {
-            continue;
-        }
-
-        let Some(file_name) = get_file_name(&outpath) else {
-            continue;
-        };
-
-        let target_path = images_dir.join(&file_name);
-
-        let outfile = File::create(&target_path)
-            .context(format!("Failed to create file: {}", target_path.display()))?;
-        let mut outfile = std::io::BufWriter::new(outfile);
-
-        io::copy(&mut file, &mut outfile)
-            .context(format!("Failed to extract file: {}", outpath.display()))?;
-
-        comic.input_page_names.push(file_name);
-    }
-
-    Ok(())
-}
-
-fn extract_rar(comic: &mut Comic, images_dir: &Path) -> Result<()> {
-    log::info!("processing as rar/cbr file");
-
-    let input_path = comic.input.to_str().unwrap_or_default();
-    let mut archive = Archive::new(input_path)
-        .open_for_processing()
-        .context("Failed to open RAR file")?;
-
-    while let Some(header) = archive.read_header()? {
-        let file_path = PathBuf::from(&header.entry().filename);
-
-        if header.entry().is_directory() {
-            archive = header.skip()?;
-            continue;
-        }
-
-        let Some(file_name) = get_file_name(&file_path) else {
-            archive = header.skip()?;
-            continue;
-        };
-
-        let target_path = images_dir.join(&file_name);
-
-        // Extract the file and get the archive back for the next iteration
-        match header.extract_to(target_path.as_path()) {
-            Ok(next_archive) => {
-                archive = next_archive;
-            }
-            Err(err) => {
-                anyhow::bail!("Failed to extract {}: {}", file_name, err);
-            }
-        }
-
-        comic.input_page_names.push(file_name);
-    }
-
-    Ok(())
+    Ok(ArchiveIter { reader })
 }
 
 fn get_file_name(path: &Path) -> Option<String> {
@@ -144,4 +191,13 @@ fn has_image_extension(path: &Path) -> bool {
         }
     }
     false
+}
+
+#[ignore]
+#[test]
+fn test_unarchive_comic_iter() {
+    let files = unarchive_comic_iter(std::path::PathBuf::from("v12.cbz"))
+        .unwrap()
+        .collect::<Vec<_>>();
+    println!("{:?}", files.len());
 }

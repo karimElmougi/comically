@@ -9,7 +9,7 @@ use ratatui::{
     crossterm::{event, ExecutableCommand},
     Viewport,
 };
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     env,
     path::PathBuf,
@@ -183,7 +183,7 @@ fn process_files(
     files: Vec<PathBuf>,
     cli: &Cli,
     event_tx: mpsc::Sender<Event>,
-    kindlegen_tx: mpsc::Sender<KindleGenStatus>,
+    kindlegen_tx: mpsc::Sender<Comic>,
 ) {
     let config = ComicConfig {
         device_dimensions: (1236, 1648),
@@ -237,22 +237,20 @@ fn process_files(
         .collect();
 
     comics
-        .into_iter()
-        .par_bridge()
-        .flat_map(|mut comic| {
-            comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Extract, 0.0);
-                comic_archive::unarchive_comic(comic)?;
-                comic.stage_completed(ComicStage::Extract, start.elapsed());
-                Ok(())
+        .into_par_iter()
+        .filter_map(|mut comic| {
+            let images = comic.with_try(|comic| {
+                let start = comic.update_status(ComicStage::Process, 50.0);
+                let files = comic_archive::unarchive_comic_iter(&comic.input)?;
+                let images =
+                    image_processor::process_archive_images(files, config, comic.processed_dir())?;
+                comic.stage_completed(ComicStage::Process, start.elapsed());
+                Ok(images)
             })?;
 
-            comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Process, 25.0);
-                image_processor::process_images(comic)?;
-                comic.stage_completed(ComicStage::Process, start.elapsed());
-                Ok(())
-            })?;
+            log::info!("Processed {} images", images.len());
+
+            comic.processed_files = images;
 
             comic.with_try(|comic| {
                 let start = comic.update_status(ComicStage::Epub, 50.0);
@@ -260,25 +258,11 @@ fn process_files(
                 comic.stage_completed(ComicStage::Epub, start.elapsed());
                 Ok(())
             })?;
-
-            let (spawned, mobi_start) = comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Mobi, 75.0);
-                let spawned = mobi_converter::create_mobi(comic)?;
-                Ok((spawned, start))
-            })?;
-
-            // instead of blocking the rayon thread, we send this to a polling thread so that it can be polled for completion.
-            kindlegen_tx
-                .send(KindleGenStatus {
-                    comic,
-                    spawned,
-                    start_time: mobi_start,
-                })
-                .unwrap();
-
-            Some(())
+            Some(comic)
         })
-        .collect::<Vec<_>>();
+        .for_each(|comic| {
+            kindlegen_tx.send(comic).unwrap();
+        });
 }
 
 fn create_comic(
@@ -306,8 +290,9 @@ fn create_comic(
     let comic = Comic {
         id,
         tx,
-        directory: temp_dir.into_path(),
-        input_page_names: Vec::new(),
+        processed_dir: temp_dir.path().join("Processed"),
+        temp_dir,
+
         processed_files: Vec::new(),
 
         title: full_title,
@@ -316,14 +301,16 @@ fn create_comic(
         config,
     };
 
+    std::fs::create_dir_all(comic.processed_dir())?;
+
     Ok(comic)
 }
 
 pub struct Comic {
     id: usize,
     tx: mpsc::Sender<Event>,
-    directory: PathBuf,
-    input_page_names: Vec<String>,
+    temp_dir: tempfile::TempDir,
+    processed_dir: PathBuf,
     processed_files: Vec<ProcessedImage>,
 
     title: String,
@@ -344,7 +331,7 @@ struct ComicConfig {
 
 impl Drop for Comic {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
 
@@ -363,24 +350,20 @@ impl Comic {
         match result {
             Ok(t) => Some(t),
             Err(e) => {
+                log::error!("Error in comic: {} {e}", self.title);
                 self.failed(e);
                 None
             }
         }
     }
 
-    // where decompressed images are stored
-    pub fn images_dir(&self) -> PathBuf {
-        self.directory.join("Images")
-    }
-
     // where processed images are stored
-    pub fn processed_dir(&self) -> PathBuf {
-        self.directory.join("Processed")
+    pub fn processed_dir(&self) -> &std::path::Path {
+        &self.processed_dir
     }
 
     pub fn epub_dir(&self) -> PathBuf {
-        self.directory.join("EPUB")
+        self.temp_dir.path().join("EPUB")
     }
 
     pub fn epub_file(&self) -> PathBuf {
@@ -435,12 +418,6 @@ impl Comic {
     }
 }
 
-struct KindleGenStatus {
-    comic: Comic,
-    spawned: mobi_converter::SpawnedKindleGen,
-    start_time: Instant,
-}
-
 fn input_handling(tx: mpsc::Sender<Event>) {
     let tick_rate = Duration::from_millis(200);
     let mut last_tick = Instant::now();
@@ -472,15 +449,33 @@ fn input_handling(tx: mpsc::Sender<Event>) {
     }
 }
 
-fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
+fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
+    struct KindleGenStatus {
+        comic: Comic,
+        spawned: mobi_converter::SpawnedKindleGen,
+        start: Instant,
+    }
+
     let mut pending = Vec::<Option<KindleGenStatus>>::new();
     'outer: loop {
         loop {
             let result = tx.try_recv();
 
             match result {
-                Ok(status) => {
-                    pending.push(Some(status));
+                Ok(mut comic) => {
+                    let result = comic.with_try(|comic| {
+                        let start = comic.update_status(ComicStage::Mobi, 75.0);
+                        let spawned = mobi_converter::create_mobi(comic)?;
+                        Ok((spawned, start))
+                    });
+
+                    if let Some((spawned, start)) = result {
+                        pending.push(Some(KindleGenStatus {
+                            comic,
+                            spawned,
+                            start,
+                        }));
+                    }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     if pending.is_empty() {
@@ -512,7 +507,7 @@ fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
                 if let Some(mut status) = s.take() {
                     let _ = status.comic.with_try(|comic| {
                         status.spawned.wait()?;
-                        comic.stage_completed(ComicStage::Mobi, status.start_time.elapsed());
+                        comic.stage_completed(ComicStage::Mobi, status.start.elapsed());
                         comic.success();
                         Ok(())
                     });

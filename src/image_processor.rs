@@ -2,95 +2,66 @@ use anyhow::{Context, Result};
 use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::fs::create_dir_all;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 
-use crate::{Comic, ComicConfig, ProcessedImage};
+use crate::comic_archive::ArchiveFile;
+use crate::{ComicConfig, ProcessedImage};
 
-/// Process all images in the source directory
-pub fn process_images(comic: &mut Comic) -> Result<()> {
-    log::debug!("Processing images in {}", &comic.title);
+pub fn process_archive_images(
+    archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
+    config: ComicConfig,
+    output_dir: &Path,
+) -> Result<Vec<ProcessedImage>> {
+    log::info!("Processing archive images");
+    let mut images = archive
+        .par_bridge()
+        .filter_map(|load| {
+            if let Err(e) = &load {
+                log::warn!("Failed to load image: {}", e);
+            }
+            load.ok()
+        })
+        .filter_map(|archive_file| {
+            let Ok(img) = image::load_from_memory(&archive_file.data) else {
+                log::warn!("Failed to load image: {}", archive_file.file_name);
+                return None;
+            };
 
-    let images_dir = comic.images_dir();
-    let processed_dir = comic.processed_dir();
-    create_dir_all(&processed_dir).context("Failed to create processed directory")?;
-
-    let mut processed = comic
-        .input_page_names
-        .par_iter()
-        .enumerate()
-        .chunks(10)
-        .flat_map(|files| {
-            files
+            Some((archive_file, process_image(img, &config)))
+        })
+        .flat_map(|(archive_file, images)| {
+            images
                 .into_iter()
-                .flat_map(
-                    |(ii, file_name)| -> anyhow::Result<(usize, &str, DynamicImage)> {
-                        let input_path = images_dir.join(file_name);
-                        let img = image::open(&input_path).with_context(|| {
-                            format!("Failed to open image: {}", input_path.display())
-                        })?;
-                        Ok((ii, file_name, img))
-                    },
-                )
+                .enumerate()
+                .filter_map(|(i, img)| {
+                    let path = output_dir.join(format!("{}_{}.jpg", archive_file.file_name, i + 1));
+                    match save_image(&img, &path, config.compression_quality) {
+                        Ok(_) => {
+                            log::info!("Saved image: {}", path.display());
+                            Some(ProcessedImage {
+                                path,
+                                dimensions: img.dimensions(),
+                            })
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save {}: {}", path.display(), e);
+                            None
+                        }
+                    }
+                })
                 .collect::<Vec<_>>()
         })
-        .flat_map(|(ii, file_name, img)| {
-            let base_output_name = format!("page{:03}", ii + 1);
-
-            match process_image(img, &comic.config) {
-                Ok(images) => {
-                    let processed_images = images
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, img)| {
-                            let path =
-                                processed_dir.join(format!("{}_{}.jpg", base_output_name, i + 1));
-                            let dimensions = img.dimensions();
-
-                            match save_image(img, &path, comic.config.compression_quality) {
-                                Ok(_) => Some((path, dimensions)),
-                                Err(e) => {
-                                    log::warn!("Failed to save {}: {}", path.display(), e);
-                                    None
-                                }
-                            }
-                        })
-                        .collect::<Vec<_>>();
-
-                    if !processed_images.is_empty() {
-                        Some(processed_images)
-                    } else {
-                        None
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to process {}: {}", file_name, e);
-                    None
-                }
-            }
-        })
-        .flatten()
         .collect::<Vec<_>>();
 
-    log::info!("Processed {} images for {}", processed.len(), &comic.title);
+    images.sort_by(|a, b| a.path.as_os_str().cmp(&b.path.as_os_str()));
+    images.dedup_by_key(|i| i.path.as_os_str().to_owned());
 
-    if processed.is_empty() {
-        anyhow::bail!("No images were processed for {}", &comic.title);
-    }
-
-    processed.sort_by_key(|(a, _)| a.to_string_lossy().into_owned());
-
-    comic.processed_files = processed
-        .into_iter()
-        .map(|(path, dimensions)| ProcessedImage { path, dimensions })
-        .collect::<Vec<_>>();
-
-    Ok(())
+    Ok(images)
 }
 
 /// Process a single image file with Kindle-optimized transformations
-fn process_image(img: DynamicImage, config: &ComicConfig) -> Result<Vec<GrayImage>> {
+pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
     let mut img = img.into_luma8();
     auto_contrast(&mut img);
 
@@ -105,7 +76,7 @@ fn process_image(img: DynamicImage, config: &ComicConfig) -> Result<Vec<GrayImag
     }
 }
 
-fn process_image_view<I>(img: &I, c: &ComicConfig) -> Result<Vec<GrayImage>>
+fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
 where
     I: GenericImageView<Pixel = image::Luma<u8>> + Send + Sync,
 {
@@ -131,7 +102,7 @@ where
         vec![resized]
     };
 
-    Ok(processed_images)
+    processed_images
 }
 
 fn auto_contrast(img: &mut GrayImage) {
