@@ -26,30 +26,35 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
     version
 )]
 struct Cli {
-    /// the input files to process. can be a directory or a file
+    /// the input files to process. can be a directory or a file.
+    /// supports .cbz, .zip, .cbr, .rar files
     #[arg(required = true)]
     input: Vec<PathBuf>,
 
     /// whether to read the comic from right to left
-    #[arg(long, short, default_value_t = true)]
-    manga_mode: bool,
+    #[arg(long, short, default_value = "true", default_missing_value="true", num_args=0..=1)]
+    manga: Option<bool>,
 
     /// the jpg compression quality of the images, between 0 and 100
     #[arg(long, short, default_value_t = 75)]
     quality: u8,
 
-    /// the prefix to add to the title of the comic + the output file
+    /// the prefix to add to the title of the comics + the output file
     #[arg(long, short)]
     prefix: Option<String>,
 
-    /// the number of threads to use for processing
+    /// the number of threads to use for processing.
     /// defaults to the number of logical CPUs
     #[arg(short)]
     threads: Option<usize>,
 
-    /// auto-crop the dead space on the left and right of the pages
-    #[arg(long, default_value_t = true)]
-    auto_crop: bool,
+    /// crop the dead space on each page
+    #[arg(short, long, default_value = "true", default_missing_value = "true")]
+    crop: Option<bool>,
+
+    /// split double pages into two separate pages
+    #[arg(short, long, default_value = "true", default_missing_value = "true")]
+    split: Option<bool>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -180,6 +185,16 @@ fn process_files(
     event_tx: mpsc::Sender<Event>,
     kindlegen_tx: mpsc::Sender<KindleGenStatus>,
 ) {
+    let config = ComicConfig {
+        device_dimensions: (1236, 1648),
+        right_to_left: cli.manga.unwrap_or(true),
+        split_double_page: cli.split.unwrap_or(true),
+        compression_quality: cli.quality,
+        auto_crop: cli.crop.unwrap_or(true),
+    };
+
+    log::info!("processing with config: {:?}", config);
+
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
@@ -199,14 +214,12 @@ fn process_files(
 
             // Create comic
             match create_comic(
-                file.clone(),
-                cli.manga_mode,
-                cli.quality,
-                cli.prefix.as_deref(),
-                cli.auto_crop,
                 id,
+                file.clone(),
+                cli.prefix.as_deref(),
+                title,
+                config,
                 event_tx.clone(),
-                title.clone(),
             ) {
                 Ok(comic) => Some(comic),
                 Err(e) => {
@@ -269,16 +282,14 @@ fn process_files(
 }
 
 fn create_comic(
-    file: PathBuf,
-    manga_mode: bool,
-    quality: u8,
-    title_prefix: Option<&str>,
-    auto_crop: bool,
     id: usize,
-    tx: mpsc::Sender<Event>,
+    file: PathBuf,
+    title_prefix: Option<&str>,
     title: String,
+    mut config: ComicConfig,
+    tx: mpsc::Sender<Event>,
 ) -> anyhow::Result<Comic> {
-    let quality = quality.clamp(0, 100);
+    config.compression_quality = config.compression_quality.clamp(0, 100);
 
     let title_prefix = title_prefix
         .map(|s| s.trim())
@@ -302,13 +313,7 @@ fn create_comic(
         title: full_title,
         prefix: title_prefix,
         input: file,
-        config: ComicConfig {
-            device_dimensions: (1236, 1648),
-            right_to_left: manga_mode,
-            split_double_page: true,
-            compression_quality: quality,
-            auto_crop,
-        },
+        config,
     };
 
     Ok(comic)
@@ -492,9 +497,14 @@ fn poll_kindlegen(tx: mpsc::Receiver<KindleGenStatus>) {
 
         for s in pending.iter_mut() {
             let is_done = match s {
-                Some(status) => {
-                    matches!(status.spawned.try_wait(), Ok(Some(_)))
-                }
+                Some(status) => match status.spawned.try_wait() {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(e) => {
+                        log::error!("error waiting for kindlegen: {}", e);
+                        true
+                    }
+                },
                 _ => false,
             };
 
