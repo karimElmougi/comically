@@ -27,10 +27,6 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
 
     let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
 
-    // Copy processed images to OEBPS/Images
-    let images_dir = oebps_dir.join("Images");
-    // does this do anythign???
-    create_dir_all(&images_dir)?;
     let mut image_map: Vec<(ProcessedImage, String)> = Vec::new();
     for (i, image) in comic.processed_files.iter().enumerate() {
         let filename = format!("image{:03}.jpg", i + 1);
