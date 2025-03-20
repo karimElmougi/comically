@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
-use image::{GenericImageView, GrayImage, PixelWithColorType};
+use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::Path;
@@ -20,11 +20,25 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
         .input_page_names
         .par_iter()
         .enumerate()
-        .filter_map(|(idx, file_name)| {
-            let input_path = images_dir.join(file_name);
-            let base_output_name = format!("page{:03}", idx + 1);
+        .chunks(10)
+        .flat_map(|files| {
+            files
+                .into_iter()
+                .flat_map(
+                    |(ii, file_name)| -> anyhow::Result<(usize, &str, DynamicImage)> {
+                        let input_path = images_dir.join(file_name);
+                        let img = image::open(&input_path).with_context(|| {
+                            format!("Failed to open image: {}", input_path.display())
+                        })?;
+                        Ok((ii, file_name, img))
+                    },
+                )
+                .collect::<Vec<_>>()
+        })
+        .flat_map(|(ii, file_name, img)| {
+            let base_output_name = format!("page{:03}", ii + 1);
 
-            match process_image(&input_path, &comic.config) {
+            match process_image(img, &comic.config) {
                 Ok(images) => {
                     let processed_images = images
                         .iter()
@@ -51,7 +65,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to process {}: {}", input_path.display(), e);
+                    log::warn!("Failed to process {}: {}", file_name, e);
                     None
                 }
             }
@@ -76,10 +90,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
 }
 
 /// Process a single image file with Kindle-optimized transformations
-fn process_image(input_path: &Path, config: &ComicConfig) -> Result<Vec<GrayImage>> {
-    let img = image::open(input_path)
-        .with_context(|| format!("Failed to open image: {}", input_path.display()))?;
-
+fn process_image(img: DynamicImage, config: &ComicConfig) -> Result<Vec<GrayImage>> {
     let mut img = img.into_luma8();
     auto_contrast(&mut img);
 
@@ -96,14 +107,16 @@ fn process_image(input_path: &Path, config: &ComicConfig) -> Result<Vec<GrayImag
 
 fn process_image_view<I>(img: &I, c: &ComicConfig) -> Result<Vec<GrayImage>>
 where
-    I: GenericImageView<Pixel = image::Luma<u8>>,
+    I: GenericImageView<Pixel = image::Luma<u8>> + Send + Sync,
 {
     let (width, height) = img.dimensions();
     let processed_images = if c.split_double_page && width > height {
         let (left, right) = split_double_pages(img);
 
-        let left_resized = resize_image(&*left, c.device_dimensions);
-        let right_resized = resize_image(&*right, c.device_dimensions);
+        let (left_resized, right_resized) = rayon::join(
+            || resize_image(&*left, c.device_dimensions),
+            || resize_image(&*right, c.device_dimensions),
+        );
 
         // Determine order based on right_to_left setting
         let (first, second) = if c.right_to_left {
