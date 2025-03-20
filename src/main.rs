@@ -456,29 +456,23 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
         start: Instant,
     }
 
+    const MAX_ACTIVE_PROCESSES: usize = 8;
+
     let mut pending = Vec::<Option<KindleGenStatus>>::new();
+    let mut waiting_comics = Vec::new();
+
     'outer: loop {
+        // get new comics from the channel
         loop {
             let result = tx.try_recv();
 
             match result {
-                Ok(mut comic) => {
-                    let result = comic.with_try(|comic| {
-                        let start = comic.update_status(ComicStage::Mobi, 75.0);
-                        let spawned = mobi_converter::create_mobi(comic)?;
-                        Ok((spawned, start))
-                    });
-
-                    if let Some((spawned, start)) = result {
-                        pending.push(Some(KindleGenStatus {
-                            comic,
-                            spawned,
-                            start,
-                        }));
-                    }
+                Ok(comic) => {
+                    // Add to waiting queue instead of processing immediately
+                    waiting_comics.push(comic);
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    if pending.is_empty() {
+                    if pending.is_empty() && waiting_comics.is_empty() {
                         break 'outer;
                     } else {
                         break;
@@ -490,6 +484,28 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
             }
         }
 
+        // start new processes if under the limit
+        while {
+            pending.iter().filter(|s| s.is_some()).count() < MAX_ACTIVE_PROCESSES
+                && !waiting_comics.is_empty()
+        } {
+            let mut comic = waiting_comics.pop().unwrap();
+            let result = comic.with_try(|comic| {
+                let start = comic.update_status(ComicStage::Mobi, 75.0);
+                let spawned = mobi_converter::create_mobi(comic)?;
+                Ok((spawned, start))
+            });
+
+            if let Some((spawned, start)) = result {
+                pending.push(Some(KindleGenStatus {
+                    comic,
+                    spawned,
+                    start,
+                }));
+            }
+        }
+
+        // check for completed processes
         for s in pending.iter_mut() {
             let is_done = match s {
                 Some(status) => match status.spawned.try_wait() {
