@@ -3,7 +3,7 @@ use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::comic_archive::ArchiveFile;
 use crate::{ComicConfig, ProcessedImage};
@@ -13,8 +13,30 @@ pub fn process_archive_images(
     config: ComicConfig,
     output_dir: &Path,
 ) -> Result<Vec<ProcessedImage>> {
-    log::info!("Processing archive images");
-    let mut images = archive
+    let (saved_tx, saved_rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::channel::<(GrayImage, PathBuf, u8)>();
+
+    std::thread::spawn(move || {
+        while let Ok((img, path, quality)) = rx.recv() {
+            let start = std::time::Instant::now();
+            match save_image(&img, &path, quality) {
+                Ok(_) => {
+                    saved_tx
+                        .send(ProcessedImage {
+                            path,
+                            dimensions: img.dimensions(),
+                        })
+                        .unwrap();
+                }
+                Err(e) => {
+                    log::warn!("Failed to save {}: {}", path.display(), e);
+                }
+            }
+            log::info!("Saved image in {:?}", start.elapsed());
+        }
+    });
+
+    archive
         .par_bridge()
         .filter_map(|load| {
             if let Err(e) = &load {
@@ -27,32 +49,20 @@ pub fn process_archive_images(
                 log::warn!("Failed to load image: {}", archive_file.file_name);
                 return None;
             };
+            let processed = process_image(img, &config);
 
-            Some((archive_file, process_image(img, &config)))
+            Some((archive_file, processed))
         })
-        .flat_map(|(archive_file, images)| {
-            images
-                .into_iter()
-                .enumerate()
-                .filter_map(|(i, img)| {
-                    let path = output_dir.join(format!("{}_{}.jpg", archive_file.file_name, i + 1));
-                    match save_image(&img, &path, config.compression_quality) {
-                        Ok(_) => {
-                            log::info!("Saved image: {}", path.display());
-                            Some(ProcessedImage {
-                                path,
-                                dimensions: img.dimensions(),
-                            })
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to save {}: {}", path.display(), e);
-                            None
-                        }
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+        .for_each(|(archive_file, images)| {
+            images.into_iter().enumerate().for_each(|(i, img)| {
+                let path = output_dir.join(format!("{}_{}.jpg", archive_file.file_name, i + 1));
+                tx.send((img, path, config.compression_quality)).unwrap();
+            })
+        });
+
+    drop(tx);
+
+    let mut images = saved_rx.iter().map(|p| p.clone()).collect::<Vec<_>>();
 
     images.sort_by(|a, b| a.path.as_os_str().cmp(&b.path.as_os_str()));
     images.dedup_by_key(|i| i.path.as_os_str().to_owned());
@@ -284,7 +294,6 @@ where
     image::imageops::resize(img, new_width, new_height, filter)
 }
 
-// Helper function to save image with JPEG encoding
 fn save_image<I>(img: &I, path: &Path, quality: u8) -> Result<()>
 where
     I: GenericImageView,
