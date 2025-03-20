@@ -14,10 +14,10 @@ pub fn process_archive_images(
     output_dir: &Path,
 ) -> Result<Vec<ProcessedImage>> {
     let (saved_tx, saved_rx) = std::sync::mpsc::channel();
-    let (tx, rx) = std::sync::mpsc::channel::<(GrayImage, PathBuf, u8)>();
+    let (save_req_tx, save_req_rx) = std::sync::mpsc::channel::<(GrayImage, PathBuf, u8)>();
 
     std::thread::spawn(move || {
-        while let Ok((img, path, quality)) = rx.recv() {
+        while let Ok((img, path, quality)) = save_req_rx.recv() {
             let start = std::time::Instant::now();
             match save_image(&img, &path, quality) {
                 Ok(_) => {
@@ -56,11 +56,13 @@ pub fn process_archive_images(
         .for_each(|(archive_file, images)| {
             images.into_iter().enumerate().for_each(|(i, img)| {
                 let path = output_dir.join(format!("{}_{}.jpg", archive_file.file_name, i + 1));
-                tx.send((img, path, config.compression_quality)).unwrap();
+                save_req_tx
+                    .send((img, path, config.compression_quality))
+                    .unwrap();
             })
         });
 
-    drop(tx);
+    drop(save_req_tx);
 
     let mut images = saved_rx.iter().map(|p| p.clone()).collect::<Vec<_>>();
 
