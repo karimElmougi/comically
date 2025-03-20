@@ -6,7 +6,7 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 use std::fs::create_dir_all;
 use std::path::Path;
 
-use crate::{Comic, ProcessedImage};
+use crate::{Comic, ComicConfig, ProcessedImage};
 
 /// Process all images in the source directory
 pub fn process_images(comic: &mut Comic) -> Result<()> {
@@ -24,13 +24,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
             let input_path = images_dir.join(file_name);
             let base_output_name = format!("page{:03}", idx + 1);
 
-            match process_image(
-                &input_path,
-                comic.device_dimensions,
-                comic.auto_crop,
-                comic.right_to_left,
-                comic.split_double_page,
-            ) {
+            match process_image(&input_path, &comic.config) {
                 Ok(images) => {
                     let processed_images = images
                         .iter()
@@ -40,8 +34,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
                                 processed_dir.join(format!("{}_{}.jpg", base_output_name, i + 1));
                             let dimensions = img.dimensions();
 
-                            // Save the image immediately
-                            match save_image(img, &path, comic.compression_quality) {
+                            match save_image(img, &path, comic.config.compression_quality) {
                                 Ok(_) => Some((path, dimensions)),
                                 Err(e) => {
                                     log::warn!("Failed to save {}: {}", path.display(), e);
@@ -66,7 +59,7 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
         .flatten()
         .collect::<Vec<_>>();
 
-    log::debug!("Processed {} images for {}", processed.len(), &comic.title);
+    log::info!("Processed {} images for {}", processed.len(), &comic.title);
 
     if processed.is_empty() {
         anyhow::bail!("No images were processed for {}", &comic.title);
@@ -83,54 +76,37 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
 }
 
 /// Process a single image file with Kindle-optimized transformations
-fn process_image(
-    input_path: &Path,
-    device_dimensions: (u32, u32),
-    crop: bool,
-    right_to_left: bool,
-    split_double_page: bool,
-) -> Result<Vec<GrayImage>> {
+fn process_image(input_path: &Path, config: &ComicConfig) -> Result<Vec<GrayImage>> {
     let img = image::open(input_path)
         .with_context(|| format!("Failed to open image: {}", input_path.display()))?;
 
     let mut img = img.into_luma8();
     auto_contrast(&mut img);
 
-    if crop {
+    if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
-            process_image_view(
-                &*cropped,
-                device_dimensions,
-                right_to_left,
-                split_double_page,
-            )
+            process_image_view(&*cropped, config)
         } else {
-            process_image_view(&img, device_dimensions, right_to_left, split_double_page)
+            process_image_view(&img, config)
         }
     } else {
-        process_image_view(&img, device_dimensions, right_to_left, split_double_page)
+        process_image_view(&img, config)
     }
 }
 
-fn process_image_view<I>(
-    img: &I,
-    device_dimensions: (u32, u32),
-    right_to_left: bool,
-    split_double_page: bool,
-) -> Result<Vec<GrayImage>>
+fn process_image_view<I>(img: &I, c: &ComicConfig) -> Result<Vec<GrayImage>>
 where
     I: GenericImageView<Pixel = image::Luma<u8>>,
 {
     let (width, height) = img.dimensions();
-    let processed_images = if split_double_page && width > height {
-        log::info!("FOUND DOUBLE PAGE: {}x{}", width, height);
+    let processed_images = if c.split_double_page && width > height {
         let (left, right) = split_double_pages(img);
 
-        let left_resized = resize_image(&*left, device_dimensions);
-        let right_resized = resize_image(&*right, device_dimensions);
+        let left_resized = resize_image(&*left, c.device_dimensions);
+        let right_resized = resize_image(&*right, c.device_dimensions);
 
         // Determine order based on right_to_left setting
-        let (first, second) = if right_to_left {
+        let (first, second) = if c.right_to_left {
             (right_resized, left_resized)
         } else {
             (left_resized, right_resized)
@@ -138,7 +114,7 @@ where
 
         vec![first, second]
     } else {
-        let resized = resize_image(img, device_dimensions);
+        let resized = resize_image(img, c.device_dimensions);
         vec![resized]
     };
 

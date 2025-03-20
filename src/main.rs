@@ -302,11 +302,13 @@ fn create_comic(
         title: full_title,
         prefix: title_prefix,
         input: file,
-        device_dimensions: (1236, 1648),
-        right_to_left: manga_mode,
-        split_double_page: true,
-        compression_quality: quality,
-        auto_crop,
+        config: ComicConfig {
+            device_dimensions: (1236, 1648),
+            right_to_left: manga_mode,
+            split_double_page: true,
+            compression_quality: quality,
+            auto_crop,
+        },
     };
 
     Ok(comic)
@@ -323,7 +325,11 @@ pub struct Comic {
     prefix: Option<String>,
     input: PathBuf,
 
-    // Config
+    config: ComicConfig,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ComicConfig {
     device_dimensions: (u32, u32),
     right_to_left: bool,
     split_double_page: bool,

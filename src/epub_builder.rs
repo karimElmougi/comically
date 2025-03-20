@@ -288,7 +288,7 @@ fn create_content_opf(
     // Build spine items with page spread properties
     let mut spine = String::new();
 
-    let progression_direction = if c.right_to_left { "rtl" } else { "ltr" };
+    let progression_direction = if c.config.right_to_left { "rtl" } else { "ltr" };
     // Add cover as first item in spine (typically center spread)
     spine.push_str(&format!(
         r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#
@@ -296,7 +296,7 @@ fn create_content_opf(
     spine.push_str("\n");
 
     // Add content pages with alternating spreads
-    let mut right_to_left = c.right_to_left;
+    let mut right_to_left = c.config.right_to_left;
 
     // Start from 1 because cover is already added
     for i in 1..html_files.len() {
@@ -343,9 +343,9 @@ fn create_content_opf(
           <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
         title = &c.title,
-        width = c.device_dimensions.0,
-        height = c.device_dimensions.1,
-        writing_mode = if c.right_to_left {
+        width = c.config.device_dimensions.0,
+        height = c.config.device_dimensions.1,
+        writing_mode = if c.config.right_to_left {
             "horizontal-rl"
         } else {
             "horizontal-lr"
