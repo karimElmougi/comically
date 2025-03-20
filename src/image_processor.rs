@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, GrayImage};
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use image::{GenericImageView, GrayImage, PixelWithColorType};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::fs::create_dir_all;
 use std::path::Path;
 
@@ -12,33 +12,58 @@ use crate::{Comic, ProcessedImage};
 pub fn process_images(comic: &mut Comic) -> Result<()> {
     log::debug!("Processing images in {}", &comic.title);
 
-    // Create a processed directory
     let images_dir = comic.images_dir();
     let processed_dir = comic.processed_dir();
     create_dir_all(&processed_dir).context("Failed to create processed directory")?;
 
     let mut processed = comic
         .input_page_names
-        .iter()
+        .par_iter()
         .enumerate()
-        .par_bridge()
         .filter_map(|(idx, file_name)| {
             let input_path = images_dir.join(file_name);
-            let output_path = processed_dir.join(format!("page{:03}.jpg", idx + 1));
+            let base_output_name = format!("page{:03}", idx + 1);
+
             match process_image(
                 &input_path,
-                &output_path,
                 comic.device_dimensions,
-                comic.compression_quality,
                 comic.auto_crop,
+                comic.right_to_left,
+                comic.split_double_page,
             ) {
-                Ok(img) => Some((output_path, img.dimensions())),
+                Ok(images) => {
+                    let processed_images = images
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, img)| {
+                            let path =
+                                processed_dir.join(format!("{}_{}.jpg", base_output_name, i + 1));
+                            let dimensions = img.dimensions();
+
+                            // Save the image immediately
+                            match save_image(img, &path, comic.compression_quality) {
+                                Ok(_) => Some((path, dimensions)),
+                                Err(e) => {
+                                    log::warn!("Failed to save {}: {}", path.display(), e);
+                                    None
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    if !processed_images.is_empty() {
+                        Some(processed_images)
+                    } else {
+                        None
+                    }
+                }
                 Err(e) => {
                     log::warn!("Failed to process {}: {}", input_path.display(), e);
                     None
                 }
             }
         })
+        .flatten()
         .collect::<Vec<_>>();
 
     log::debug!("Processed {} images for {}", processed.len(), &comic.title);
@@ -60,41 +85,78 @@ pub fn process_images(comic: &mut Comic) -> Result<()> {
 /// Process a single image file with Kindle-optimized transformations
 fn process_image(
     input_path: &Path,
-    output_path: &Path,
     device_dimensions: (u32, u32),
-    compression_quality: u8,
     crop: bool,
-) -> Result<DynamicImage> {
+    right_to_left: bool,
+    split_double_page: bool,
+) -> Result<Vec<GrayImage>> {
     let img = image::open(input_path)
         .with_context(|| format!("Failed to open image: {}", input_path.display()))?;
 
     let mut img = img.into_luma8();
     auto_contrast(&mut img);
 
-    let img = if crop {
+    if crop {
         if let Some(cropped) = auto_crop(&img) {
-            resize_image(&*cropped, device_dimensions)
+            process_image_view(
+                &*cropped,
+                device_dimensions,
+                right_to_left,
+                split_double_page,
+            )
         } else {
-            resize_image(&img, device_dimensions)
+            process_image_view(&img, device_dimensions, right_to_left, split_double_page)
         }
     } else {
-        resize_image(&img, device_dimensions)
+        process_image_view(&img, device_dimensions, right_to_left, split_double_page)
+    }
+}
+
+fn process_image_view<I>(
+    img: &I,
+    device_dimensions: (u32, u32),
+    right_to_left: bool,
+    split_double_page: bool,
+) -> Result<Vec<GrayImage>>
+where
+    I: GenericImageView<Pixel = image::Luma<u8>>,
+{
+    let (width, height) = img.dimensions();
+    let processed_images = if split_double_page && width > height {
+        log::info!("FOUND DOUBLE PAGE: {}x{}", width, height);
+        let (left, right) = split_double_pages(img);
+
+        let left_resized = resize_image(&*left, device_dimensions);
+        let right_resized = resize_image(&*right, device_dimensions);
+
+        // Determine order based on right_to_left setting
+        let (first, second) = if right_to_left {
+            (right_resized, left_resized)
+        } else {
+            (left_resized, right_resized)
+        };
+
+        vec![first, second]
+    } else {
+        let resized = resize_image(img, device_dimensions);
+        vec![resized]
     };
 
-    let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(output_path)?);
-    let mut encoder =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, compression_quality);
-
-    encoder
-        .encode_image(&img)
-        .with_context(|| format!("Failed to save processed image: {}", output_path.display()))?;
-
-    Ok(DynamicImage::from(img))
+    Ok(processed_images)
 }
 
 fn auto_contrast(img: &mut GrayImage) {
     brighten_in_place(img, -5);
     contrast_in_place(img, 20.0);
+}
+
+fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
+    let (width, height) = img.dimensions();
+
+    let left = image::imageops::crop_imm(img, 0, 0, width / 2, height);
+    let right = image::imageops::crop_imm(img, width / 2, 0, width / 2, height);
+
+    (left, right)
 }
 
 // Pixel values above this are considered "white"
@@ -260,6 +322,23 @@ where
     let new_height = (height as f32 * ratio) as u32;
 
     image::imageops::resize(img, new_width, new_height, filter)
+}
+
+// Helper function to save image with JPEG encoding
+fn save_image<I>(img: &I, path: &Path, quality: u8) -> Result<()>
+where
+    I: GenericImageView,
+    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
+{
+    let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, quality);
+
+    encoder
+        .encode_image(img)
+        .with_context(|| format!("Failed to save processed image: {}", path.display()))?;
+
+    Ok(())
 }
 
 #[cfg(test)]

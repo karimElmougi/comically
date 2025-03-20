@@ -304,6 +304,7 @@ fn create_comic(
         input: file,
         device_dimensions: (1236, 1648),
         right_to_left: manga_mode,
+        split_double_page: true,
         compression_quality: quality,
         auto_crop,
     };
@@ -318,12 +319,14 @@ pub struct Comic {
     input_page_names: Vec<String>,
     processed_files: Vec<ProcessedImage>,
 
-    // Config
     title: String,
     prefix: Option<String>,
     input: PathBuf,
+
+    // Config
     device_dimensions: (u32, u32),
     right_to_left: bool,
+    split_double_page: bool,
     compression_quality: u8,
     auto_crop: bool,
 }
