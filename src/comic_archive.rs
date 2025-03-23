@@ -1,14 +1,25 @@
 use anyhow::Context;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use unrar::Archive;
 use zip::ZipArchive;
 
 #[derive(Debug)]
 pub struct ArchiveFile {
-    pub file_name: String,
+    // fully qualified path in the archive
+    pub file_name: PathBuf,
     pub data: Vec<u8>,
+}
+
+impl ArchiveFile {
+    pub fn file_stem(&self) -> &OsStr {
+        self.file_name.file_stem().unwrap()
+    }
+    pub fn parent(&self) -> &Path {
+        self.file_name.parent().unwrap()
+    }
 }
 
 enum ArchiveIter {
@@ -85,7 +96,7 @@ impl Iterator for ZipReader {
                 None => continue,
             };
 
-            let file_name = match get_file_name(&outpath) {
+            let file_name = match validate_file(&outpath) {
                 Some(name) => name,
                 None => continue,
             };
@@ -153,7 +164,7 @@ impl Iterator for RarReader {
                     return self.next();
                 }
 
-                let Some(file_name) = get_file_name(file_path) else {
+                let Some(file_name) = validate_file(file_path) else {
                     let Ok(archive) = header.skip() else {
                         return None;
                     };
@@ -176,12 +187,13 @@ impl Iterator for RarReader {
     }
 }
 
-fn get_file_name(path: &Path) -> Option<String> {
-    path.file_name()
-        .map(|f| f.to_string_lossy())
-        .filter(|f| !should_skip_file(&f))
-        .filter(|_| has_image_extension(path))
-        .map(|f| f.to_string())
+fn validate_file(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?;
+    let file_name = file_name.to_string_lossy();
+    if should_skip_file(&file_name) || !has_image_extension(path) {
+        return None;
+    }
+    Some(path.to_path_buf())
 }
 
 fn should_skip_file(file_name: &str) -> bool {

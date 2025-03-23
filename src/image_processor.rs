@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use image::imageops::colorops::{brighten_in_place, contrast_in_place};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -18,7 +17,6 @@ pub fn process_archive_images(
 
     std::thread::spawn(move || {
         while let Ok((img, path, quality)) = save_req_rx.recv() {
-            let start = std::time::Instant::now();
             match save_image(&img, &path, quality) {
                 Ok(_) => {
                     saved_tx
@@ -32,7 +30,6 @@ pub fn process_archive_images(
                     log::warn!("Failed to save {}: {}", path.display(), e);
                 }
             }
-            log::info!("Saved image in {:?}", start.elapsed());
         }
     });
 
@@ -46,7 +43,7 @@ pub fn process_archive_images(
         })
         .filter_map(|archive_file| {
             let Ok(img) = image::load_from_memory(&archive_file.data) else {
-                log::warn!("Failed to load image: {}", archive_file.file_name);
+                log::warn!("Failed to load image: {}", archive_file.file_name.display());
                 return None;
             };
             let processed = process_image(img, &config);
@@ -55,7 +52,12 @@ pub fn process_archive_images(
         })
         .for_each(|(archive_file, images)| {
             images.into_iter().enumerate().for_each(|(i, img)| {
-                let path = output_dir.join(format!("{}_{}.jpg", archive_file.file_name, i + 1));
+                let path = output_dir.join(format!(
+                    "{}_{}_{}.jpg",
+                    archive_file.parent().display(),
+                    archive_file.file_stem().to_string_lossy(),
+                    i + 1
+                ));
                 save_req_tx
                     .send((img, path, config.compression_quality))
                     .unwrap();
@@ -118,8 +120,8 @@ where
 }
 
 fn auto_contrast(img: &mut GrayImage) {
-    brighten_in_place(img, -5);
-    contrast_in_place(img, 20.0);
+    image::imageops::colorops::brighten_in_place(img, -5);
+    image::imageops::colorops::contrast_in_place(img, 10.0);
 }
 
 fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
