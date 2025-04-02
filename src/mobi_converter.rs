@@ -53,27 +53,51 @@ impl SpawnedKindleGen {
     pub fn wait(self) -> Result<()> {
         let output = self.child.wait_with_output()?;
         let output_str = String::from_utf8_lossy(&output.stdout);
-
         let has_error_output = output_str.lines().any(|line| line.starts_with("Error("));
+        let kindlegen_status = output.status.code();
 
-        if !output.status.success() || has_error_output {
-            let code = output.status.code();
-            anyhow::bail!("KindleGen failed with code {:?}: {}", code, output_str);
+        match (self.mobi_file.exists(), self.mobi_file == self.output_mobi) {
+            // File exists and needs to be moved
+            (true, false) => {
+                fs::rename(&self.mobi_file, &self.output_mobi).with_context(|| {
+                    format!(
+                        "Failed to move MOBI file from {} to {}",
+                        self.mobi_file.display(),
+                        self.output_mobi.display()
+                    )
+                })?;
+                log::debug!("MOBI file moved to: {}", self.output_mobi.display());
+            }
+            // File doesn't exist
+            (false, _) => {
+                log::warn!(
+                    "MOBI file not found at expected location: {}",
+                    self.mobi_file.display()
+                );
+
+                // If KindleGen also failed, this is a real error
+                if !output.status.success() || has_error_output {
+                    anyhow::bail!(
+                        "KindleGen failed with code {:?} and no MOBI file was created: {}",
+                        kindlegen_status,
+                        output_str
+                    );
+                }
+
+                anyhow::bail!("KindleGen reported success but MOBI file was not created");
+            }
+            _ => {}
         }
 
-        // KindleGen creates the mobi file in the same directory as the epub
-        if self.mobi_file != self.output_mobi {
-            fs::rename(&self.mobi_file, &self.output_mobi).with_context(|| {
-                format!(
-                    "Failed to move MOBI file from {} to {}",
-                    self.mobi_file.display(),
-                    self.output_mobi.display()
-                )
-            })?;
+        if !output.status.success() || has_error_output {
+            log::warn!(
+                "KindleGen reported issues (code {:?}) but MOBI file was created: {}",
+                kindlegen_status,
+                output_str
+            );
         }
 
         log::debug!("MOBI creation successful: {}", self.output_mobi.display());
-
         Ok(())
     }
 }

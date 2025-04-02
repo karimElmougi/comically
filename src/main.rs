@@ -31,6 +31,10 @@ struct Cli {
     #[arg(required = true)]
     input: Vec<PathBuf>,
 
+    /// the prefix to add to the title of the comics + the output file
+    #[arg(long, short)]
+    prefix: Option<String>,
+
     /// whether to read the comic from right to left
     #[arg(long, short, default_value = "true", default_missing_value="true", num_args=0..=1)]
     manga: Option<bool>,
@@ -39,9 +43,15 @@ struct Cli {
     #[arg(long, short, default_value_t = 75)]
     quality: u8,
 
-    /// the prefix to add to the title of the comics + the output file
-    #[arg(long, short)]
-    prefix: Option<String>,
+    /// brighten the images
+    /// positive values will brighten the images, negative values will darken them
+    #[arg(long, short, allow_hyphen_values = true, default_missing_value = "-10")]
+    brightness: Option<i32>,
+
+    /// the contrast of the images
+    /// positive values will increase the contrast, negative values will decrease it
+    #[arg(long, short, allow_hyphen_values = true, default_missing_value = "1.0")]
+    contrast: Option<f32>,
 
     /// the number of threads to use for processing.
     /// defaults to the number of logical CPUs
@@ -105,11 +115,6 @@ fn main() -> anyhow::Result<()> {
 
     let files: Vec<PathBuf> = find_files(&cli)?;
 
-    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
-        viewport: Viewport::Fullscreen,
-    });
-    std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
-
     let (event_tx, event_rx) = mpsc::channel();
     let (kindlegen_tx, kindlegen_rx) = mpsc::channel();
 
@@ -136,9 +141,13 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
+    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
+        viewport: Viewport::Fullscreen,
+    });
+    std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
+
     let result = tui::run(&mut terminal, event_rx);
 
-    // Restore terminal
     ratatui::restore();
 
     result
@@ -187,13 +196,17 @@ fn process_files(
 ) {
     let config = ComicConfig {
         device_dimensions: (1236, 1648),
+        // device_dimensions: (600, 800),
         right_to_left: cli.manga.unwrap_or(true),
         split_double_page: cli.split.unwrap_or(true),
         compression_quality: cli.quality,
         auto_crop: cli.crop.unwrap_or(true),
+        brightness: cli.brightness,
+        contrast: cli.contrast,
     };
 
     log::info!("processing with config: {:?}", config);
+    log::info!("processing {} files", files.len());
 
     let comics: Vec<_> = files
         .into_iter()
@@ -326,8 +339,10 @@ struct ComicConfig {
     device_dimensions: (u32, u32),
     right_to_left: bool,
     split_double_page: bool,
-    compression_quality: u8,
     auto_crop: bool,
+    compression_quality: u8,
+    brightness: Option<i32>,
+    contrast: Option<f32>,
 }
 
 impl Drop for Comic {

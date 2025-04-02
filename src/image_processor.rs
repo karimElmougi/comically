@@ -77,7 +77,7 @@ pub fn process_archive_images(
 /// Process a single image file with Kindle-optimized transformations
 pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
     let mut img = img.into_luma8();
-    auto_contrast(&mut img);
+    auto_contrast(&mut img, config.brightness, config.contrast);
 
     if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
@@ -119,9 +119,13 @@ where
     processed_images
 }
 
-fn auto_contrast(img: &mut GrayImage) {
-    image::imageops::colorops::brighten_in_place(img, -5);
-    image::imageops::colorops::contrast_in_place(img, 10.0);
+fn auto_contrast(img: &mut GrayImage, brightness: Option<i32>, contrast: Option<f32>) {
+    if let Some(brightness) = brightness {
+        image::imageops::colorops::brighten_in_place(img, brightness);
+    }
+    if let Some(contrast) = contrast {
+        image::imageops::colorops::contrast_in_place(img, contrast);
+    }
 }
 
 fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
