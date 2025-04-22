@@ -307,6 +307,15 @@ where
     I: GenericImageView,
     <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
 {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create directories for path: {}",
+                parent.display()
+            )
+        })?;
+    }
+
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
     let mut encoder =
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, quality);
