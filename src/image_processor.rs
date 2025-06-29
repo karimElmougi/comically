@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::comic_archive::ArchiveFile;
 use crate::{ComicConfig, ProcessedImage};
@@ -12,28 +12,8 @@ pub fn process_archive_images(
     config: ComicConfig,
     output_dir: &Path,
 ) -> Result<Vec<ProcessedImage>> {
-    let (saved_tx, saved_rx) = std::sync::mpsc::channel();
-    let (save_req_tx, save_req_rx) = std::sync::mpsc::channel::<(GrayImage, PathBuf, u8)>();
-
-    std::thread::spawn(move || {
-        while let Ok((img, path, quality)) = save_req_rx.recv() {
-            match save_image(&img, &path, quality) {
-                Ok(_) => {
-                    saved_tx
-                        .send(ProcessedImage {
-                            path,
-                            dimensions: img.dimensions(),
-                        })
-                        .unwrap();
-                }
-                Err(e) => {
-                    log::warn!("Failed to save {}: {}", path.display(), e);
-                }
-            }
-        }
-    });
-
-    archive
+    log::info!("Processing archive images");
+    let mut images = archive
         .par_bridge()
         .filter_map(|load| {
             if let Err(e) = &load {
@@ -46,27 +26,37 @@ pub fn process_archive_images(
                 log::warn!("Failed to load image: {}", archive_file.file_name.display());
                 return None;
             };
-            let processed = process_image(img, &config);
 
-            Some((archive_file, processed))
+            Some((archive_file, process_image(img, &config)))
         })
-        .for_each(|(archive_file, images)| {
-            images.into_iter().enumerate().for_each(|(i, img)| {
-                let path = output_dir.join(format!(
-                    "{}_{}_{}.jpg",
-                    archive_file.parent().display(),
-                    archive_file.file_stem().to_string_lossy(),
-                    i + 1
-                ));
-                save_req_tx
-                    .send((img, path, config.compression_quality))
-                    .unwrap();
-            })
-        });
-
-    drop(save_req_tx);
-
-    let mut images = saved_rx.iter().map(|p| p.clone()).collect::<Vec<_>>();
+        .flat_map(|(archive_file, images)| {
+            images
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, img)| {
+                    let path = output_dir.join(format!(
+                        "{}_{}_{}.jpg",
+                        archive_file.parent().display(),
+                        archive_file.file_stem().display(),
+                        i + 1
+                    ));
+                    match save_image(&img, &path, config.compression_quality) {
+                        Ok(_) => {
+                            log::info!("Saved image: {}", path.display());
+                            Some(ProcessedImage {
+                                path,
+                                dimensions: img.dimensions(),
+                            })
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save {}: {}", path.display(), e);
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
 
     images.sort_by(|a, b| a.path.as_os_str().cmp(&b.path.as_os_str()));
     images.dedup_by_key(|i| i.path.as_os_str().to_owned());
