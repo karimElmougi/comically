@@ -59,11 +59,11 @@ struct Cli {
     threads: Option<usize>,
 
     /// crop the dead space on each page
-    #[arg(short, long, default_value = "true", default_missing_value = "true")]
+    #[arg(long, default_value = "true", default_missing_value = "true")]
     crop: Option<bool>,
 
     /// split double pages into two separate pages
-    #[arg(short, long, default_value = "true", default_missing_value = "true")]
+    #[arg(long, default_value = "true", default_missing_value = "true")]
     split: Option<bool>,
 }
 
