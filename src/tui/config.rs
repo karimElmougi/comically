@@ -4,14 +4,17 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, StatefulWidget},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+    },
 };
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol, StatefulImage};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use ratatui_image::{picker::Picker, StatefulImage, protocol::StatefulProtocol};
+use std::time::Instant;
 
-use crate::{ComicConfig, comic_archive, image_processor};
+use crate::{comic_archive, ComicConfig};
 
 pub struct ConfigState {
     pub files: Vec<MangaFile>,
@@ -50,10 +53,10 @@ pub enum EditingField {
 pub struct PreviewState {
     current_file: Option<usize>,
     protocol: Option<StatefulProtocol>,
-    picker: Picker,
     preview_rx: mpsc::Receiver<PreviewResult>,
     preview_tx: mpsc::Sender<PreviewRequest>,
     loading: bool,
+    last_request: Option<Instant>,
 }
 
 enum PreviewRequest {
@@ -61,7 +64,7 @@ enum PreviewRequest {
 }
 
 enum PreviewResult {
-    Loaded(image::DynamicImage),
+    Loaded(StatefulProtocol),
     Error(String),
 }
 
@@ -82,15 +85,15 @@ impl ConfigState {
         }
 
         let has_files = !files.is_empty();
-        
+
         // Create preview processing thread
         let (preview_tx, worker_rx) = mpsc::channel::<PreviewRequest>();
         let (worker_tx, preview_rx) = mpsc::channel::<PreviewResult>();
-        
+
         thread::spawn(move || {
             preview_worker(worker_rx, worker_tx);
         });
-        
+
         let mut state = Self {
             files,
             selected_files,
@@ -111,24 +114,18 @@ impl ConfigState {
             preview_state: PreviewState {
                 current_file: if has_files { Some(0) } else { None },
                 protocol: None,
-                picker: {
-                    // Try to get actual font size from terminal, fallback to defaults
-                    match Picker::from_query_stdio() {
-                        Ok(picker) => picker,
-                        Err(_) => Picker::from_fontsize((8, 16)), // Slightly taller default
-                    }
-                },
                 preview_rx,
                 preview_tx,
                 loading: false,
+                last_request: None,
             },
         };
-        
+
         // Request initial preview
         if has_files {
             state.request_preview();
         }
-        
+
         Ok(state)
     }
 
@@ -158,7 +155,11 @@ impl ConfigState {
                         .collect();
 
                     if !selected_paths.is_empty() {
-                        return ConfigAction::StartProcessing(selected_paths, self.config, self.prefix.clone());
+                        return ConfigAction::StartProcessing(
+                            selected_paths,
+                            self.config,
+                            self.prefix.clone(),
+                        );
                     }
                 }
                 ConfigAction::Continue
@@ -208,23 +209,32 @@ impl ConfigState {
     }
 
     fn request_preview(&mut self) {
+        // Simple debouncing - don't send multiple requests too quickly
+        let now = Instant::now();
+        if let Some(last) = self.preview_state.last_request {
+            if now.duration_since(last).as_millis() < 50 {
+                return;
+            }
+        }
+
         if let Some(file_idx) = self.preview_state.current_file {
             if let Some(file) = self.files.get(file_idx) {
                 self.preview_state.loading = true;
-                let _ = self.preview_state.preview_tx.send(
-                    PreviewRequest::LoadFile(file.path.clone(), self.config)
-                );
+                self.preview_state.last_request = Some(now);
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile(file.path.clone(), self.config));
             }
         }
     }
-    
+
     pub fn update_preview(&mut self) {
         // Check for preview results
         while let Ok(result) = self.preview_state.preview_rx.try_recv() {
             self.preview_state.loading = false;
             match result {
-                PreviewResult::Loaded(img) => {
-                    let protocol = self.preview_state.picker.new_resize_protocol(img);
+                PreviewResult::Loaded(protocol) => {
                     self.preview_state.protocol = Some(protocol);
                 }
                 PreviewResult::Error(err) => {
@@ -354,12 +364,12 @@ impl<'a> Widget for ConfigScreen<'a> {
             .to_string_lossy()
             .to_string();
         let header_text = vec![
-            Line::from(vec![
-                Span::styled(
-                    "Comically - Manga Configuration",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ),
-            ]),
+            Line::from(vec![Span::styled(
+                "Comically - Manga Configuration",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(vec![
                 Span::raw("Directory: "),
                 Span::styled(current_dir, Style::default().fg(Color::Yellow)),
@@ -429,7 +439,10 @@ impl<'a> Widget for FileListWidget<'a> {
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title(format!("Files ({} selected)", self.state.selected_files.iter().filter(|&&s| s).count()))
+                    .title(format!(
+                        "Files ({} selected)",
+                        self.state.selected_files.iter().filter(|&&s| s).count()
+                    ))
                     .borders(Borders::ALL)
                     .style(Style::default().fg(if self.state.focus == Focus::FileList {
                         Color::Yellow
@@ -472,7 +485,10 @@ impl<'a> Widget for SettingsWidget<'a> {
             Line::from(vec![
                 Span::raw("Title Prefix: "),
                 Span::styled(
-                    self.state.prefix.clone().unwrap_or_else(|| "(none)".to_string()),
+                    self.state
+                        .prefix
+                        .clone()
+                        .unwrap_or_else(|| "(none)".to_string()),
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::raw(" [p]"),
@@ -481,7 +497,11 @@ impl<'a> Widget for SettingsWidget<'a> {
             Line::from(vec![
                 Span::raw("Reading Direction: "),
                 Span::styled(
-                    if self.state.config.right_to_left { "Right to Left (Manga)" } else { "Left to Right" },
+                    if self.state.config.right_to_left {
+                        "Right to Left (Manga)"
+                    } else {
+                        "Left to Right"
+                    },
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::raw(" [m]"),
@@ -489,7 +509,11 @@ impl<'a> Widget for SettingsWidget<'a> {
             Line::from(vec![
                 Span::raw("Split Double Pages: "),
                 Span::styled(
-                    if self.state.config.split_double_page { "Yes" } else { "No" },
+                    if self.state.config.split_double_page {
+                        "Yes"
+                    } else {
+                        "No"
+                    },
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::raw(" [s]"),
@@ -497,7 +521,11 @@ impl<'a> Widget for SettingsWidget<'a> {
             Line::from(vec![
                 Span::raw("Auto Crop: "),
                 Span::styled(
-                    if self.state.config.auto_crop { "Yes" } else { "No" },
+                    if self.state.config.auto_crop {
+                        "Yes"
+                    } else {
+                        "No"
+                    },
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::raw(" [c]"),
@@ -530,17 +558,21 @@ impl<'a> Widget for SettingsWidget<'a> {
             Line::from(vec![
                 Span::raw("Device: "),
                 Span::styled(
-                    format!("{}x{}", self.state.config.device_dimensions.0, self.state.config.device_dimensions.1),
+                    format!(
+                        "{}x{}",
+                        self.state.config.device_dimensions.0,
+                        self.state.config.device_dimensions.1
+                    ),
                     Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "Press Enter to start processing",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                ),
-            ]),
+            Line::from(vec![Span::styled(
+                "Press Enter to start processing",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
         ];
 
         let paragraph = Paragraph::new(settings_text);
@@ -550,7 +582,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         if let Some(field) = self.state.editing_field {
             let popup_area = centered_rect(50, 20, area);
             Clear.render(popup_area, buf);
-            
+
             let title = match field {
                 EditingField::Quality => "Edit Quality (0-100)",
                 EditingField::Brightness => "Edit Brightness (-100 to 100)",
@@ -558,14 +590,13 @@ impl<'a> Widget for SettingsWidget<'a> {
                 EditingField::Prefix => "Edit Title Prefix",
                 _ => "Edit Value",
             };
-            
-            let popup = Paragraph::new(self.state.input_buffer.as_str())
-                .block(
-                    Block::default()
-                        .title(title)
-                        .borders(Borders::ALL)
-                        .style(Style::default().fg(Color::Yellow)),
-                );
+
+            let popup = Paragraph::new(self.state.input_buffer.as_str()).block(
+                Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(Color::Yellow)),
+            );
             popup.render(popup_area, buf);
         }
     }
@@ -573,13 +604,16 @@ impl<'a> Widget for SettingsWidget<'a> {
 
 fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
     let mut files = Vec::new();
-    
+
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if let Some(ext) = path.extension() {
-            if matches!(ext.to_str(), Some("cbz") | Some("cbr") | Some("zip") | Some("rar")) {
+            if matches!(
+                ext.to_str(),
+                Some("cbz") | Some("cbr") | Some("zip") | Some("rar")
+            ) {
                 let name = path
                     .file_stem()
                     .unwrap_or_default()
@@ -589,7 +623,7 @@ fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
             }
         }
     }
-    
+
     files.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(files)
 }
@@ -613,7 +647,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
             .style(Style::default());
-        
+
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -637,13 +671,20 @@ impl<'a> Widget for PreviewWidget<'a> {
 }
 
 fn preview_worker(rx: mpsc::Receiver<PreviewRequest>, tx: mpsc::Sender<PreviewResult>) {
+    let picker = match Picker::from_query_stdio() {
+        Ok(picker) => picker,
+        Err(_) => Picker::from_fontsize((8, 16)), // Slightly taller default
+    };
+
     while let Ok(request) = rx.recv() {
         match request {
             PreviewRequest::LoadFile(path, config) => {
                 let result = load_and_process_preview(&path, &config);
                 match result {
                     Ok(img) => {
-                        let _ = tx.send(PreviewResult::Loaded(img));
+                        // Do the protocol encoding in the background thread
+                        let protocol = picker.new_resize_protocol(img);
+                        let _ = tx.send(PreviewResult::Loaded(protocol));
                     }
                     Err(e) => {
                         let _ = tx.send(PreviewResult::Error(e.to_string()));
@@ -654,21 +695,27 @@ fn preview_worker(rx: mpsc::Receiver<PreviewRequest>, tx: mpsc::Sender<PreviewRe
     }
 }
 
-fn load_and_process_preview(path: &PathBuf, config: &ComicConfig) -> anyhow::Result<image::DynamicImage> {
+fn load_and_process_preview(
+    path: &PathBuf,
+    config: &ComicConfig,
+) -> anyhow::Result<image::DynamicImage> {
     // Load first image from archive
     let mut images = comic_archive::unarchive_comic_iter(path)?;
-    let archive_file = images.next()
+    let archive_file = images
+        .next()
         .ok_or_else(|| anyhow::anyhow!("No images in archive"))??;
-    
+
     let img = image::load_from_memory(&archive_file.data)?;
-    
+
     // Process using the same pipeline as the main processing
-    let processed_images = image_processor::process_image(img, config);
-    
+    let processed_images = crate::image_processor::process_image(img, config);
+
     // Take the first processed image and convert back to DynamicImage
-    let first_image = processed_images.into_iter().next()
+    let first_image = processed_images
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
-    
+
     Ok(image::DynamicImage::ImageLuma8(first_image))
 }
 

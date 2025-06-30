@@ -49,7 +49,7 @@ pub fn run(
         })?;
 
         // Handle events
-        if event::poll(Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(16))? { // ~60fps
             match event::read()? {
                 event::Event::Key(key) => match &mut state {
                     AppState::Config(config_state) => {
