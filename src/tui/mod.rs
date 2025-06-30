@@ -46,14 +46,19 @@ pub fn run(
                 AppState::Config(config_state) => {
                     config::ConfigScreen::new(config_state)
                         .render(frame.area(), frame.buffer_mut());
-                    log::info!("ConfigScreen render took {:?}", draw_start.elapsed());
+                    if draw_start.elapsed() > std::time::Duration::from_millis(100) {
+                        log::error!("ConfigScreen render took {:?}", draw_start.elapsed());
+                    }
                 }
                 AppState::Processing(processing_state) => {
                     processing::ProcessingScreen::new(processing_state)
                         .render(frame.area(), frame.buffer_mut());
                 }
             })?;
-            log::info!("Terminal draw took {:?}", draw_start.elapsed());
+            let elapsed = draw_start.elapsed();
+            if elapsed > std::time::Duration::from_millis(100) {
+                log::error!("Terminal draw took {:?}", elapsed);
+            }
         }
 
         // Wait for next event
@@ -86,46 +91,7 @@ fn process_events(
                 }
 
                 match state {
-                    AppState::Config(config_state) => {
-                        match config_state.handle_key(key) {
-                            config::ConfigAction::StartProcessing {
-                                files,
-                                config,
-                                prefix,
-                            } => {
-                                // Transition to processing state
-                                *state = AppState::Processing(processing::ProcessingState::new());
-
-                                // Create channels for processing
-                                let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
-
-                                // Start processing thread
-                                let event_tx_clone = event_tx.clone();
-                                let kindlegen_tx_clone = kindlegen_tx.clone();
-                                thread::spawn(move || {
-                                    process_files(
-                                        files,
-                                        config,
-                                        prefix,
-                                        event_tx_clone,
-                                        kindlegen_tx_clone,
-                                    );
-                                });
-
-                                // Start kindlegen polling thread
-                                let event_tx_clone = event_tx.clone();
-                                thread::spawn(move || {
-                                    poll_kindlegen(kindlegen_rx);
-                                    event_tx_clone
-                                        .send(Event::ProcessingEvent(
-                                            ProcessingEvent::ProcessingComplete,
-                                        ))
-                                        .unwrap();
-                                });
-                            }
-                            config::ConfigAction::Continue => {}
-                        }
-                    }
+                    AppState::Config(config_state) => config_state.handle_key(key),
                     AppState::Processing(processing_state) => processing_state.handle_key(key),
                 }
             }
@@ -142,6 +108,33 @@ fn process_events(
                 if let AppState::Config(config_state) = state {
                     config_state.handle_event(event);
                 }
+            }
+            Event::StartProcessing {
+                files,
+                config,
+                prefix,
+            } => {
+                // Transition to processing state
+                *state = AppState::Processing(processing::ProcessingState::new());
+
+                // Create channels for processing
+                let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
+
+                // Start processing thread
+                let event_tx_clone = event_tx.clone();
+                let kindlegen_tx_clone = kindlegen_tx.clone();
+                thread::spawn(move || {
+                    process_files(files, config, prefix, event_tx_clone, kindlegen_tx_clone);
+                });
+
+                // Start kindlegen polling thread
+                let event_tx_clone = event_tx.clone();
+                thread::spawn(move || {
+                    poll_kindlegen(kindlegen_rx);
+                    event_tx_clone
+                        .send(Event::ProcessingEvent(ProcessingEvent::ProcessingComplete))
+                        .unwrap();
+                });
             }
         }
     }

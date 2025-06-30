@@ -92,6 +92,7 @@ fn main() -> anyhow::Result<()> {
         viewport: Viewport::Fullscreen,
     });
     std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
+    ratatui::crossterm::execute!(std::io::stderr(), event::EnableMouseCapture)?;
 
     // need to call this after entering alternate screen, but before reading events
     let picker =
@@ -106,6 +107,10 @@ fn main() -> anyhow::Result<()> {
 
     let result = tui::run(&mut terminal, event_tx, event_rx, picker);
 
+    ratatui::crossterm::execute!(
+        std::io::stderr(),
+        ratatui::crossterm::event::DisableMouseCapture
+    )?;
     ratatui::restore();
 
     result
@@ -457,6 +462,11 @@ pub enum Event {
     Resize,
     ProcessingEvent(ProcessingEvent),
     ConfigEvent(ConfigEvent),
+    StartProcessing {
+        files: Vec<PathBuf>,
+        config: ComicConfig,
+        prefix: Option<String>,
+    },
 }
 
 pub enum ProcessingEvent {

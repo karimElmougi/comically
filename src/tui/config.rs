@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{KeyCode, KeyEvent},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
+    layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -32,6 +32,8 @@ pub struct ConfigState {
     pub input_buffer: String,
     pub preview_state: PreviewState,
     picker: Picker,
+    event_tx: std::sync::mpsc::Sender<crate::Event>,
+    last_mouse_click: Option<MouseEvent>,
 }
 
 #[derive(Debug)]
@@ -55,7 +57,6 @@ pub enum SelectedField {
 }
 
 pub struct PreviewState {
-    current_file: Option<usize>,
     thread_protocol: ThreadProtocol,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
@@ -71,15 +72,6 @@ pub enum ConfigEvent {
     ImageLoaded(image::DynamicImage),
     ResizeComplete(Result<ResizeResponse, Errors>),
     Error(String),
-}
-
-pub enum ConfigAction {
-    Continue,
-    StartProcessing {
-        files: Vec<PathBuf>,
-        config: ComicConfig,
-        prefix: Option<String>,
-    },
 }
 
 impl ConfigState {
@@ -102,8 +94,9 @@ impl ConfigState {
         // Create ThreadProtocol for handling resizing
         let thread_protocol = ThreadProtocol::new(resize_tx.clone(), None);
 
+        let event_tx_clone = event_tx.clone();
         thread::spawn(move || {
-            preview_worker(worker_rx, resize_rx, event_tx);
+            preview_worker(worker_rx, resize_rx, event_tx_clone);
         });
 
         let mut state = Self {
@@ -124,7 +117,6 @@ impl ConfigState {
             selected_field: None,
             input_buffer: String::new(),
             preview_state: PreviewState {
-                current_file: if has_files { Some(0) } else { None },
                 thread_protocol,
                 preview_tx,
                 resize_tx,
@@ -132,6 +124,8 @@ impl ConfigState {
                 selection_changed_at: None,
             },
             picker,
+            event_tx,
+            last_mouse_click: None,
         };
 
         // Mark selection changed to trigger initial preview after debounce
@@ -142,11 +136,12 @@ impl ConfigState {
         Ok(state)
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> ConfigAction {
+    pub fn handle_key(&mut self, key: KeyEvent) {
         // Check if we're editing the prefix field
         if let Some(SelectedField::Prefix) = self.selected_field {
             if !self.input_buffer.is_empty() || key.code != KeyCode::Esc {
-                return self.handle_prefix_editing(key);
+                self.handle_prefix_editing(key);
+                return;
             }
         }
 
@@ -157,28 +152,11 @@ impl ConfigState {
                     Focus::Settings => Focus::FileList,
                 };
                 self.selected_field = None; // Clear selection when switching focus
-                ConfigAction::Continue
             }
             KeyCode::Enter => {
                 if self.focus == Focus::Settings {
-                    // Start processing
-                    let selected_paths: Vec<PathBuf> = self
-                        .files
-                        .iter()
-                        .zip(&self.selected_files)
-                        .filter(|(_, selected)| **selected)
-                        .map(|(file, _)| file.path.clone())
-                        .collect();
-
-                    if !selected_paths.is_empty() {
-                        return ConfigAction::StartProcessing {
-                            files: selected_paths,
-                            config: self.config,
-                            prefix: self.prefix.clone(),
-                        };
-                    }
+                    self.send_start_processing();
                 }
-                ConfigAction::Continue
             }
             _ => match self.focus {
                 Focus::FileList => self.handle_file_list_keys(key),
@@ -187,38 +165,52 @@ impl ConfigState {
         }
     }
 
-    pub fn handle_mouse(&mut self, mouse: ratatui::crossterm::event::MouseEvent) -> ConfigAction {
-        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+    fn send_start_processing(&self) {
+        let selected_paths: Vec<PathBuf> = self
+            .files
+            .iter()
+            .zip(&self.selected_files)
+            .filter(|(_, selected)| **selected)
+            .map(|(file, _)| file.path.clone())
+            .collect();
 
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            // For now, just handle clicking in the settings area
-            // You would need to calculate the exact positions based on your layout
-            // This is a simplified version
-            if self.focus == Focus::Settings {
-                // TODO: Calculate which button was clicked based on mouse.column and mouse.row
-            }
+        if !selected_paths.is_empty() {
+            let _ = self.event_tx.send(crate::Event::StartProcessing {
+                files: selected_paths,
+                config: self.config,
+                prefix: self.prefix.clone(),
+            });
         }
-
-        ConfigAction::Continue
     }
 
-    fn handle_file_list_keys(&mut self, key: KeyEvent) -> ConfigAction {
+    pub fn handle_mouse(&mut self, mouse: ratatui::crossterm::event::MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.last_mouse_click = Some(mouse);
+            }
+            MouseEventKind::ScrollUp => {
+                self.select_previous();
+            }
+            MouseEventKind::ScrollDown => {
+                self.select_next();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_file_list_keys(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(selected) = self.list_state.selected() {
                     if selected > 0 {
-                        self.list_state.select(Some(selected - 1));
-                        self.preview_state.current_file = Some(selected - 1);
-                        self.mark_preview_dirty();
+                        self.select_previous();
                     }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(selected) = self.list_state.selected() {
                     if selected < self.files.len() - 1 {
-                        self.list_state.select(Some(selected + 1));
-                        self.preview_state.current_file = Some(selected + 1);
-                        self.mark_preview_dirty();
+                        self.select_next();
                     }
                 }
             }
@@ -236,11 +228,10 @@ impl ConfigState {
             }
             _ => {}
         }
-        ConfigAction::Continue
     }
 
     fn request_preview(&mut self) {
-        if let Some(file_idx) = self.preview_state.current_file {
+        if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
                 self.preview_state.loading = true;
                 self.preview_state.selection_changed_at = None; // Clear it once we start processing
@@ -265,6 +256,24 @@ impl ConfigState {
 
     pub fn mark_preview_dirty(&mut self) {
         self.preview_state.selection_changed_at = Some(Instant::now());
+    }
+
+    fn select_previous(&mut self) {
+        if let Some(selected) = self.list_state.selected() {
+            if selected > 0 {
+                self.list_state.select(Some(selected - 1));
+                self.mark_preview_dirty();
+            }
+        }
+    }
+
+    fn select_next(&mut self) {
+        if let Some(selected) = self.list_state.selected() {
+            if selected < self.files.len() - 1 {
+                self.list_state.select(Some(selected + 1));
+                self.mark_preview_dirty();
+            }
+        }
     }
 
     fn adjust_setting(&mut self, field: SelectedField, increase: bool, is_fine: bool) {
@@ -337,7 +346,7 @@ impl ConfigState {
         }
     }
 
-    fn handle_settings_keys(&mut self, key: KeyEvent) -> ConfigAction {
+    fn handle_settings_keys(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('m') => {
                 self.config.right_to_left = !self.config.right_to_left;
@@ -384,10 +393,9 @@ impl ConfigState {
             }
             _ => {}
         }
-        ConfigAction::Continue
     }
 
-    fn handle_prefix_editing(&mut self, key: KeyEvent) -> ConfigAction {
+    fn handle_prefix_editing(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 self.selected_field = None;
@@ -410,7 +418,6 @@ impl ConfigState {
             }
             _ => {}
         }
-        ConfigAction::Continue
     }
 }
 
@@ -471,7 +478,7 @@ impl<'a> Widget for ConfigScreen<'a> {
         FileListWidget::new(&self.state).render(main_chunks[0], buf);
 
         // Settings panel
-        SettingsWidget::new(&self.state).render(main_chunks[1], buf);
+        SettingsWidget::new(self.state).render(main_chunks[1], buf);
 
         // Preview panel
         PreviewWidget::new(self.state).render(main_chunks[2], buf);
@@ -546,11 +553,11 @@ impl<'a> Widget for FileListWidget<'a> {
 }
 
 struct SettingsWidget<'a> {
-    state: &'a ConfigState,
+    state: &'a mut ConfigState,
 }
 
 impl<'a> SettingsWidget<'a> {
-    fn new(state: &'a ConfigState) -> Self {
+    fn new(state: &'a mut ConfigState) -> Self {
         Self { state }
     }
 
@@ -682,16 +689,26 @@ impl<'a> Widget for SettingsWidget<'a> {
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![Span::styled(
-                "Press Enter to start processing",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )]),
         ];
 
         let paragraph = Paragraph::new(settings_text);
         paragraph.render(inner, buf);
+
+        // Render the process button at the bottom of the settings area
+        let button_height = 3;
+        let button_y = inner.y + inner.height.saturating_sub(button_height + 1);
+        let button_area = Rect::new(inner.x, button_y, inner.width, button_height);
+
+        ButtonWidget::new("Start Processing".to_string(), || {
+            self.state.send_start_processing();
+        })
+        .style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_mouse_event(self.state.last_mouse_click)
+        .render(button_area, buf);
 
         // Render editing overlay if editing prefix
         if let Some(SelectedField::Prefix) = self.state.selected_field {
@@ -776,7 +793,9 @@ impl<'a> Widget for PreviewWidget<'a> {
                 &mut self.state.preview_state.thread_protocol,
             );
         }
-        log::info!("PreviewWidget render took {:?}", start.elapsed());
+        if start.elapsed() > std::time::Duration::from_millis(100) {
+            log::error!("PreviewWidget render took {:?}", start.elapsed());
+        }
     }
 }
 
@@ -790,30 +809,39 @@ fn preview_worker(
         // Check for preview requests
         if let Some(request) = get_latest(&rx) {
             match request {
-                PreviewRequest::LoadFile { path, config } => {
-                    let result = load_and_process_preview(&path, &config);
+                PreviewRequest::LoadFile { path, config } => rayon::spawn({
+                    let tx = tx.clone();
+                    move || {
+                        let result = load_and_process_preview(&path, &config);
 
-                    match result {
-                        Ok(img) => {
-                            let _ =
-                                tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded(img)));
-                        }
-                        Err(e) => {
-                            let _ = tx
-                                .send(crate::Event::ConfigEvent(ConfigEvent::Error(e.to_string())));
+                        match result {
+                            Ok(img) => {
+                                let _ = tx
+                                    .send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded(img)));
+                            }
+                            Err(e) => {
+                                let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::Error(
+                                    e.to_string(),
+                                )));
+                            }
                         }
                     }
-                }
+                }),
             }
         }
 
         // Check for resize requests
         if let Some(resize_request) = get_latest(&resize_rx) {
             log::info!("Processing resize request");
-            let result = resize_request.resize_encode();
-            let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
-                result,
-            )));
+            rayon::spawn({
+                let tx = tx.clone();
+                move || {
+                    let result = resize_request.resize_encode();
+                    let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
+                        result,
+                    )));
+                }
+            });
         }
 
         // Small sleep to prevent busy waiting
@@ -876,4 +904,73 @@ fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
         latest = Some(event);
     }
     latest
+}
+
+pub struct ButtonWidget<F> {
+    pub text: String,
+    pub style: Style,
+    pub mouse_event: Option<MouseEvent>,
+    pub on_click: F,
+}
+
+impl<F> ButtonWidget<F>
+where
+    F: FnOnce(),
+{
+    pub fn new(text: String, on_click: F) -> Self {
+        Self {
+            text,
+            style: Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+            mouse_event: None,
+            on_click,
+        }
+    }
+
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn with_mouse_event(mut self, mouse_event: Option<MouseEvent>) -> Self {
+        self.mouse_event = mouse_event;
+        self
+    }
+}
+
+impl<F> Widget for ButtonWidget<F>
+where
+    F: FnOnce(),
+{
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let button_text = format!(" {} ", self.text);
+        let button_width = button_text.len() as u16 + 10;
+        let button_height = 3;
+
+        // Center the button in the given area
+        let button_x = area.x + (area.width.saturating_sub(button_width)) / 2;
+        let button_y = area.y + (area.height.saturating_sub(button_height)) / 2;
+        let button_area = Rect::new(button_x, button_y, button_width, button_height);
+
+        // Draw the button
+        let button_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(self.style);
+
+        let button_inner = button_block.inner(button_area);
+        button_block.render(button_area, buf);
+
+        // Check for click event during render (immediate-mode pattern)
+        if let Some(event) = self.mouse_event {
+            if button_area.contains(Position::new(event.column, event.row)) {
+                (self.on_click)();
+            }
+        }
+
+        Paragraph::new(button_text)
+            .style(self.style)
+            .alignment(Alignment::Center)
+            .render(button_inner, buf);
+    }
 }
