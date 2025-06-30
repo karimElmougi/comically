@@ -561,13 +561,65 @@ impl<'a> SettingsWidget<'a> {
         Self { state }
     }
 
-    fn render_setting_line(
-        &self,
+    fn render_toggle_button(
+        &mut self,
         label: &str,
         value: &str,
         key: &str,
+        area: Rect,
+        buf: &mut Buffer,
+        mut on_click: impl FnMut(&mut ConfigState),
+    ) {
+        let value_start = label.len() + 2;
+        let value_len = value.len();
+
+        // Render the label
+        let label_text = format!("{}: ", label);
+        Paragraph::new(label_text).render(area, buf);
+
+        // Create clickable area for the value
+        let value_area = Rect::new(area.x + value_start as u16, area.y, value_len as u16, 1);
+
+        // Check if clicked
+        if let Some(mouse) = self.state.last_mouse_click {
+            if value_area.contains(Position::new(mouse.column, mouse.row)) {
+                on_click(self.state);
+                self.state.last_mouse_click = None; // Consume the click
+            }
+        }
+
+        // Render the value as a clickable button
+        Paragraph::new(value)
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::UNDERLINED),
+            )
+            .render(value_area, buf);
+
+        // Render the key hint
+        let key_area = Rect::new(
+            area.x + (value_start + value_len + 1) as u16,
+            area.y,
+            key.len() as u16,
+            1,
+        );
+        Paragraph::new(key)
+            .style(Style::default().fg(Color::Green))
+            .render(key_area, buf);
+    }
+
+    fn render_adjustable_setting(
+        &mut self,
+        label: &str,
+        value: &str,
+        key: &str,
+        area: Rect,
+        buf: &mut Buffer,
         selected: bool,
-    ) -> Line<'static> {
+        mut on_select: impl FnMut(&mut ConfigState),
+        mut on_adjust: impl FnMut(&mut ConfigState, bool),
+    ) {
         let style = if selected {
             Style::default()
                 .fg(Color::Yellow)
@@ -584,20 +636,63 @@ impl<'a> SettingsWidget<'a> {
             Style::default().fg(Color::DarkGray)
         };
 
-        Line::from(vec![
-            Span::styled(format!("{}: ", label), style),
-            Span::styled("[-]", button_style),
-            Span::raw(" "),
-            Span::styled(value.to_string(), Style::default().fg(Color::Cyan)),
-            Span::raw(" "),
-            Span::styled("[+]", button_style),
-            Span::styled(format!(" ({})", key), Style::default().fg(Color::DarkGray)),
-        ])
+        // Calculate positions
+        let label_text = format!("{}: ", label);
+        let label_len = label_text.len() as u16;
+
+        // Render label
+        Paragraph::new(label_text.as_str())
+            .style(style)
+            .render(area, buf);
+
+        // Render [-] button
+        let minus_area = Rect::new(area.x + label_len, area.y, 3, 1);
+        if let Some(mouse) = self.state.last_mouse_click {
+            if minus_area.contains(Position::new(mouse.column, mouse.row)) {
+                on_select(self.state);
+                on_adjust(self.state, false);
+                self.state.last_mouse_click = None;
+            }
+        }
+        Paragraph::new("[-]")
+            .style(button_style)
+            .render(minus_area, buf);
+
+        // Render value
+        let value_area = Rect::new(area.x + label_len + 4, area.y, value.len() as u16, 1);
+        Paragraph::new(value)
+            .style(Style::default().fg(Color::Cyan))
+            .render(value_area, buf);
+
+        // Render [+] button
+        let plus_area = Rect::new(area.x + label_len + 5 + value.len() as u16, area.y, 3, 1);
+        if let Some(mouse) = self.state.last_mouse_click {
+            if plus_area.contains(Position::new(mouse.column, mouse.row)) {
+                on_select(self.state);
+                on_adjust(self.state, true);
+                self.state.last_mouse_click = None;
+            }
+        }
+        Paragraph::new("[+]")
+            .style(button_style)
+            .render(plus_area, buf);
+
+        // Render key hint
+        let key_text = format!(" {}", key);
+        let key_area = Rect::new(
+            area.x + label_len + 8 + value.len() as u16,
+            area.y,
+            key_text.len() as u16,
+            1,
+        );
+        Paragraph::new(key_text.as_str())
+            .style(Style::default().fg(Color::Green))
+            .render(key_area, buf);
     }
 }
 
 impl<'a> Widget for SettingsWidget<'a> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+    fn render(mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
             .title("Settings")
             .borders(Borders::ALL)
@@ -609,90 +704,170 @@ impl<'a> Widget for SettingsWidget<'a> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let settings_text = vec![
-            Line::from(vec![
-                Span::raw("Title Prefix: "),
-                Span::styled(
-                    self.state
-                        .prefix
-                        .clone()
-                        .unwrap_or_else(|| "(none)".to_string()),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [p]"),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("Reading Direction: "),
-                Span::styled(
-                    if self.state.config.right_to_left {
-                        "Right to Left (Manga)"
-                    } else {
-                        "Left to Right"
-                    },
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [m]"),
-            ]),
-            Line::from(vec![
-                Span::raw("Split Double Pages: "),
-                Span::styled(
-                    if self.state.config.split_double_page {
-                        "Yes"
-                    } else {
-                        "No"
-                    },
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [s]"),
-            ]),
-            Line::from(vec![
-                Span::raw("Auto Crop: "),
-                Span::styled(
-                    if self.state.config.auto_crop {
-                        "Yes"
-                    } else {
-                        "No"
-                    },
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [c]"),
-            ]),
-            self.render_setting_line(
-                "Quality",
-                &format!("{:3}", self.state.config.compression_quality),
-                "u",
-                self.state.selected_field == Some(SelectedField::Quality),
-            ),
-            self.render_setting_line(
-                "Brightness",
-                &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
-                "b",
-                self.state.selected_field == Some(SelectedField::Brightness),
-            ),
-            self.render_setting_line(
-                "Contrast",
-                &format!("{:3.1}", self.state.config.contrast.unwrap_or(1.0)),
-                "t",
-                self.state.selected_field == Some(SelectedField::Contrast),
-            ),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("Device: "),
-                Span::styled(
-                    format!(
-                        "{}x{}",
-                        self.state.config.device_dimensions.0,
-                        self.state.config.device_dimensions.1
-                    ),
-                    Style::default().fg(Color::Cyan),
-                ),
-            ]),
-            Line::from(""),
-        ];
+        // Calculate layout for settings
+        let line_height = 2; // Height for each setting line
+        let spacing = 1; // Space between lines
+        let mut y_offset = inner.y + 1;
 
-        let paragraph = Paragraph::new(settings_text);
-        paragraph.render(inner, buf);
+        // Title Prefix with button
+        let prefix_text = format!(
+            "Title Prefix: {} [p]",
+            self.state
+                .prefix
+                .clone()
+                .unwrap_or_else(|| "(none)".to_string())
+        );
+        let prefix_area = Rect::new(inner.x + 2, y_offset, inner.width - 4, 1);
+        Paragraph::new(Line::from(vec![
+            Span::raw("Title Prefix: "),
+            Span::styled(
+                self.state
+                    .prefix
+                    .clone()
+                    .unwrap_or_else(|| "(none)".to_string()),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::raw(" "),
+        ]))
+        .render(prefix_area, buf);
+
+        // Add clickable button for prefix
+        let prefix_button_area =
+            Rect::new(prefix_area.x + prefix_text.len() as u16 - 3, y_offset, 3, 1);
+        if let Some(mouse) = self.state.last_mouse_click {
+            if prefix_button_area.contains(Position::new(mouse.column, mouse.row)) {
+                self.state.selected_field = Some(SelectedField::Prefix);
+                self.state.input_buffer = self.state.prefix.clone().unwrap_or_default();
+            }
+        }
+        Paragraph::new("[p]")
+            .style(Style::default().fg(Color::Green))
+            .render(prefix_button_area, buf);
+
+        y_offset += line_height + spacing;
+
+        // Reading Direction toggle button
+        self.render_toggle_button(
+            "Reading Direction",
+            if self.state.config.right_to_left {
+                "Right to Left (Manga)"
+            } else {
+                "Left to Right"
+            },
+            "[m]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            |state| {
+                state.config.right_to_left = !state.config.right_to_left;
+            },
+        );
+        y_offset += line_height;
+
+        // Split Double Pages toggle button
+        self.render_toggle_button(
+            "Split Double Pages",
+            if self.state.config.split_double_page {
+                "Yes"
+            } else {
+                "No"
+            },
+            "[s]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            |state| {
+                state.config.split_double_page = !state.config.split_double_page;
+            },
+        );
+        y_offset += line_height;
+
+        // Auto Crop toggle button
+        self.render_toggle_button(
+            "Auto Crop",
+            if self.state.config.auto_crop {
+                "Yes"
+            } else {
+                "No"
+            },
+            "[c]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            |state| {
+                state.config.auto_crop = !state.config.auto_crop;
+                state.mark_preview_dirty();
+            },
+        );
+        y_offset += line_height;
+
+        // Quality with +/- buttons
+        self.render_adjustable_setting(
+            "Quality",
+            &format!("{:3}", self.state.config.compression_quality),
+            "[u]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            self.state.selected_field == Some(SelectedField::Quality),
+            |state| {
+                state.selected_field = Some(SelectedField::Quality);
+            },
+            |state, increase| {
+                if let Some(SelectedField::Quality) = state.selected_field {
+                    state.adjust_setting(SelectedField::Quality, increase, false);
+                }
+            },
+        );
+        y_offset += line_height;
+
+        // Brightness with +/- buttons
+        self.render_adjustable_setting(
+            "Brightness",
+            &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
+            "[b]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            self.state.selected_field == Some(SelectedField::Brightness),
+            |state| {
+                state.selected_field = Some(SelectedField::Brightness);
+            },
+            |state, increase| {
+                if let Some(SelectedField::Brightness) = state.selected_field {
+                    state.adjust_setting(SelectedField::Brightness, increase, false);
+                }
+            },
+        );
+        y_offset += line_height;
+
+        // Contrast with +/- buttons
+        self.render_adjustable_setting(
+            "Contrast",
+            &format!("{:3.1}", self.state.config.contrast.unwrap_or(1.0)),
+            "[t]",
+            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            buf,
+            self.state.selected_field == Some(SelectedField::Contrast),
+            |state| {
+                state.selected_field = Some(SelectedField::Contrast);
+            },
+            |state, increase| {
+                if let Some(SelectedField::Contrast) = state.selected_field {
+                    state.adjust_setting(SelectedField::Contrast, increase, false);
+                }
+            },
+        );
+        y_offset += line_height + spacing;
+
+        // Device info (non-interactive)
+        let device_area = Rect::new(inner.x + 2, y_offset, inner.width - 4, 1);
+        Paragraph::new(Line::from(vec![
+            Span::raw("Device: "),
+            Span::styled(
+                format!(
+                    "{}x{}",
+                    self.state.config.device_dimensions.0, self.state.config.device_dimensions.1
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]))
+        .render(device_area, buf);
 
         // Render the process button at the bottom of the settings area
         let button_height = 3;
