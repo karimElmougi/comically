@@ -121,12 +121,17 @@ fn input_handling(tx: mpsc::Sender<Event>) {
         if event::poll(timeout).unwrap() {
             match event::read().unwrap() {
                 event::Event::Key(key) => {
-                    if tx.send(Event::Input(key)).is_err() {
+                    if tx.send(Event::Key(key)).is_err() {
                         break;
                     }
                 }
                 event::Event::Resize(_, _) => {
                     if tx.send(Event::Resize).is_err() {
+                        break;
+                    }
+                }
+                event::Event::Mouse(mouse) => {
+                    if tx.send(Event::Mouse(mouse)).is_err() {
                         break;
                     }
                 }
@@ -446,7 +451,8 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
 }
 
 pub enum Event {
-    Input(event::KeyEvent),
+    Mouse(event::MouseEvent),
+    Key(event::KeyEvent),
     Tick,
     Resize,
     ProcessingEvent(ProcessingEvent),

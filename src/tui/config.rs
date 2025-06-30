@@ -28,7 +28,7 @@ pub struct ConfigState {
     pub config: ComicConfig,
     pub prefix: Option<String>,
     pub focus: Focus,
-    pub editing_field: Option<EditingField>,
+    pub selected_field: Option<SelectedField>,
     pub input_buffer: String,
     pub preview_state: PreviewState,
     picker: Picker,
@@ -47,13 +47,11 @@ pub enum Focus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EditingField {
+pub enum SelectedField {
     Prefix,
     Quality,
     Brightness,
     Contrast,
-    Width,
-    Height,
 }
 
 pub struct PreviewState {
@@ -123,7 +121,7 @@ impl ConfigState {
             },
             prefix: None,
             focus: Focus::FileList,
-            editing_field: None,
+            selected_field: None,
             input_buffer: String::new(),
             preview_state: PreviewState {
                 current_file: if has_files { Some(0) } else { None },
@@ -145,8 +143,11 @@ impl ConfigState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ConfigAction {
-        if let Some(field) = self.editing_field {
-            return self.handle_editing(key, field);
+        // Check if we're editing the prefix field
+        if let Some(SelectedField::Prefix) = self.selected_field {
+            if !self.input_buffer.is_empty() || key.code != KeyCode::Esc {
+                return self.handle_prefix_editing(key);
+            }
         }
 
         match key.code {
@@ -155,6 +156,7 @@ impl ConfigState {
                     Focus::FileList => Focus::Settings,
                     Focus::Settings => Focus::FileList,
                 };
+                self.selected_field = None; // Clear selection when switching focus
                 ConfigAction::Continue
             }
             KeyCode::Enter => {
@@ -185,6 +187,21 @@ impl ConfigState {
         }
     }
 
+    pub fn handle_mouse(&mut self, mouse: ratatui::crossterm::event::MouseEvent) -> ConfigAction {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            // For now, just handle clicking in the settings area
+            // You would need to calculate the exact positions based on your layout
+            // This is a simplified version
+            if self.focus == Focus::Settings {
+                // TODO: Calculate which button was clicked based on mouse.column and mouse.row
+            }
+        }
+
+        ConfigAction::Continue
+    }
+
     fn handle_file_list_keys(&mut self, key: KeyEvent) -> ConfigAction {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -192,7 +209,7 @@ impl ConfigState {
                     if selected > 0 {
                         self.list_state.select(Some(selected - 1));
                         self.preview_state.current_file = Some(selected - 1);
-                        self.preview_state.selection_changed_at = Some(Instant::now());
+                        self.mark_preview_dirty();
                     }
                 }
             }
@@ -201,7 +218,7 @@ impl ConfigState {
                     if selected < self.files.len() - 1 {
                         self.list_state.select(Some(selected + 1));
                         self.preview_state.current_file = Some(selected + 1);
-                        self.preview_state.selection_changed_at = Some(Instant::now());
+                        self.mark_preview_dirty();
                     }
                 }
             }
@@ -246,6 +263,52 @@ impl ConfigState {
         }
     }
 
+    pub fn mark_preview_dirty(&mut self) {
+        self.preview_state.selection_changed_at = Some(Instant::now());
+    }
+
+    fn adjust_setting(&mut self, field: SelectedField, increase: bool, is_fine: bool) {
+        let should_update_preview = match field {
+            SelectedField::Quality => {
+                let step = if is_fine { 1 } else { 5 };
+                self.config.compression_quality = if increase {
+                    self.config
+                        .compression_quality
+                        .saturating_add(step)
+                        .min(100)
+                } else {
+                    self.config.compression_quality.saturating_sub(step)
+                };
+                true
+            }
+            SelectedField::Brightness => {
+                let step = if is_fine { 1 } else { 5 };
+                let current = self.config.brightness.unwrap_or(-10);
+                self.config.brightness = Some(if increase {
+                    (current + step).min(100)
+                } else {
+                    (current - step).max(-100)
+                });
+                true
+            }
+            SelectedField::Contrast => {
+                let step = if is_fine { 0.05 } else { 0.1 };
+                let current = self.config.contrast.unwrap_or(1.0);
+                self.config.contrast = Some(if increase {
+                    (current + step).min(2.0)
+                } else {
+                    (current - step).max(0.5)
+                });
+                true
+            }
+            SelectedField::Prefix => false, // Prefix doesn't use adjustment
+        };
+
+        if should_update_preview {
+            self.mark_preview_dirty();
+        }
+    }
+
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded(img) => {
@@ -284,78 +347,63 @@ impl ConfigState {
             }
             KeyCode::Char('c') => {
                 self.config.auto_crop = !self.config.auto_crop;
+                self.mark_preview_dirty();
             }
-            KeyCode::Char('q') => {
-                self.editing_field = Some(EditingField::Quality);
-                self.input_buffer = self.config.compression_quality.to_string();
+            KeyCode::Char('u') => {
+                self.selected_field = Some(SelectedField::Quality);
             }
             KeyCode::Char('b') => {
-                self.editing_field = Some(EditingField::Brightness);
-                self.input_buffer = self.config.brightness.unwrap_or(-10).to_string();
+                self.selected_field = Some(SelectedField::Brightness);
             }
             KeyCode::Char('t') => {
-                self.editing_field = Some(EditingField::Contrast);
-                self.input_buffer = self.config.contrast.unwrap_or(1.0).to_string();
+                self.selected_field = Some(SelectedField::Contrast);
             }
             KeyCode::Char('p') => {
-                self.editing_field = Some(EditingField::Prefix);
+                self.selected_field = Some(SelectedField::Prefix);
                 self.input_buffer = self.prefix.clone().unwrap_or_default();
+            }
+            KeyCode::Left => {
+                if let Some(field) = self.selected_field {
+                    let is_fine = key
+                        .modifiers
+                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
+                    self.adjust_setting(field, false, is_fine);
+                }
+            }
+            KeyCode::Right => {
+                if let Some(field) = self.selected_field {
+                    let is_fine = key
+                        .modifiers
+                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
+                    self.adjust_setting(field, true, is_fine);
+                }
+            }
+            KeyCode::Esc => {
+                self.selected_field = None;
+                self.input_buffer.clear();
             }
             _ => {}
         }
         ConfigAction::Continue
     }
 
-    fn handle_editing(&mut self, key: KeyEvent, field: EditingField) -> ConfigAction {
+    fn handle_prefix_editing(&mut self, key: KeyEvent) -> ConfigAction {
         match key.code {
             KeyCode::Esc => {
-                self.editing_field = None;
+                self.selected_field = None;
                 self.input_buffer.clear();
             }
             KeyCode::Enter => {
-                match field {
-                    EditingField::Quality => {
-                        if let Ok(val) = self.input_buffer.parse::<u8>() {
-                            self.config.compression_quality = val.clamp(0, 100);
-                        }
-                    }
-                    EditingField::Brightness => {
-                        if let Ok(val) = self.input_buffer.parse::<i32>() {
-                            self.config.brightness = Some(val.clamp(-100, 100));
-                            self.request_preview();
-                        }
-                    }
-                    EditingField::Contrast => {
-                        if let Ok(val) = self.input_buffer.parse::<f32>() {
-                            self.config.contrast = Some(val.clamp(0.5, 2.0));
-                            self.request_preview();
-                        }
-                    }
-                    EditingField::Prefix => {
-                        self.prefix = if self.input_buffer.is_empty() {
-                            None
-                        } else {
-                            Some(self.input_buffer.clone())
-                        };
-                    }
-                    _ => {}
-                }
-                self.editing_field = None;
+                self.prefix = if self.input_buffer.is_empty() {
+                    None
+                } else {
+                    Some(self.input_buffer.clone())
+                };
+                self.selected_field = None;
                 self.input_buffer.clear();
             }
             KeyCode::Char(c) => {
-                match field {
-                    EditingField::Prefix => {
-                        // Allow any character for prefix
-                        self.input_buffer.push(c);
-                    }
-                    _ => {
-                        // Only allow numeric input for other fields
-                        if c.is_numeric() || c == '.' || c == '-' {
-                            self.input_buffer.push(c);
-                        }
-                    }
-                }
+                self.input_buffer.push(c);
             }
             KeyCode::Backspace => {
                 self.input_buffer.pop();
@@ -429,9 +477,19 @@ impl<'a> Widget for ConfigScreen<'a> {
         PreviewWidget::new(self.state).render(main_chunks[2], buf);
 
         // Footer
-        let footer_text = match self.state.focus {
-            Focus::FileList => "↑/↓: Navigate | Space: Toggle | a: Toggle All | Tab: Switch Panel | q: Quit",
-            Focus::Settings => "m: Toggle Manga | s: Toggle Split | c: Toggle Crop | p: Prefix | Enter: Process | Tab: Switch Panel",
+        let footer_text = match (self.state.focus, self.state.selected_field) {
+            (Focus::FileList, _) => {
+                "↑/↓: Navigate | Space: Toggle | a: Toggle All | Tab: Switch Panel | q: Quit"
+            }
+            (Focus::Settings, Some(SelectedField::Prefix)) => {
+                "Type to edit | Enter: Save | Esc: Cancel"
+            }
+            (Focus::Settings, Some(_)) => {
+                "←/→: Adjust | Shift+←/→: Fine adjust | Esc: Cancel | Enter: Process"
+            }
+            (Focus::Settings, None) => {
+                "u/b/t: Select setting | m/s/c: Toggle | p: Prefix | Enter: Process | Tab: Switch"
+            }
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(Color::DarkGray))
@@ -494,6 +552,40 @@ struct SettingsWidget<'a> {
 impl<'a> SettingsWidget<'a> {
     fn new(state: &'a ConfigState) -> Self {
         Self { state }
+    }
+
+    fn render_setting_line(
+        &self,
+        label: &str,
+        value: &str,
+        key: &str,
+        selected: bool,
+    ) -> Line<'static> {
+        let style = if selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        let button_style = if selected {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        Line::from(vec![
+            Span::styled(format!("{}: ", label), style),
+            Span::styled("[-]", button_style),
+            Span::raw(" "),
+            Span::styled(value.to_string(), Style::default().fg(Color::Cyan)),
+            Span::raw(" "),
+            Span::styled("[+]", button_style),
+            Span::styled(format!(" ({})", key), Style::default().fg(Color::DarkGray)),
+        ])
     }
 }
 
@@ -559,30 +651,24 @@ impl<'a> Widget for SettingsWidget<'a> {
                 ),
                 Span::raw(" [c]"),
             ]),
-            Line::from(vec![
-                Span::raw("Quality: "),
-                Span::styled(
-                    self.state.config.compression_quality.to_string(),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [q]"),
-            ]),
-            Line::from(vec![
-                Span::raw("Brightness: "),
-                Span::styled(
-                    self.state.config.brightness.unwrap_or(-10).to_string(),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [b]"),
-            ]),
-            Line::from(vec![
-                Span::raw("Contrast: "),
-                Span::styled(
-                    format!("{:.1}", self.state.config.contrast.unwrap_or(1.0)),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" [t]"),
-            ]),
+            self.render_setting_line(
+                "Quality",
+                &format!("{:3}", self.state.config.compression_quality),
+                "u",
+                self.state.selected_field == Some(SelectedField::Quality),
+            ),
+            self.render_setting_line(
+                "Brightness",
+                &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
+                "b",
+                self.state.selected_field == Some(SelectedField::Brightness),
+            ),
+            self.render_setting_line(
+                "Contrast",
+                &format!("{:3.1}", self.state.config.contrast.unwrap_or(1.0)),
+                "t",
+                self.state.selected_field == Some(SelectedField::Contrast),
+            ),
             Line::from(""),
             Line::from(vec![
                 Span::raw("Device: "),
@@ -607,26 +693,22 @@ impl<'a> Widget for SettingsWidget<'a> {
         let paragraph = Paragraph::new(settings_text);
         paragraph.render(inner, buf);
 
-        // Render editing overlay if active
-        if let Some(field) = self.state.editing_field {
-            let popup_area = centered_rect(50, 20, area);
-            Clear.render(popup_area, buf);
+        // Render editing overlay if editing prefix
+        if let Some(SelectedField::Prefix) = self.state.selected_field {
+            if !self.state.input_buffer.is_empty()
+                || self.state.selected_field == Some(SelectedField::Prefix)
+            {
+                let popup_area = centered_rect(50, 20, area);
+                Clear.render(popup_area, buf);
 
-            let title = match field {
-                EditingField::Quality => "Edit Quality (0-100)",
-                EditingField::Brightness => "Edit Brightness (-100 to 100)",
-                EditingField::Contrast => "Edit Contrast (0.5 to 2.0)",
-                EditingField::Prefix => "Edit Title Prefix",
-                _ => "Edit Value",
-            };
-
-            let popup = Paragraph::new(self.state.input_buffer.as_str()).block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::Yellow)),
-            );
-            popup.render(popup_area, buf);
+                let popup = Paragraph::new(self.state.input_buffer.as_str()).block(
+                    Block::default()
+                        .title("Edit Title Prefix")
+                        .borders(Borders::ALL)
+                        .style(Style::default().fg(Color::Yellow)),
+                );
+                popup.render(popup_area, buf);
+            }
         }
     }
 }

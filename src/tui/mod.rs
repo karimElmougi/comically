@@ -74,7 +74,13 @@ fn process_events(
 ) -> anyhow::Result<bool> {
     for event in pending_events.drain(..) {
         match event {
-            Event::Input(key) => {
+            Event::Mouse(mouse) => match state {
+                AppState::Config(config_state) => {
+                    config_state.handle_mouse(mouse);
+                }
+                AppState::Processing(_) => {}
+            },
+            Event::Key(key) => {
                 if key.code == event::KeyCode::Char('q') {
                     return Ok(false);
                 }
