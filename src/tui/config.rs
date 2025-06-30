@@ -17,11 +17,10 @@ use ratatui_image::{
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Instant;
 
 use crate::{
     comic_archive,
-    tui::{BACKGROUND, BORDER, CONTENT},
+    tui::{BACKGROUND, BORDER, CONTENT, FOCUSED},
     ComicConfig,
 };
 
@@ -64,8 +63,6 @@ pub struct PreviewState {
     thread_protocol: ThreadProtocol,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
-    loading: bool,
-    selection_changed_at: Option<Instant>,
     loaded_image: Option<LoadedPreviewImage>,
 }
 
@@ -129,8 +126,6 @@ impl ConfigState {
                 thread_protocol,
                 preview_tx,
                 resize_tx,
-                loading: false,
-                selection_changed_at: None,
                 loaded_image: None,
             },
             picker,
@@ -239,8 +234,6 @@ impl ConfigState {
     fn request_preview(&mut self) {
         if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
-                self.preview_state.loading = true;
-                self.preview_state.selection_changed_at = None; // Clear it once we start processing
                 let _ = self
                     .preview_state
                     .preview_tx
@@ -306,7 +299,6 @@ impl ConfigState {
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded(img) => {
-                self.preview_state.loading = false;
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
                     width: img.width(),
                     height: img.height(),
@@ -330,7 +322,6 @@ impl ConfigState {
             },
             ConfigEvent::Error(err) => {
                 tracing::warn!("Preview error: {}", err);
-                self.preview_state.loading = false;
             }
         }
     }
@@ -510,9 +501,9 @@ impl<'a> Widget for FileListWidget<'a> {
                     ))
                     .borders(Borders::ALL)
                     .style(Style::default().fg(if self.state.focus == Focus::FileList {
-                        Color::Yellow
+                        FOCUSED
                     } else {
-                        Color::White
+                        BORDER
                     })),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -592,9 +583,7 @@ impl<'a> SettingsWidget<'a> {
         mut on_adjust: impl FnMut(&mut ConfigState, bool),
     ) {
         let style = if selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -668,9 +657,9 @@ impl<'a> Widget for SettingsWidget<'a> {
             .title("Settings")
             .borders(Borders::ALL)
             .style(Style::default().fg(if self.state.focus == Focus::Settings {
-                Color::Yellow
+                FOCUSED
             } else {
-                Color::White
+                BORDER
             }));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -869,7 +858,7 @@ impl<'a> Widget for SettingsWidget<'a> {
                     Block::default()
                         .title("Edit Title Prefix")
                         .borders(Borders::ALL)
-                        .style(Style::default().fg(Color::Yellow)),
+                        .style(Style::default().fg(FOCUSED)),
                 );
                 popup.render(popup_area, buf);
             }
@@ -934,36 +923,23 @@ impl<'a> Widget for PreviewWidget<'a> {
             .areas(inner);
 
         // Render the load preview button
-        let button_text = if self.state.preview_state.loading {
-            "Loading..."
-        } else {
-            "Load Preview"
-        };
+        let button_text = "Load Preview";
 
         // The ButtonWidget handles click detection internally
         ButtonWidget::new()
             .text(button_text.to_string())
-            .style(if self.state.preview_state.loading {
-                Style::default().fg(Color::Yellow)
-            } else {
+            .style(
                 Style::default()
                     .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            })
+                    .add_modifier(Modifier::BOLD),
+            )
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
-                if !self.state.preview_state.loading {
-                    self.state.request_preview();
-                }
+                self.state.request_preview();
             })
             .render(button_area, buf);
 
-        if self.state.preview_state.loading {
-            let msg = Paragraph::new("Loading preview...")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Yellow));
-            msg.render(preview_area, buf);
-        } else if let Some(loaded_image) = self.state.preview_state.loaded_image {
+        if let Some(loaded_image) = self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(None));
 
             let area = calculate_centered_image_area(
@@ -986,11 +962,14 @@ impl<'a> Widget for PreviewWidget<'a> {
                 Line::from(""),
                 Line::from("Click button below to load"),
             ];
+            let [layout] = Layout::vertical([Constraint::Length(instructions.len() as u16)])
+                .flex(Flex::Center)
+                .areas(preview_area);
 
             let msg = Paragraph::new(instructions)
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(CONTENT));
-            msg.render(preview_area, buf);
+            msg.render(layout, buf);
         }
     }
 }
