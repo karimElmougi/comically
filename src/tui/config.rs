@@ -8,14 +8,18 @@ use ratatui::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
     },
 };
-use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
+use ratatui_image::{
+    errors::Errors,
+    picker::Picker,
+    thread::{ResizeRequest, ResizeResponse, ThreadProtocol},
+    Resize, StatefulImage,
+};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
 use crate::{comic_archive, ComicConfig};
-use image::GenericImageView;
 
 pub struct ConfigState {
     pub files: Vec<MangaFile>,
@@ -53,19 +57,21 @@ pub enum EditingField {
 
 pub struct PreviewState {
     current_file: Option<usize>,
-    protocol: Option<StatefulProtocol>,
-    preview_rx: mpsc::Receiver<PreviewResult>,
+    thread_protocol: ThreadProtocol,
+    preview_rx: mpsc::Receiver<PreviewEvent>,
     preview_tx: mpsc::Sender<PreviewRequest>,
+    resize_tx: mpsc::Sender<ResizeRequest>,
     loading: bool,
-    last_request: Option<Instant>,
+    selection_changed_at: Option<Instant>,
 }
 
 enum PreviewRequest {
-    LoadFile(PathBuf, ComicConfig, usize), // Add file index to track
+    LoadFile { path: PathBuf, config: ComicConfig },
 }
 
-enum PreviewResult {
-    Loaded(StatefulProtocol),
+enum PreviewEvent {
+    ImageLoaded(image::DynamicImage),
+    ResizeComplete(Result<ResizeResponse, Errors>),
     Error(String),
 }
 
@@ -87,12 +93,18 @@ impl ConfigState {
 
         let has_files = !files.is_empty();
 
-        // Create preview processing thread
+        // Create channels for preview processing
         let (preview_tx, worker_rx) = mpsc::channel::<PreviewRequest>();
-        let (worker_tx, preview_rx) = mpsc::channel::<PreviewResult>();
+        let (worker_tx, preview_rx) = mpsc::channel::<PreviewEvent>();
+
+        // Create channel for resize requests
+        let (resize_tx, resize_rx) = mpsc::channel::<ResizeRequest>();
+
+        // Create ThreadProtocol for handling resizing
+        let thread_protocol = ThreadProtocol::new(resize_tx.clone(), None);
 
         thread::spawn(move || {
-            preview_worker(worker_rx, worker_tx);
+            preview_worker(worker_rx, worker_tx, resize_rx);
         });
 
         let mut state = Self {
@@ -114,17 +126,18 @@ impl ConfigState {
             input_buffer: String::new(),
             preview_state: PreviewState {
                 current_file: if has_files { Some(0) } else { None },
-                protocol: None,
+                thread_protocol,
                 preview_rx,
                 preview_tx,
+                resize_tx,
                 loading: false,
-                last_request: None,
+                selection_changed_at: None,
             },
         };
 
-        // Request initial preview
+        // Mark selection changed to trigger initial preview after debounce
         if has_files {
-            state.request_preview();
+            state.preview_state.selection_changed_at = Some(Instant::now());
         }
 
         Ok(state)
@@ -180,7 +193,7 @@ impl ConfigState {
                     if selected > 0 {
                         self.list_state.select(Some(selected - 1));
                         self.preview_state.current_file = Some(selected - 1);
-                        self.request_preview();
+                        self.preview_state.selection_changed_at = Some(Instant::now());
                     }
                 }
                 tracing::info!("Up key handler took {:?}", start.elapsed());
@@ -191,7 +204,7 @@ impl ConfigState {
                     if selected < self.files.len() - 1 {
                         self.list_state.select(Some(selected + 1));
                         self.preview_state.current_file = Some(selected + 1);
-                        self.request_preview();
+                        self.preview_state.selection_changed_at = Some(Instant::now());
                     }
                 }
                 tracing::info!("Down key handler took {:?}", start.elapsed());
@@ -214,39 +227,56 @@ impl ConfigState {
     }
 
     fn request_preview(&mut self) {
-        // Simple debouncing - don't send multiple requests too quickly
-        let now = Instant::now();
-        if let Some(last) = self.preview_state.last_request {
-            if now.duration_since(last).as_millis() < 50 {
-                return;
-            }
-        }
-
         if let Some(file_idx) = self.preview_state.current_file {
             if let Some(file) = self.files.get(file_idx) {
                 self.preview_state.loading = true;
-                self.preview_state.last_request = Some(now);
-                let _ = self.preview_state.preview_tx.send(PreviewRequest::LoadFile(
-                    file.path.clone(),
-                    self.config,
-                    file_idx,
-                ));
+                self.preview_state.selection_changed_at = None; // Clear it once we start processing
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile {
+                        path: file.path.clone(),
+                        config: self.config,
+                    });
+            }
+        }
+    }
+
+    pub fn check_preview_debounce(&mut self) {
+        if let Some(changed_at) = self.preview_state.selection_changed_at {
+            if changed_at.elapsed().as_millis() >= 500 && !self.preview_state.loading {
+                self.request_preview();
             }
         }
     }
 
     pub fn update_preview(&mut self) {
-        // Check for preview results
-        while let Ok(result) = self.preview_state.preview_rx.try_recv() {
-            self.preview_state.loading = false;
-            match result {
-                PreviewResult::Loaded(protocol) => {
-                    tracing::info!("Received new protocol for preview");
-                    self.preview_state.protocol = Some(protocol);
+        if let Some(event) = get_latest(&self.preview_state.preview_rx) {
+            match event {
+                PreviewEvent::ImageLoaded(img) => {
+                    tracing::info!("Received new image for preview");
+                    self.preview_state.loading = false;
+                    // Create a new resize protocol for the image
+                    let picker = Picker::from_query_stdio()
+                        .unwrap_or_else(|_| Picker::from_fontsize((8, 16)));
+                    let protocol = picker.new_resize_protocol(img);
+                    self.preview_state.thread_protocol =
+                        ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
                 }
-                PreviewResult::Error(err) => {
+                PreviewEvent::ResizeComplete(result) => match result {
+                    Ok(response) => {
+                        let _ = self
+                            .preview_state
+                            .thread_protocol
+                            .update_resized_protocol(response);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Resize error: {:?}", e);
+                    }
+                },
+                PreviewEvent::Error(err) => {
                     tracing::warn!("Preview error: {}", err);
-                    self.preview_state.protocol = None;
+                    self.preview_state.loading = false;
                 }
             }
         }
@@ -664,61 +694,57 @@ impl<'a> Widget for PreviewWidget<'a> {
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Yellow));
             msg.render(inner, buf);
-        } else if let Some(ref mut protocol) = self.state.preview_state.protocol {
-            // The image widget
-            let render_start = Instant::now();
-            // Try different resize options
-            let image = StatefulImage::new().resize(Resize::Scale(None));
-            // Render with the protocol state
-            tracing::info!("Rendering image in area: {:?}", inner);
-            StatefulWidget::render(image, inner, buf, protocol);
-            tracing::info!("Image render took {:?}", render_start.elapsed());
         } else {
-            let msg = Paragraph::new("No preview available\nSelect a file to preview")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray));
-            msg.render(inner, buf);
+            // Render using ThreadProtocol
+            let render_start = Instant::now();
+            let image = StatefulImage::new().resize(Resize::Scale(None));
+            tracing::info!("Rendering image in area: {:?}", inner);
+            StatefulWidget::render(
+                image,
+                inner,
+                buf,
+                &mut self.state.preview_state.thread_protocol,
+            );
+            tracing::info!("Image render took {:?}", render_start.elapsed());
         }
         log::info!("PreviewWidget render took {:?}", start.elapsed());
     }
 }
-fn preview_worker(rx: mpsc::Receiver<PreviewRequest>, tx: mpsc::Sender<PreviewResult>) {
-    let mut picker = Picker::from_query_stdio()
-        .inspect(|p| log::info!("Auto Picker: {:?}", p))
-        .unwrap_or_else(|_| Picker::from_fontsize((8, 16)));
 
-    log::info!("Picker: {:?}", picker);
+fn preview_worker(
+    rx: mpsc::Receiver<PreviewRequest>,
+    tx: mpsc::Sender<PreviewEvent>,
+    resize_rx: mpsc::Receiver<ResizeRequest>,
+) {
+    // Handle both preview requests and resize requests
+    loop {
+        // Check for preview requests
+        if let Some(request) = get_latest(&rx) {
+            match request {
+                PreviewRequest::LoadFile { path, config } => {
+                    let result = load_and_process_preview(&path, &config);
 
-    while let Ok(request) = rx.recv() {
-        // Clear any pending requests in the queue - we only care about the latest
-        let mut latest_request = request;
-        while let Ok(newer_request) = rx.try_recv() {
-            log::info!("Dropping stale preview request");
-            latest_request = newer_request;
-        }
-
-        match latest_request {
-            PreviewRequest::LoadFile(path, config, file_idx) => {
-                log::info!("Processing preview for file {}", file_idx);
-                let load_start = Instant::now();
-                let result = load_and_process_preview(&path, &config);
-                log::info!("Load and process took {:?}", load_start.elapsed());
-
-                match result {
-                    Ok(img) => {
-                        // Do the protocol encoding in the background thread
-                        let encode_start = Instant::now();
-                        log::info!("Image dimensions before protocol: {:?}", img.dimensions());
-                        let protocol = picker.new_resize_protocol(img);
-                        log::info!("Protocol encoding took {:?}", encode_start.elapsed());
-                        let _ = tx.send(PreviewResult::Loaded(protocol));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(PreviewResult::Error(e.to_string()));
+                    match result {
+                        Ok(img) => {
+                            let _ = tx.send(PreviewEvent::ImageLoaded(img));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(PreviewEvent::Error(e.to_string()));
+                        }
                     }
                 }
             }
         }
+
+        // Check for resize requests
+        if let Some(resize_request) = get_latest(&resize_rx) {
+            log::info!("Processing resize request");
+            let result = resize_request.resize_encode();
+            let _ = tx.send(PreviewEvent::ResizeComplete(result));
+        }
+
+        // Small sleep to prevent busy waiting
+        thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -769,4 +795,12 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
+    let mut latest = None;
+    while let Ok(event) = rx.try_recv() {
+        latest = Some(event);
+    }
+    latest
 }

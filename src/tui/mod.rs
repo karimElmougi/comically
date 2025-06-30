@@ -13,7 +13,7 @@ use ratatui::{
 };
 use std::{sync::mpsc, time::Duration};
 
-use crate::{Event, process_files, poll_kindlegen, Comic};
+use crate::{poll_kindlegen, process_files, Comic, Event};
 use std::thread;
 
 pub enum AppState {
@@ -34,7 +34,12 @@ pub fn run(
         if let AppState::Config(config_state) = &mut state {
             config_state.update_preview();
         }
-        
+
+        // Check preview debounce before rendering
+        if let AppState::Config(config_state) = &mut state {
+            config_state.check_preview_debounce();
+        }
+
         let draw_start = std::time::Instant::now();
         terminal.draw(|frame| match &mut state {
             AppState::Config(config_state) => {
@@ -53,7 +58,8 @@ pub fn run(
         log::info!("Terminal draw took {:?}", draw_start.elapsed());
 
         // Handle events
-        if event::poll(Duration::from_millis(16))? { // ~60fps
+        if event::poll(Duration::from_millis(16))? {
+            // ~60fps
             match event::read()? {
                 event::Event::Key(key) => match &mut state {
                     AppState::Config(config_state) => {
@@ -61,15 +67,21 @@ pub fn run(
                             config::ConfigAction::StartProcessing(files, config, prefix) => {
                                 // Transition to processing state
                                 state = AppState::Processing(processing::ProcessingState::new());
-                                
+
                                 // Create channels for processing
                                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
-                                
+
                                 // Start processing thread
                                 let event_tx_clone = event_tx.clone();
                                 let kindlegen_tx_clone = kindlegen_tx.clone();
                                 thread::spawn(move || {
-                                    process_files(files, config, prefix, event_tx_clone, kindlegen_tx_clone);
+                                    process_files(
+                                        files,
+                                        config,
+                                        prefix,
+                                        event_tx_clone,
+                                        kindlegen_tx_clone,
+                                    );
                                 });
 
                                 // Start kindlegen polling thread
@@ -86,9 +98,13 @@ pub fn run(
                     AppState::Processing(processing_state) => {
                         if key.code == event::KeyCode::Char('q') {
                             return Ok(());
-                        } else if key.code == event::KeyCode::Up || key.code == event::KeyCode::Char('k') {
+                        } else if key.code == event::KeyCode::Up
+                            || key.code == event::KeyCode::Char('k')
+                        {
                             processing_state.handle_scroll(processing::ScrollDirection::Up);
-                        } else if key.code == event::KeyCode::Down || key.code == event::KeyCode::Char('j') {
+                        } else if key.code == event::KeyCode::Down
+                            || key.code == event::KeyCode::Char('j')
+                        {
                             processing_state.handle_scroll(processing::ScrollDirection::Down);
                         }
                     }
@@ -117,7 +133,7 @@ pub fn run(
             }
             _ => {}
         }
-        
+
         if should_complete {
             state = AppState::Complete;
         }
@@ -136,7 +152,11 @@ fn render_completion_screen(area: Rect, buf: &mut Buffer) {
 
     // Title
     let title = Paragraph::new("Processing Complete!")
-        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::NONE));
     title.render(chunks[0], buf);
@@ -149,20 +169,20 @@ fn render_completion_screen(area: Rect, buf: &mut Buffer) {
             Span::raw("All manga files have been processed successfully!"),
         ]),
         Line::from(""),
-        Line::from("The converted .mobi files are saved in the same directory as the source files."),
+        Line::from(
+            "The converted .mobi files are saved in the same directory as the source files.",
+        ),
         Line::from(""),
         Line::from("You can now transfer them to your Kindle device."),
     ];
-    
-    let content = Paragraph::new(message)
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green))
-                .title("Summary")
-                .title_alignment(Alignment::Center),
-        );
+
+    let content = Paragraph::new(message).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green))
+            .title("Summary")
+            .title_alignment(Alignment::Center),
+    );
     content.render(chunks[1], buf);
 
     // Footer
