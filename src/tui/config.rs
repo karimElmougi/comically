@@ -538,15 +538,12 @@ impl<'a> SettingsWidget<'a> {
         .spacing(1)
         .areas(header_area);
 
-        // Render label
         Paragraph::new(label).style(style).render(text_area, buf);
 
-        // Render shortcut
         Paragraph::new(format!(" {}", key))
             .style(Style::default().fg(KEY_HINT))
             .render(shortcut_area, buf);
 
-        // Buttons: horizontal layout for [-] value [+]
         let [minus_area, value_area, plus_area] = Layout::horizontal([
             Constraint::Length(5), // [-] button
             Constraint::Length(5), // value
@@ -572,7 +569,6 @@ impl<'a> SettingsWidget<'a> {
             .alignment(Alignment::Center)
             .render(minus_inner, buf);
 
-        // Render value with vertical alignment using flex
         let [value_layout] = Layout::vertical([Constraint::Length(1)])
             .flex(Flex::Center)
             .areas(value_area);
@@ -633,11 +629,7 @@ impl<'a> SettingsWidget<'a> {
 
         let cells = make_grid_layout::<LEN>(values_area, 2, Constraint::Length(3));
 
-        for (i, (name, dims)) in presets.iter().enumerate() {
-            if i >= cells.len() {
-                break;
-            }
-            let cell = cells[i];
+        for (cell, (name, dims)) in cells.into_iter().zip(presets.iter()) {
             let is_current = *dims == current_dims;
 
             // Handle mouse clicks
@@ -661,7 +653,6 @@ impl<'a> SettingsWidget<'a> {
             let button_inner = button_block.inner(cell);
             button_block.render(cell, buf);
 
-            // Split the inner area into two lines: name and dimensions
             let [name_area, dims_area] =
                 Layout::vertical([Constraint::Length(1), Constraint::Length(1)])
                     .areas(button_inner);

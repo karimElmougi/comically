@@ -1,6 +1,6 @@
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{self, KeyEvent},
+    crossterm::event::{self, KeyEvent, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{palette, Color, Style},
     text::Line,
@@ -113,13 +113,33 @@ impl ProcessingState {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.code == event::KeyCode::Up || key.code == event::KeyCode::Char('k') {
-            if self.scroll_offset > 0 {
-                self.scroll_offset = self.scroll_offset.saturating_sub(1);
-            }
+            self.scroll_up();
         } else if key.code == event::KeyCode::Down || key.code == event::KeyCode::Char('j') {
-            if !self.comics.is_empty() {
-                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            self.scroll_down();
+        }
+    }
+
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_up();
             }
+            MouseEventKind::ScrollDown => {
+                self.scroll_down();
+            }
+            _ => {}
+        }
+    }
+
+    fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        }
+    }
+
+    fn scroll_down(&mut self) {
+        if !self.comics.is_empty() {
+            self.scroll_offset = self.scroll_offset.saturating_add(1);
         }
     }
 }

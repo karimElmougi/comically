@@ -92,10 +92,12 @@ fn process_events(
     for event in pending_events.drain(..) {
         match event {
             Event::Mouse(mouse) => match state {
-                AppState::Config(config_state) => {
-                    config_state.handle_mouse(mouse);
+                AppState::Config(c) => {
+                    c.handle_mouse(mouse);
                 }
-                AppState::Processing(_) => {}
+                AppState::Processing(p) => {
+                    p.handle_mouse(mouse);
+                }
             },
             Event::Key(key) => {
                 if key.code == event::KeyCode::Char('q') {
@@ -103,8 +105,8 @@ fn process_events(
                 }
 
                 match state {
-                    AppState::Config(config_state) => config_state.handle_key(key),
-                    AppState::Processing(processing_state) => processing_state.handle_key(key),
+                    AppState::Config(c) => c.handle_key(key),
+                    AppState::Processing(p) => p.handle_key(key),
                 }
             }
             Event::Resize => {
