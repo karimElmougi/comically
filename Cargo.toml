@@ -25,3 +25,4 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 unrar = "0.5.8"
 itertools = "0.14.0"
+ratatui-image = { version = "8.0.1", features = ["crossterm"] }

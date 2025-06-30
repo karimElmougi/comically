@@ -98,7 +98,7 @@ fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Path
   <title>Cover</title>
   <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 </head>
-<body>
+<body style="background-color:#000000;">
   <div class="cover">
     <img src="{}" alt="Cover"/>
   </div>
@@ -329,7 +329,7 @@ fn create_content_opf(
             <meta name="primary-writing-mode" content="{writing_mode}"/>
             <meta name="zero-gutter" content="true"/>
             <meta name="zero-margin" content="true"/>
-            <meta name="ke-border-color" content="#FFFFFF"/>
+            <meta name="ke-border-color" content="#000000"/>
             <meta name="ke-border-width" content="0"/>
             <meta name="orientation-lock" content="none"/>
             <meta name="region-mag" content="true"/>

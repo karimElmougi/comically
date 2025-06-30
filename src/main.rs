@@ -68,56 +68,33 @@ impl From<Size> for (u32, u32) {
 #[derive(Parser, Debug)]
 #[command(
     name = "comically",
-    about = "A simple converter for comic book files to Kindle MOBI format",
+    about = "A visual manga converter for Kindle MOBI format",
     version
 )]
-struct Cli {
-    /// the input files to process. can be a directory or a file.
-    /// supports .cbz, .zip, .cbr, .rar files
-    #[arg(required = true)]
-    input: Vec<PathBuf>,
+struct Args {
+    /// Optional directory to scan for manga files (defaults to current directory)
+    directory: Option<PathBuf>,
+}
 
-    /// the prefix to add to the title of the comics + the output file
-    #[arg(long, short)]
-    prefix: Option<String>,
-
-    /// whether to read the comic from right to left
-    #[arg(long, short, default_value = "true", default_missing_value="true", num_args=0..=1)]
-    manga: Option<bool>,
-
-    /// the jpg compression quality of the images, between 0 and 100
-    #[arg(long, short, default_value_t = 75)]
-    quality: u8,
-
-    /// brighten the images
-    /// positive values will brighten the images, negative values will darken them
-    #[arg(long, short, allow_hyphen_values = true, default_missing_value = "-10")]
-    brightness: Option<i32>,
-
-    /// the contrast of the images
-    /// positive values will increase the contrast, negative values will decrease it
-    #[arg(long, short, allow_hyphen_values = true, default_missing_value = "1.0")]
-    contrast: Option<f32>,
-
-    /// the number of threads to use for processing.
-    /// defaults to the number of logical CPUs
-    #[arg(short)]
-    threads: Option<usize>,
-
-    /// crop the dead space on each page
-    #[arg(long, default_value = "true", default_missing_value = "true")]
-    crop: Option<bool>,
-
-    /// split double pages into two separate pages
-    #[arg(long, default_value = "true", default_missing_value = "true")]
-    split: Option<bool>,
-
-    /// target device dimensions in pixels (format: WIDTHxHEIGHT, e.g., 1236x1648)
-    #[arg(long, short, default_value = "1236x1648")]
-    size: Size,
+#[derive(Debug, Clone, Copy)]
+pub struct ComicConfig {
+    pub device_dimensions: (u32, u32),
+    pub right_to_left: bool,
+    pub split_double_page: bool,
+    pub auto_crop: bool,
+    pub compression_quality: u8,
+    pub brightness: Option<i32>,
+    pub contrast: Option<f32>,
 }
 
 fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    
+    // Change to the specified directory if provided
+    if let Some(dir) = &args.directory {
+        std::env::set_current_dir(dir)?;
+    }
+    
     let log_path = "comically.log";
     let log_file = std::fs::File::create(log_path)?;
     std::env::set_var(
@@ -154,42 +131,7 @@ fn main() -> anyhow::Result<()> {
         env::set_var("PATH", new_path);
     }
 
-    let cli = Cli::parse();
-
-    if let Some(threads) = cli.threads {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .unwrap();
-    }
-
-    let files: Vec<PathBuf> = find_files(&cli)?;
-
-    let (event_tx, event_rx) = mpsc::channel();
-    let (kindlegen_tx, kindlegen_rx) = mpsc::channel();
-
-    thread::spawn({
-        let event_tx = event_tx.clone();
-        move || input_handling(event_tx)
-    });
-
-    thread::spawn({
-        let event_tx = event_tx.clone();
-        move || {
-            process_files(files, &cli, event_tx, kindlegen_tx);
-        }
-    });
-
-    // polling thread
-    thread::spawn({
-        let event_tx = event_tx.clone();
-        move || {
-            poll_kindlegen(kindlegen_rx);
-            // once the worker thread has completed, poll kindlegen will stop looping
-            // then send the ProcessingComplete event
-            event_tx.send(Event::ProcessingComplete).unwrap();
-        }
-    });
+    let (_event_tx, event_rx) = mpsc::channel();
 
     let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: Viewport::Fullscreen,
@@ -203,57 +145,15 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn find_files(cli: &Cli) -> anyhow::Result<Vec<PathBuf>> {
-    fn valid_file(path: &std::path::Path) -> bool {
-        path.extension().map_or(false, |ext| {
-            ext == "cbz" || ext == "zip" || ext == "cbr" || ext == "rar"
-        })
-    }
 
-    let mut files = Vec::new();
-    for path in &cli.input {
-        if path.is_dir() {
-            for entry in std::fs::read_dir(path).into_iter().flatten() {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if valid_file(&path) {
-                        files.push(path);
-                    }
-                }
-            }
-        } else {
-            if valid_file(&path) {
-                files.push(path.clone());
-            }
-        }
-    }
 
-    files.sort_by_key(|path| {
-        path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase()
-    });
-
-    Ok(files)
-}
-
-fn process_files(
+pub fn process_files(
     files: Vec<PathBuf>,
-    cli: &Cli,
+    config: ComicConfig,
+    prefix: Option<String>,
     event_tx: mpsc::Sender<Event>,
     kindlegen_tx: mpsc::Sender<Comic>,
 ) {
-    let config = ComicConfig {
-        device_dimensions: cli.size.into(),
-        right_to_left: cli.manga.unwrap_or(true),
-        split_double_page: cli.split.unwrap_or(true),
-        compression_quality: cli.quality,
-        auto_crop: cli.crop.unwrap_or(true),
-        brightness: cli.brightness,
-        contrast: cli.contrast,
-    };
-
     log::info!("processing with config: {:?}", config);
     log::info!("processing {} files", files.len());
 
@@ -278,7 +178,7 @@ fn process_files(
             match create_comic(
                 id,
                 file.clone(),
-                cli.prefix.as_deref(),
+                prefix.as_deref(),
                 title,
                 config,
                 event_tx.clone(),
@@ -383,16 +283,7 @@ pub struct Comic {
     config: ComicConfig,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ComicConfig {
-    device_dimensions: (u32, u32),
-    right_to_left: bool,
-    split_double_page: bool,
-    auto_crop: bool,
-    compression_quality: u8,
-    brightness: Option<i32>,
-    contrast: Option<f32>,
-}
+
 
 impl Drop for Comic {
     fn drop(&mut self) {
@@ -483,38 +374,9 @@ impl Comic {
     }
 }
 
-fn input_handling(tx: mpsc::Sender<Event>) {
-    let tick_rate = Duration::from_millis(200);
-    let mut last_tick = Instant::now();
 
-    loop {
-        // poll for tick rate duration, if no events, send tick event.
-        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).unwrap() {
-            match event::read().unwrap() {
-                event::Event::Key(key) => {
-                    if tx.send(Event::Input(key)).is_err() {
-                        break;
-                    }
-                }
-                event::Event::Resize(_, _) => {
-                    if tx.send(Event::Resize).is_err() {
-                        break;
-                    }
-                }
-                _ => {}
-            };
-        }
-        if last_tick.elapsed() >= tick_rate {
-            if tx.send(Event::Tick).is_err() {
-                break;
-            }
-            last_tick = Instant::now();
-        }
-    }
-}
 
-fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
+pub fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
     struct KindleGenStatus {
         comic: Comic,
         spawned: mobi_converter::SpawnedKindleGen,
@@ -588,7 +450,7 @@ fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
     }
 }
 
-enum Event {
+pub enum Event {
     Input(event::KeyEvent),
     Tick,
     Resize,
@@ -598,7 +460,7 @@ enum Event {
 }
 
 #[derive(Debug)]
-enum ComicStatus {
+pub enum ComicStatus {
     // initial state
     Waiting,
 
