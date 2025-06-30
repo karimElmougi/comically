@@ -59,7 +59,6 @@ pub enum EditingField {
 pub struct PreviewState {
     current_file: Option<usize>,
     thread_protocol: ThreadProtocol,
-    preview_rx: mpsc::Receiver<PreviewEvent>,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
     loading: bool,
@@ -70,7 +69,7 @@ enum PreviewRequest {
     LoadFile { path: PathBuf, config: ComicConfig },
 }
 
-enum PreviewEvent {
+pub enum ConfigEvent {
     ImageLoaded(image::DynamicImage),
     ResizeComplete(Result<ResizeResponse, Errors>),
     Error(String),
@@ -99,8 +98,6 @@ impl ConfigState {
 
         // Create channels for preview processing
         let (preview_tx, worker_rx) = mpsc::channel::<PreviewRequest>();
-        let (worker_tx, preview_rx) = mpsc::channel::<PreviewEvent>();
-
         // Create channel for resize requests
         let (resize_tx, resize_rx) = mpsc::channel::<ResizeRequest>();
 
@@ -108,7 +105,7 @@ impl ConfigState {
         let thread_protocol = ThreadProtocol::new(resize_tx.clone(), None);
 
         thread::spawn(move || {
-            preview_worker(worker_rx, worker_tx, resize_rx, event_tx);
+            preview_worker(worker_rx, resize_rx, event_tx);
         });
 
         let mut state = Self {
@@ -131,7 +128,6 @@ impl ConfigState {
             preview_state: PreviewState {
                 current_file: if has_files { Some(0) } else { None },
                 thread_protocol,
-                preview_rx,
                 preview_tx,
                 resize_tx,
                 loading: false,
@@ -250,32 +246,30 @@ impl ConfigState {
         }
     }
 
-    pub fn update_preview(&mut self) {
-        if let Some(event) = get_latest(&self.preview_state.preview_rx) {
-            match event {
-                PreviewEvent::ImageLoaded(img) => {
-                    tracing::info!("Received new image for preview");
-                    self.preview_state.loading = false;
-                    // Create a new resize protocol for the image
-                    let protocol = self.picker.new_resize_protocol(img);
-                    self.preview_state.thread_protocol =
-                        ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
+    pub fn handle_event(&mut self, event: ConfigEvent) {
+        match event {
+            ConfigEvent::ImageLoaded(img) => {
+                tracing::info!("Received new image for preview");
+                self.preview_state.loading = false;
+                // Create a new resize protocol for the image
+                let protocol = self.picker.new_resize_protocol(img);
+                self.preview_state.thread_protocol =
+                    ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
+            }
+            ConfigEvent::ResizeComplete(result) => match result {
+                Ok(response) => {
+                    let _ = self
+                        .preview_state
+                        .thread_protocol
+                        .update_resized_protocol(response);
                 }
-                PreviewEvent::ResizeComplete(result) => match result {
-                    Ok(response) => {
-                        let _ = self
-                            .preview_state
-                            .thread_protocol
-                            .update_resized_protocol(response);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Resize error: {:?}", e);
-                    }
-                },
-                PreviewEvent::Error(err) => {
-                    tracing::warn!("Preview error: {}", err);
-                    self.preview_state.loading = false;
+                Err(e) => {
+                    tracing::warn!("Resize error: {:?}", e);
                 }
+            },
+            ConfigEvent::Error(err) => {
+                tracing::warn!("Preview error: {}", err);
+                self.preview_state.loading = false;
             }
         }
     }
@@ -669,8 +663,6 @@ struct PreviewWidget<'a> {
 
 impl<'a> PreviewWidget<'a> {
     fn new(state: &'a mut ConfigState) -> Self {
-        // Update preview if needed
-        state.update_preview();
         Self { state }
     }
 }
@@ -708,9 +700,8 @@ impl<'a> Widget for PreviewWidget<'a> {
 
 fn preview_worker(
     rx: mpsc::Receiver<PreviewRequest>,
-    tx: mpsc::Sender<PreviewEvent>,
     resize_rx: mpsc::Receiver<ResizeRequest>,
-    event_tx: mpsc::Sender<crate::Event>,
+    tx: mpsc::Sender<crate::Event>,
 ) {
     // Handle both preview requests and resize requests
     loop {
@@ -722,13 +713,14 @@ fn preview_worker(
 
                     match result {
                         Ok(img) => {
-                            let _ = tx.send(PreviewEvent::ImageLoaded(img));
+                            let _ =
+                                tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded(img)));
                         }
                         Err(e) => {
-                            let _ = tx.send(PreviewEvent::Error(e.to_string()));
+                            let _ = tx
+                                .send(crate::Event::ConfigEvent(ConfigEvent::Error(e.to_string())));
                         }
                     }
-                    let _ = event_tx.send(crate::Event::Tick);
                 }
             }
         }
@@ -737,8 +729,9 @@ fn preview_worker(
         if let Some(resize_request) = get_latest(&resize_rx) {
             log::info!("Processing resize request");
             let result = resize_request.resize_encode();
-            let _ = tx.send(PreviewEvent::ResizeComplete(result));
-            let _ = event_tx.send(crate::Event::Tick);
+            let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
+                result,
+            )));
         }
 
         // Small sleep to prevent busy waiting

@@ -20,6 +20,8 @@ use std::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
+use crate::tui::config::ConfigEvent;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "comically",
@@ -448,6 +450,7 @@ pub enum Event {
     Tick,
     Resize,
     ProcessingEvent(ProcessingEvent),
+    ConfigEvent(ConfigEvent),
 }
 
 pub enum ProcessingEvent {

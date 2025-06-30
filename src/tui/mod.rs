@@ -36,7 +36,6 @@ pub fn run(
 
         // Update preview if in config state
         if let AppState::Config(config_state) = &mut state {
-            config_state.update_preview();
             config_state.check_preview_debounce();
         }
 
@@ -131,6 +130,11 @@ fn process_events(
             Event::ProcessingEvent(event) => {
                 if let AppState::Processing(processing_state) = state {
                     processing_state.handle_event(event);
+                }
+            }
+            Event::ConfigEvent(event) => {
+                if let AppState::Config(config_state) = state {
+                    config_state.handle_event(event);
                 }
             }
         }
