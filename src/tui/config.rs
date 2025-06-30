@@ -2,11 +2,9 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
-    style::{palette::tailwind, Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-    },
+    style::{Modifier, Style, Stylize},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
     errors::Errors,
@@ -20,7 +18,7 @@ use std::thread;
 
 use crate::{
     comic_archive,
-    tui::{ACTION_BUTTON, BACKGROUND, BORDER, CONFIG_BUTTON, CONTENT, FOCUSED},
+    tui::{ACTION_BUTTON, BACKGROUND, BORDER, CONFIG_BUTTON, CONTENT, FOCUSED, KEY_HINT},
     ComicConfig,
 };
 
@@ -32,7 +30,6 @@ pub struct ConfigState {
     pub prefix: Option<String>,
     pub focus: Focus,
     pub selected_field: Option<SelectedField>,
-    pub input_buffer: String,
     pub preview_state: PreviewState,
     picker: Picker,
     event_tx: std::sync::mpsc::Sender<crate::Event>,
@@ -53,7 +50,6 @@ pub enum Focus {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SelectedField {
-    Prefix,
     Quality,
     Brightness,
     Contrast,
@@ -121,7 +117,6 @@ impl ConfigState {
             prefix: None,
             focus: Focus::FileList,
             selected_field: None,
-            input_buffer: String::new(),
             preview_state: PreviewState {
                 thread_protocol,
                 preview_tx,
@@ -137,26 +132,16 @@ impl ConfigState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Check if we're editing the prefix field
-        if let Some(SelectedField::Prefix) = self.selected_field {
-            if !self.input_buffer.is_empty() || key.code != KeyCode::Esc {
-                self.handle_prefix_editing(key);
-                return;
-            }
-        }
-
         match key.code {
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::FileList => Focus::Settings,
                     Focus::Settings => Focus::FileList,
                 };
-                self.selected_field = None; // Clear selection when switching focus
+                self.selected_field = None;
             }
             KeyCode::Enter => {
-                if self.focus == Focus::Settings {
-                    self.send_start_processing();
-                }
+                self.send_start_processing();
             }
 
             _ => match self.focus {
@@ -292,7 +277,6 @@ impl ConfigState {
                     (current - step).max(0.5)
                 });
             }
-            SelectedField::Prefix => {}
         };
     }
 
@@ -346,10 +330,6 @@ impl ConfigState {
             KeyCode::Char('t') => {
                 self.selected_field = Some(SelectedField::Contrast);
             }
-            KeyCode::Char('p') => {
-                self.selected_field = Some(SelectedField::Prefix);
-                self.input_buffer = self.prefix.clone().unwrap_or_default();
-            }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
                     let is_fine = key
@@ -368,32 +348,6 @@ impl ConfigState {
             }
             KeyCode::Esc => {
                 self.selected_field = None;
-                self.input_buffer.clear();
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_prefix_editing(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.selected_field = None;
-                self.input_buffer.clear();
-            }
-            KeyCode::Enter => {
-                self.prefix = if self.input_buffer.is_empty() {
-                    None
-                } else {
-                    Some(self.input_buffer.clone())
-                };
-                self.selected_field = None;
-                self.input_buffer.clear();
-            }
-            KeyCode::Char(c) => {
-                self.input_buffer.push(c);
-            }
-            KeyCode::Backspace => {
-                self.input_buffer.pop();
             }
             _ => {}
         }
@@ -421,41 +375,29 @@ impl<'a> Widget for ConfigScreen<'a> {
         ])
         .areas(area);
 
-        // Header with current directory
-
         super::render_title().render(header_area, buf);
 
-        // Main content area
         let [file_list_area, settings_area, preview_area] = Layout::horizontal([
-            Constraint::Percentage(25), // File list
-            Constraint::Percentage(35), // Settings
-            Constraint::Percentage(40), // Preview - now the largest!
+            Constraint::Percentage(25),
+            Constraint::Percentage(35),
+            Constraint::Percentage(40),
         ])
         .areas(main_area);
 
-        // File list
-        FileListWidget::new(&self.state).render(file_list_area, buf);
+        FileListWidget::new(self.state).render(file_list_area, buf);
 
-        // Settings panel
         SettingsWidget::new(self.state).render(settings_area, buf);
 
-        // Preview panel
         PreviewWidget::new(self.state).render(preview_area, buf);
 
-        // Footer
         let footer_text = match (self.state.focus, self.state.selected_field) {
             (Focus::FileList, _) => {
                 "↑/↓: Navigate | Space: Toggle | a: Toggle All | Tab: Switch Panel | q: Quit"
             }
-            (Focus::Settings, Some(SelectedField::Prefix)) => {
-                "Type to edit | Enter: Save | Esc: Cancel"
-            }
             (Focus::Settings, Some(_)) => {
-                "←/→: Adjust | Shift+←/→: Fine adjust | Esc: Cancel | Enter: Process"
+                "←/→: Adjust | Shift+←/→: Fine adjust | Esc: Cancel | Enter: Process | q: Quit"
             }
-            (Focus::Settings, None) => {
-                "u/b/t: Select setting | m/s/c: Toggle | p: Prefix | Enter: Process | Tab: Switch"
-            }
+            (Focus::Settings, None) => "Enter: Start | Tab: Switch | q: Quit",
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(CONTENT))
@@ -469,11 +411,11 @@ impl<'a> Widget for ConfigScreen<'a> {
 }
 
 struct FileListWidget<'a> {
-    state: &'a ConfigState,
+    state: &'a mut ConfigState,
 }
 
 impl<'a> FileListWidget<'a> {
-    fn new(state: &'a ConfigState) -> Self {
+    fn new(state: &'a mut ConfigState) -> Self {
         Self { state }
     }
 }
@@ -488,7 +430,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .map(|(file, selected)| {
                 let checkbox = if *selected { "[✓]" } else { "[ ]" };
                 let content = format!("{} {}", checkbox, file.name);
-                ListItem::new(content)
+                ListItem::new(content).style(CONTENT)
             })
             .collect();
 
@@ -500,17 +442,16 @@ impl<'a> Widget for FileListWidget<'a> {
                         self.state.selected_files.iter().filter(|&&s| s).count()
                     ))
                     .borders(Borders::ALL)
-                    .style(Style::default().fg(if self.state.focus == Focus::FileList {
+                    .border_style(if self.state.focus == Focus::FileList {
                         FOCUSED
                     } else {
                         BORDER
-                    })),
+                    }),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
 
-        let mut list_state = self.state.list_state.clone();
-        ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
+        StatefulWidget::render(list, area, buf, &mut self.state.list_state);
     }
 }
 
@@ -539,21 +480,20 @@ impl<'a> SettingsWidget<'a> {
             Layout::horizontal([Constraint::Min(0), Constraint::Length(key.len() as u16 + 1)])
                 .areas(label_area);
 
-        // Render the label
-        Paragraph::new(format!("{}: ", label)).render(text_area, buf);
+        Paragraph::new(label)
+            .style(Style::default().fg(CONTENT))
+            .render(text_area, buf);
 
-        // Check if clicked on value area
         if let Some(mouse) = self.state.last_mouse_click {
             if value_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_click(self.state);
-                self.state.last_mouse_click = None;
             }
         }
 
-        // Render the value as a clickable button with borders
         let value_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(CONFIG_BUTTON));
+
         let value_inner = value_block.inner(value_area);
         value_block.render(value_area, buf);
 
@@ -564,7 +504,7 @@ impl<'a> SettingsWidget<'a> {
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(Color::Green))
+            .style(Style::default().fg(KEY_HINT))
             .render(key_area, buf);
     }
 
@@ -580,37 +520,30 @@ impl<'a> SettingsWidget<'a> {
         mut on_adjust: impl FnMut(&mut ConfigState, bool),
     ) {
         let style = if selected {
-            Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD)
+            Style::default().fg(CONTENT).underlined()
         } else {
-            Style::default()
+            Style::default().fg(CONTENT)
         };
 
         let button_style = Style::default().fg(CONFIG_BUTTON);
 
-        // Vertical layout: header and buttons
-        let [header_area, buttons_area] = Layout::vertical([
-            Constraint::Length(1), // Header with label and shortcut
-            Constraint::Length(3), // Buttons row - needs 3 for bordered buttons
-        ])
-        .areas(area);
+        let [header_area, buttons_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
 
-        // Header: horizontal layout for text and shortcut
         let [text_area, shortcut_area] = Layout::horizontal([
-            Constraint::Length(label.len() as u16 + 2), // Label
-            Constraint::Length(key.len() as u16 + 1),   // Shortcut
+            Constraint::Length(label.len() as u16 + 1),
+            Constraint::Length(key.len() as u16 + 1),
         ])
-        .flex(Flex::Start)
+        .flex(Flex::SpaceBetween)
         .spacing(1)
         .areas(header_area);
 
         // Render label
-        Paragraph::new(format!("{}: ", label))
-            .style(style)
-            .render(text_area, buf);
+        Paragraph::new(label).style(style).render(text_area, buf);
 
         // Render shortcut
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(Color::Green))
+            .style(Style::default().fg(KEY_HINT))
             .render(shortcut_area, buf);
 
         // Buttons: horizontal layout for [-] value [+]
@@ -627,7 +560,6 @@ impl<'a> SettingsWidget<'a> {
             if minus_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_select(self.state);
                 on_adjust(self.state, false);
-                self.state.last_mouse_click = None;
             }
         }
         let minus_block = Block::default()
@@ -645,7 +577,7 @@ impl<'a> SettingsWidget<'a> {
             .flex(Flex::Center)
             .areas(value_area);
 
-        Paragraph::new(format!(" {} ", value))
+        Paragraph::new(value)
             .style(
                 Style::default()
                     .fg(CONFIG_BUTTON)
@@ -659,7 +591,6 @@ impl<'a> SettingsWidget<'a> {
             if plus_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_select(self.state);
                 on_adjust(self.state, true);
-                self.state.last_mouse_click = None;
             }
         }
         let plus_block = Block::default()
@@ -674,6 +605,21 @@ impl<'a> SettingsWidget<'a> {
     }
 
     fn render_dimension_presets(&mut self, area: Rect, buf: &mut Buffer) {
+        let [title_area, values_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+
+        let [label_area, current_dims_area] =
+            Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(title_area);
+
+        Paragraph::new("Dimensions:")
+            .style(Style::default().fg(CONTENT))
+            .render(label_area, buf);
+
+        let current_dims = self.state.config.device_dimensions;
+        Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
+            .style(Style::default().fg(CONFIG_BUTTON))
+            .render(current_dims_area, buf);
+
         const LEN: usize = 4;
 
         let presets: [_; LEN] = [
@@ -685,7 +631,7 @@ impl<'a> SettingsWidget<'a> {
 
         let current_dims = self.state.config.device_dimensions;
 
-        let cells = make_grid_layout::<LEN>(area, 2, Constraint::Length(3));
+        let cells = make_grid_layout::<LEN>(values_area, 2, Constraint::Length(3));
 
         for (i, (name, dims)) in presets.iter().enumerate() {
             if i >= cells.len() {
@@ -698,7 +644,6 @@ impl<'a> SettingsWidget<'a> {
             if let Some(mouse) = self.state.last_mouse_click {
                 if cell.contains(Position::new(mouse.column, mouse.row)) {
                     self.state.config.device_dimensions = *dims;
-                    self.state.last_mouse_click = None;
                 }
             }
 
@@ -749,60 +694,18 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         // Create layout for all settings sections
         let constraints = [
-            Constraint::Length(3),  // Title Prefix
-            Constraint::Length(9),  // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Length(4),  // Quality (1 header + 3 buttons)
-            Constraint::Length(4),  // Brightness (1 header + 3 buttons)
-            Constraint::Length(4),  // Contrast (1 header + 3 buttons)
-            Constraint::Length(1),  // Dimensions Title
+            Constraint::Length(8), // Toggles ( reading direction, split double pages, auto crop)
+            Constraint::Length(8), // Buttons (quality, brightness, contrast)
             Constraint::Length(12), // Dimensions (dynamic grid)
-            Constraint::Length(3),  // Process button
+            Constraint::Min(0),    // spacer
+            Constraint::Length(3), // Process button
         ];
 
-        let [prefix_area, toggles_area, quality_area, brightness_area, contrast_area, device_presets_area, _device_presets_area, process_button_area] =
-            Layout::vertical(constraints).areas(inner);
-
-        let prefix_display = self
-            .state
-            .prefix
-            .clone()
-            .unwrap_or_else(|| "(none)".to_string());
-        let [prefix_label_area, prefix_value_area, prefix_key_area] = Layout::horizontal([
-            Constraint::Length(15),
-            Constraint::Length(prefix_display.len() as u16 + 4),
-            Constraint::Min(0),
-        ])
-        .areas(prefix_area);
-
-        Paragraph::new("Title Prefix: ").render(prefix_label_area, buf);
-
-        // Clickable prefix value
-        if let Some(mouse) = self.state.last_mouse_click {
-            if prefix_value_area.contains(Position::new(mouse.column, mouse.row)) {
-                self.state.selected_field = Some(SelectedField::Prefix);
-                self.state.input_buffer = self.state.prefix.clone().unwrap_or_default();
-                self.state.last_mouse_click = None;
-            }
-        }
-
-        let prefix_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-        let prefix_inner = prefix_block.inner(prefix_value_area);
-        prefix_block.render(prefix_value_area, buf);
-
-        Paragraph::new(prefix_display)
-            .style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center)
-            .render(prefix_inner, buf);
-
-        Paragraph::new(" [p]")
-            .style(Style::default().fg(Color::Green))
-            .render(prefix_key_area, buf);
+        let [toggles_area, buttons_area, device_presets_area, _, process_button_area] =
+            Layout::vertical(constraints)
+                .spacing(1)
+                .vertical_margin(1)
+                .areas(inner);
 
         let [reading_direction_area, split_double_pages_area, auto_crop_area] =
             make_grid_layout::<3>(toggles_area, 2, Constraint::Length(4));
@@ -855,7 +758,9 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        // Quality adjustable setting
+        let [quality_area, brightness_area, contrast_area] =
+            make_grid_layout::<3>(buttons_area, 2, Constraint::Length(4));
+
         self.render_adjustable_setting(
             "Quality",
             &format!("{:3}", self.state.config.compression_quality),
@@ -873,7 +778,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        // Brightness adjustable setting
         self.render_adjustable_setting(
             "Brightness",
             &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
@@ -909,52 +813,15 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let current_dims = self.state.config.device_dimensions;
-        let [label_area, current_dims_area] =
-            Layout::horizontal([Constraint::Length(12), Constraint::Min(0)])
-                .areas(device_presets_area);
+        self.render_dimension_presets(device_presets_area, buf);
 
-        Paragraph::new("Dimensions:")
-            .style(Style::default().fg(CONTENT))
-            .render(label_area, buf);
-
-        Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
-            .style(Style::default().fg(CONFIG_BUTTON))
-            .render(current_dims_area, buf);
-
-        self.render_dimension_presets(_device_presets_area, buf);
-
-        // Process button
         ButtonWidget::new()
             .text("Start ⏵".to_string())
-            .style(
-                Style::default()
-                    .fg(ACTION_BUTTON)
-                    .add_modifier(Modifier::BOLD),
-            )
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
                 self.state.send_start_processing();
             })
             .render(process_button_area, buf);
-
-        // Render editing overlay if editing prefix
-        if let Some(SelectedField::Prefix) = self.state.selected_field {
-            if !self.state.input_buffer.is_empty()
-                || self.state.selected_field == Some(SelectedField::Prefix)
-            {
-                let popup_area = centered_rect(50, 20, area);
-                Clear.render(popup_area, buf);
-
-                let popup = Paragraph::new(self.state.input_buffer.as_str()).block(
-                    Block::default()
-                        .title("Edit Title Prefix")
-                        .borders(Borders::ALL)
-                        .style(Style::default().fg(FOCUSED)),
-                );
-                popup.render(popup_area, buf);
-            }
-        }
     }
 }
 
@@ -1017,14 +884,8 @@ impl<'a> Widget for PreviewWidget<'a> {
         // Render the load preview button
         let button_text = "Load Preview";
 
-        // The ButtonWidget handles click detection internally
         ButtonWidget::new()
             .text(button_text.to_string())
-            .style(
-                Style::default()
-                    .fg(ACTION_BUTTON)
-                    .add_modifier(Modifier::BOLD),
-            )
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
                 self.state.request_preview();
@@ -1142,26 +1003,6 @@ fn load_and_process_preview(
     Ok(image::DynamicImage::ImageLuma8(first_image))
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
-
 fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
     let mut latest = None;
     while let Ok(event) = rx.try_recv() {
@@ -1182,7 +1023,7 @@ impl ButtonWidget<'_> {
         Self {
             text: "".to_string(),
             style: Style::default()
-                .fg(Color::Green)
+                .fg(ACTION_BUTTON)
                 .add_modifier(Modifier::BOLD),
             mouse_event: None,
             on_click: None,
