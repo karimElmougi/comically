@@ -4,6 +4,7 @@ mod image_processor;
 mod mobi_converter;
 mod tui;
 
+use anyhow::Context;
 use clap::Parser;
 use ratatui::{
     crossterm::{event, ExecutableCommand},
@@ -85,6 +86,15 @@ fn main() -> anyhow::Result<()> {
         env::set_var("PATH", new_path);
     }
 
+    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
+        viewport: Viewport::Fullscreen,
+    });
+    std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
+
+    // need to call this after entering alternate screen, but before reading events
+    let picker =
+        ratatui_image::picker::Picker::from_query_stdio().context("failed to create picker")?;
+
     let (event_tx, event_rx) = mpsc::channel();
 
     thread::spawn({
@@ -92,12 +102,7 @@ fn main() -> anyhow::Result<()> {
         move || input_handling(event_tx)
     });
 
-    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
-        viewport: Viewport::Fullscreen,
-    });
-    std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
-
-    let result = tui::run(&mut terminal, event_tx, event_rx);
+    let result = tui::run(&mut terminal, event_tx, event_rx, picker);
 
     ratatui::restore();
 

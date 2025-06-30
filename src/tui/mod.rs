@@ -16,18 +16,15 @@ pub fn run(
     terminal: &mut Terminal<impl Backend>,
     event_tx: mpsc::Sender<Event>,
     event_rx: mpsc::Receiver<Event>,
+    picker: ratatui_image::picker::Picker,
 ) -> anyhow::Result<()> {
-    let mut state = AppState::Config(config::ConfigState::new()?);
-    let mut pending_events = Vec::with_capacity(50);
+    let mut state = AppState::Config(config::ConfigState::new(event_tx.clone(), picker)?);
+    let mut pending_events = Vec::new();
 
     'outer: loop {
         // Collect all pending events
-        loop {
-            match event_rx.try_recv() {
-                Ok(event) => pending_events.push(event),
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => break 'outer,
-            }
+        while let Ok(event) = event_rx.try_recv() {
+            pending_events.push(event);
         }
 
         let pending = !pending_events.is_empty();

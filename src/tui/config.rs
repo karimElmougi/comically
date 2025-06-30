@@ -31,6 +31,7 @@ pub struct ConfigState {
     pub editing_field: Option<EditingField>,
     pub input_buffer: String,
     pub preview_state: PreviewState,
+    picker: Picker,
 }
 
 #[derive(Debug)]
@@ -85,7 +86,7 @@ pub enum ConfigAction {
 }
 
 impl ConfigState {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(event_tx: mpsc::Sender<crate::Event>, picker: Picker) -> anyhow::Result<Self> {
         let files = find_manga_files(".")?;
         let selected_files = vec![true; files.len()]; // Select all by default
 
@@ -107,7 +108,7 @@ impl ConfigState {
         let thread_protocol = ThreadProtocol::new(resize_tx.clone(), None);
 
         thread::spawn(move || {
-            preview_worker(worker_rx, worker_tx, resize_rx);
+            preview_worker(worker_rx, worker_tx, resize_rx, event_tx);
         });
 
         let mut state = Self {
@@ -136,6 +137,7 @@ impl ConfigState {
                 loading: false,
                 selection_changed_at: None,
             },
+            picker,
         };
 
         // Mark selection changed to trigger initial preview after debounce
@@ -190,7 +192,6 @@ impl ConfigState {
     fn handle_file_list_keys(&mut self, key: KeyEvent) -> ConfigAction {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                let start = Instant::now();
                 if let Some(selected) = self.list_state.selected() {
                     if selected > 0 {
                         self.list_state.select(Some(selected - 1));
@@ -198,10 +199,8 @@ impl ConfigState {
                         self.preview_state.selection_changed_at = Some(Instant::now());
                     }
                 }
-                tracing::info!("Up key handler took {:?}", start.elapsed());
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let start = Instant::now();
                 if let Some(selected) = self.list_state.selected() {
                     if selected < self.files.len() - 1 {
                         self.list_state.select(Some(selected + 1));
@@ -209,7 +208,6 @@ impl ConfigState {
                         self.preview_state.selection_changed_at = Some(Instant::now());
                     }
                 }
-                tracing::info!("Down key handler took {:?}", start.elapsed());
             }
             KeyCode::Char(' ') => {
                 if let Some(selected) = self.list_state.selected() {
@@ -259,9 +257,7 @@ impl ConfigState {
                     tracing::info!("Received new image for preview");
                     self.preview_state.loading = false;
                     // Create a new resize protocol for the image
-                    let picker = Picker::from_query_stdio()
-                        .unwrap_or_else(|_| Picker::from_fontsize((8, 16)));
-                    let protocol = picker.new_resize_protocol(img);
+                    let protocol = self.picker.new_resize_protocol(img);
                     self.preview_state.thread_protocol =
                         ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
                 }
@@ -714,6 +710,7 @@ fn preview_worker(
     rx: mpsc::Receiver<PreviewRequest>,
     tx: mpsc::Sender<PreviewEvent>,
     resize_rx: mpsc::Receiver<ResizeRequest>,
+    event_tx: mpsc::Sender<crate::Event>,
 ) {
     // Handle both preview requests and resize requests
     loop {
@@ -731,6 +728,7 @@ fn preview_worker(
                             let _ = tx.send(PreviewEvent::Error(e.to_string()));
                         }
                     }
+                    let _ = event_tx.send(crate::Event::Tick);
                 }
             }
         }
@@ -740,6 +738,7 @@ fn preview_worker(
             log::info!("Processing resize request");
             let result = resize_request.resize_encode();
             let _ = tx.send(PreviewEvent::ResizeComplete(result));
+            let _ = event_tx.send(crate::Event::Tick);
         }
 
         // Small sleep to prevent busy waiting
