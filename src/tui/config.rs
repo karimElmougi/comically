@@ -19,7 +19,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-use crate::{comic_archive, ComicConfig};
+use crate::{
+    comic_archive,
+    tui::{BACKGROUND, CONTENT},
+    ComicConfig,
+};
 
 pub struct ConfigState {
     pub files: Vec<MangaFile>,
@@ -321,7 +325,7 @@ impl ConfigState {
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded(img) => {
-                tracing::info!("Received new image for preview");
+                tracing::debug!("Received new image for preview");
                 self.preview_state.loading = false;
                 // Create a new resize protocol for the image
                 let protocol = self.picker.new_resize_protocol(img);
@@ -433,55 +437,35 @@ impl<'a> ConfigScreen<'a> {
 
 impl<'a> Widget for ConfigScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(0),    // Main content
-                Constraint::Length(3), // Footer
-            ])
-            .split(area);
+        buf.set_style(area, Style::default().bg(BACKGROUND));
+
+        let [header_area, main_area, footer_area] = Layout::vertical([
+            Constraint::Length(3), // Header
+            Constraint::Min(0),    // Main content
+            Constraint::Length(3), // Footer
+        ])
+        .areas(area);
 
         // Header with current directory
-        let current_dir = std::env::current_dir()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let header_text = vec![
-            Line::from(vec![Span::styled(
-                "Comically - Manga Configuration",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![
-                Span::raw("Directory: "),
-                Span::styled(current_dir, Style::default().fg(Color::Yellow)),
-            ]),
-        ];
-        let header = Paragraph::new(header_text)
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL));
-        header.render(chunks[0], buf);
+
+        super::render_title().render(header_area, buf);
 
         // Main content area
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(25), // File list
-                Constraint::Percentage(35), // Settings
-                Constraint::Percentage(40), // Preview - now the largest!
-            ])
-            .split(chunks[1]);
+        let [file_list_area, settings_area, preview_area] = Layout::horizontal([
+            Constraint::Percentage(25), // File list
+            Constraint::Percentage(35), // Settings
+            Constraint::Percentage(40), // Preview - now the largest!
+        ])
+        .areas(main_area);
 
         // File list
-        FileListWidget::new(&self.state).render(main_chunks[0], buf);
+        FileListWidget::new(&self.state).render(file_list_area, buf);
 
         // Settings panel
-        SettingsWidget::new(self.state).render(main_chunks[1], buf);
+        SettingsWidget::new(self.state).render(settings_area, buf);
 
         // Preview panel
-        PreviewWidget::new(self.state).render(main_chunks[2], buf);
+        PreviewWidget::new(self.state).render(preview_area, buf);
 
         // Footer
         let footer_text = match (self.state.focus, self.state.selected_field) {
@@ -499,10 +483,10 @@ impl<'a> Widget for ConfigScreen<'a> {
             }
         };
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(CONTENT))
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
-        footer.render(chunks[2], buf);
+        footer.render(footer_area, buf);
     }
 }
 
@@ -981,7 +965,6 @@ fn preview_worker(
 ) {
     // Handle both preview requests and resize requests
     loop {
-        // Check for preview requests
         if let Some(request) = get_latest(&rx) {
             match request {
                 PreviewRequest::LoadFile { path, config } => rayon::spawn({
@@ -1005,9 +988,8 @@ fn preview_worker(
             }
         }
 
-        // Check for resize requests
         if let Some(resize_request) = get_latest(&resize_rx) {
-            log::info!("Processing resize request");
+            log::debug!("Processing resize request");
             rayon::spawn({
                 let tx = tx.clone();
                 move || {
@@ -1019,7 +1001,6 @@ fn preview_worker(
             });
         }
 
-        // Small sleep to prevent busy waiting
         thread::sleep(std::time::Duration::from_millis(10));
     }
 }

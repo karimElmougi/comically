@@ -1,11 +1,22 @@
 pub mod config;
 pub mod processing;
 
-use ratatui::{backend::Backend, crossterm::event, widgets::Widget, Terminal};
+use ratatui::{
+    backend::Backend,
+    crossterm::event,
+    style::{palette, Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Widget},
+    Terminal,
+};
 use std::sync::mpsc;
 
 use crate::{poll_kindlegen, process_files, Comic, Event, ProcessingEvent};
 use std::thread;
+
+pub const BORDER: Color = palette::tailwind::STONE.c300;
+pub const CONTENT: Color = palette::tailwind::STONE.c100;
+pub const BACKGROUND: Color = palette::tailwind::STONE.c950;
 
 pub enum AppState {
     Config(config::ConfigState),
@@ -41,24 +52,26 @@ pub fn run(
 
         // Draw if there were pending events
         if pending {
-            let draw_start = std::time::Instant::now();
-            terminal.draw(|frame| match &mut state {
-                AppState::Config(config_state) => {
-                    config::ConfigScreen::new(config_state)
-                        .render(frame.area(), frame.buffer_mut());
-                    if draw_start.elapsed() > std::time::Duration::from_millis(100) {
-                        log::error!("ConfigScreen render took {:?}", draw_start.elapsed());
+            terminal.draw(|frame| {
+                let render_start = std::time::Instant::now();
+
+                match &mut state {
+                    AppState::Config(config_state) => {
+                        config::ConfigScreen::new(config_state)
+                            .render(frame.area(), frame.buffer_mut());
+                    }
+                    AppState::Processing(processing_state) => {
+                        processing::ProcessingScreen::new(processing_state)
+                            .render(frame.area(), frame.buffer_mut());
                     }
                 }
-                AppState::Processing(processing_state) => {
-                    processing::ProcessingScreen::new(processing_state)
-                        .render(frame.area(), frame.buffer_mut());
+
+                let render_time = render_start.elapsed();
+
+                if render_time > std::time::Duration::from_millis(50) {
+                    log::warn!("Render closure took {:?}", render_time,);
                 }
             })?;
-            let elapsed = draw_start.elapsed();
-            if elapsed > std::time::Duration::from_millis(100) {
-                log::error!("Terminal draw took {:?}", elapsed);
-            }
         }
 
         // Wait for next event
@@ -139,4 +152,67 @@ fn process_events(
         }
     }
     Ok(true)
+}
+
+pub fn render_title() -> impl Widget {
+    let modifier = Modifier::BOLD | Modifier::ITALIC;
+    let styled_title = Line::from(vec![
+        Span::styled(
+            "c",
+            Style::default()
+                .fg(palette::tailwind::STONE.c100)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "o",
+            Style::default()
+                .fg(palette::tailwind::STONE.c100)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "m",
+            Style::default()
+                .fg(palette::tailwind::STONE.c200)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "i",
+            Style::default()
+                .fg(palette::tailwind::STONE.c200)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "c",
+            Style::default()
+                .fg(palette::tailwind::STONE.c300)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "a",
+            Style::default()
+                .fg(palette::tailwind::STONE.c300)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "l",
+            Style::default()
+                .fg(palette::tailwind::STONE.c400)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "l",
+            Style::default()
+                .fg(palette::tailwind::STONE.c400)
+                .add_modifier(modifier),
+        ),
+        Span::styled(
+            "y",
+            Style::default()
+                .fg(palette::tailwind::STONE.c500)
+                .add_modifier(modifier),
+        ),
+    ]);
+
+    Paragraph::new(styled_title.centered())
+        .block(Block::new().borders(Borders::ALL).border_style(BORDER))
 }

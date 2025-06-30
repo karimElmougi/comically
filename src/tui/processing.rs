@@ -2,13 +2,16 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, KeyEvent},
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{palette, Color, Modifier, Style},
-    text::{Line, Span},
+    style::{palette, Color, Style},
+    text::Line,
     widgets::{Block, Borders, Gauge, Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::time::{Duration, Instant};
 
-use crate::{ComicStage, ComicStatus, ProcessingEvent};
+use crate::{
+    tui::{render_title, BACKGROUND, BORDER, CONTENT},
+    ComicStage, ComicStatus, ProcessingEvent,
+};
 
 pub struct ProcessingState {
     start: Instant,
@@ -131,12 +134,9 @@ impl<'a> ProcessingScreen<'a> {
     }
 }
 
-const BORDER: Color = palette::tailwind::STONE.c300;
-const CONTENT: Color = palette::tailwind::STONE.c100;
-
 impl<'a> Widget for ProcessingScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(palette::tailwind::STONE.c950));
+        buf.set_style(area, Style::default().bg(BACKGROUND));
 
         let vertical = Layout::vertical([
             Constraint::Length(3),
@@ -407,69 +407,6 @@ fn stage_color(stage: ComicStage) -> Color {
         ComicStage::Mobi => palette::tailwind::STONE.c400,
         ComicStage::Epub => palette::tailwind::STONE.c500,
     }
-}
-
-fn render_title() -> impl Widget {
-    let modifier = Modifier::BOLD | Modifier::ITALIC;
-    let styled_title = Line::from(vec![
-        Span::styled(
-            "c",
-            Style::default()
-                .fg(palette::tailwind::STONE.c100)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "o",
-            Style::default()
-                .fg(palette::tailwind::STONE.c100)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "m",
-            Style::default()
-                .fg(palette::tailwind::STONE.c200)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "i",
-            Style::default()
-                .fg(palette::tailwind::STONE.c200)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "c",
-            Style::default()
-                .fg(palette::tailwind::STONE.c300)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "a",
-            Style::default()
-                .fg(palette::tailwind::STONE.c300)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "l",
-            Style::default()
-                .fg(palette::tailwind::STONE.c400)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "l",
-            Style::default()
-                .fg(palette::tailwind::STONE.c400)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "y",
-            Style::default()
-                .fg(palette::tailwind::STONE.c500)
-                .add_modifier(modifier),
-        ),
-    ]);
-
-    Paragraph::new(styled_title.centered())
-        .block(Block::new().borders(Borders::ALL).border_style(BORDER))
 }
 
 struct StageTimingBar<'a> {
