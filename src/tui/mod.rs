@@ -18,6 +18,8 @@ pub const BORDER: Color = palette::tailwind::STONE.c300;
 pub const CONTENT: Color = palette::tailwind::STONE.c100;
 pub const BACKGROUND: Color = palette::tailwind::STONE.c950;
 pub const FOCUSED: Color = palette::tailwind::AMBER.c400;
+pub const CONFIG_BUTTON: Color = palette::tailwind::CYAN.c400;
+pub const ACTION_BUTTON: Color = palette::tailwind::EMERALD.c400;
 
 pub enum AppState {
     Config(config::ConfigState),

@@ -2,7 +2,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{palette::tailwind, Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::{
     comic_archive,
-    tui::{BACKGROUND, BORDER, CONTENT, FOCUSED},
+    tui::{ACTION_BUTTON, BACKGROUND, BORDER, CONFIG_BUTTON, CONTENT, FOCUSED},
     ComicConfig,
 };
 
@@ -532,41 +532,38 @@ impl<'a> SettingsWidget<'a> {
         buf: &mut Buffer,
         mut on_click: impl FnMut(&mut ConfigState),
     ) {
-        let value_start = label.len() + 2;
-        let value_len = value.len();
+        let [label_area, value_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+
+        let [text_area, key_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(key.len() as u16 + 1)])
+                .areas(label_area);
 
         // Render the label
-        let label_text = format!("{}: ", label);
-        Paragraph::new(label_text).render(area, buf);
+        Paragraph::new(format!("{}: ", label)).render(text_area, buf);
 
-        // Create clickable area for the value
-        let value_area = Rect::new(area.x + value_start as u16, area.y, value_len as u16, 1);
-
-        // Check if clicked
+        // Check if clicked on value area
         if let Some(mouse) = self.state.last_mouse_click {
             if value_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_click(self.state);
-                self.state.last_mouse_click = None; // Consume the click
+                self.state.last_mouse_click = None;
             }
         }
 
-        // Render the value as a clickable button
+        // Render the value as a clickable button with borders
+        let value_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(CONFIG_BUTTON));
+        let value_inner = value_block.inner(value_area);
+        value_block.render(value_area, buf);
+
         Paragraph::new(value)
-            .style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::UNDERLINED),
-            )
-            .render(value_area, buf);
+            .style(Style::default().fg(CONFIG_BUTTON))
+            .alignment(Alignment::Center)
+            .render(value_inner, buf);
 
         // Render the key hint
-        let key_area = Rect::new(
-            area.x + (value_start + value_len + 1) as u16,
-            area.y,
-            key.len() as u16,
-            1,
-        );
-        Paragraph::new(key)
+        Paragraph::new(format!(" {}", key))
             .style(Style::default().fg(Color::Green))
             .render(key_area, buf);
     }
@@ -588,25 +585,44 @@ impl<'a> SettingsWidget<'a> {
             Style::default()
         };
 
-        let button_style = if selected {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
+        let button_style = Style::default().fg(CONFIG_BUTTON);
 
-        // Calculate positions
-        let label_text = format!("{}: ", label);
-        let label_len = label_text.len() as u16;
+        // Vertical layout: header and buttons
+        let [header_area, buttons_area] = Layout::vertical([
+            Constraint::Length(1), // Header with label and shortcut
+            Constraint::Length(3), // Buttons row - needs 3 for bordered buttons
+        ])
+        .areas(area);
+
+        // Header: horizontal layout for text and shortcut
+        let [text_area, shortcut_area] = Layout::horizontal([
+            Constraint::Length(label.len() as u16 + 2), // Label
+            Constraint::Length(key.len() as u16 + 1),   // Shortcut
+        ])
+        .flex(Flex::Start)
+        .spacing(1)
+        .areas(header_area);
 
         // Render label
-        Paragraph::new(label_text.as_str())
+        Paragraph::new(format!("{}: ", label))
             .style(style)
-            .render(area, buf);
+            .render(text_area, buf);
 
-        // Render [-] button
-        let minus_area = Rect::new(area.x + label_len, area.y, 3, 1);
+        // Render shortcut
+        Paragraph::new(format!(" {}", key))
+            .style(Style::default().fg(Color::Green))
+            .render(shortcut_area, buf);
+
+        // Buttons: horizontal layout for [-] value [+]
+        let [minus_area, value_area, plus_area] = Layout::horizontal([
+            Constraint::Length(5), // [-] button
+            Constraint::Length(5), // value
+            Constraint::Length(5), // [+] button
+        ])
+        .spacing(1)
+        .areas(buttons_area);
+
+        // Render [-] button with border
         if let Some(mouse) = self.state.last_mouse_click {
             if minus_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_select(self.state);
@@ -614,18 +630,31 @@ impl<'a> SettingsWidget<'a> {
                 self.state.last_mouse_click = None;
             }
         }
-        Paragraph::new("[-]")
+        let minus_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(button_style);
+        let minus_inner = minus_block.inner(minus_area);
+        minus_block.render(minus_area, buf);
+        Paragraph::new("-")
             .style(button_style)
-            .render(minus_area, buf);
+            .alignment(Alignment::Center)
+            .render(minus_inner, buf);
 
-        // Render value
-        let value_area = Rect::new(area.x + label_len + 4, area.y, value.len() as u16, 1);
-        Paragraph::new(value)
-            .style(Style::default().fg(Color::Cyan))
-            .render(value_area, buf);
+        // Render value with vertical alignment using flex
+        let [value_layout] = Layout::vertical([Constraint::Length(1)])
+            .flex(Flex::Center)
+            .areas(value_area);
 
-        // Render [+] button
-        let plus_area = Rect::new(area.x + label_len + 5 + value.len() as u16, area.y, 3, 1);
+        Paragraph::new(format!(" {} ", value))
+            .style(
+                Style::default()
+                    .fg(CONFIG_BUTTON)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center)
+            .render(value_layout, buf);
+
+        // Render [+] button with border
         if let Some(mouse) = self.state.last_mouse_click {
             if plus_area.contains(Position::new(mouse.column, mouse.row)) {
                 on_select(self.state);
@@ -633,21 +662,75 @@ impl<'a> SettingsWidget<'a> {
                 self.state.last_mouse_click = None;
             }
         }
-        Paragraph::new("[+]")
+        let plus_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(button_style);
+        let plus_inner = plus_block.inner(plus_area);
+        plus_block.render(plus_area, buf);
+        Paragraph::new("+")
             .style(button_style)
-            .render(plus_area, buf);
+            .alignment(Alignment::Center)
+            .render(plus_inner, buf);
+    }
 
-        // Render key hint
-        let key_text = format!(" {}", key);
-        let key_area = Rect::new(
-            area.x + label_len + 8 + value.len() as u16,
-            area.y,
-            key_text.len() as u16,
-            1,
-        );
-        Paragraph::new(key_text.as_str())
-            .style(Style::default().fg(Color::Green))
-            .render(key_area, buf);
+    fn render_dimension_presets(&mut self, area: Rect, buf: &mut Buffer) {
+        const LEN: usize = 4;
+
+        let presets: [_; LEN] = [
+            ("Kindle PW 11", (1236, 1648)),
+            ("Kindle PW 12", (1264, 1680)),
+            ("Kindle 12", (1072, 1448)),
+            ("Kindle Basic", (800, 600)),
+        ];
+
+        let current_dims = self.state.config.device_dimensions;
+
+        let cells = make_grid_layout::<LEN>(area, 2, Constraint::Length(3));
+
+        for (i, (name, dims)) in presets.iter().enumerate() {
+            if i >= cells.len() {
+                break;
+            }
+            let cell = cells[i];
+            let is_current = *dims == current_dims;
+
+            // Handle mouse clicks
+            if let Some(mouse) = self.state.last_mouse_click {
+                if cell.contains(Position::new(mouse.column, mouse.row)) {
+                    self.state.config.device_dimensions = *dims;
+                    self.state.last_mouse_click = None;
+                }
+            }
+
+            let button_style = if is_current {
+                Style::default()
+                    .fg(ACTION_BUTTON)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(CONFIG_BUTTON)
+            };
+
+            let button_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(button_style);
+            let button_inner = button_block.inner(cell);
+            button_block.render(cell, buf);
+
+            // Split the inner area into two lines: name and dimensions
+            let [name_area, dims_area] =
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1)])
+                    .areas(button_inner);
+
+            Paragraph::new(*name)
+                .style(button_style)
+                .alignment(Alignment::Center)
+                .render(name_area, buf);
+
+            Paragraph::new(format!("{}x{}", dims.0, dims.1))
+                .style(button_style)
+                .alignment(Alignment::Center)
+                .render(dims_area, buf);
+        }
     }
 }
 
@@ -664,49 +747,67 @@ impl<'a> Widget for SettingsWidget<'a> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        // Calculate layout for settings
-        let line_height = 2; // Height for each setting line
-        let spacing = 1; // Space between lines
-        let mut y_offset = inner.y + 1;
+        // Create layout for all settings sections
+        let constraints = [
+            Constraint::Length(3),  // Title Prefix
+            Constraint::Length(9),  // Toggles ( reading direction, split double pages, auto crop)
+            Constraint::Length(4),  // Quality (1 header + 3 buttons)
+            Constraint::Length(4),  // Brightness (1 header + 3 buttons)
+            Constraint::Length(4),  // Contrast (1 header + 3 buttons)
+            Constraint::Length(1),  // Dimensions Title
+            Constraint::Length(12), // Dimensions (dynamic grid)
+            Constraint::Length(3),  // Process button
+        ];
 
-        // Title Prefix with button
-        let prefix_text = format!(
-            "Title Prefix: {} [p]",
-            self.state
-                .prefix
-                .clone()
-                .unwrap_or_else(|| "(none)".to_string())
-        );
-        let prefix_area = Rect::new(inner.x + 2, y_offset, inner.width - 4, 1);
-        Paragraph::new(Line::from(vec![
-            Span::raw("Title Prefix: "),
-            Span::styled(
-                self.state
-                    .prefix
-                    .clone()
-                    .unwrap_or_else(|| "(none)".to_string()),
-                Style::default().fg(Color::Cyan),
-            ),
-            Span::raw(" "),
-        ]))
-        .render(prefix_area, buf);
+        let [prefix_area, toggles_area, quality_area, brightness_area, contrast_area, device_presets_area, _device_presets_area, process_button_area] =
+            Layout::vertical(constraints).areas(inner);
 
-        // Add clickable button for prefix
-        let prefix_button_area =
-            Rect::new(prefix_area.x + prefix_text.len() as u16 - 3, y_offset, 3, 1);
+        let prefix_display = self
+            .state
+            .prefix
+            .clone()
+            .unwrap_or_else(|| "(none)".to_string());
+        let [prefix_label_area, prefix_value_area, prefix_key_area] = Layout::horizontal([
+            Constraint::Length(15),
+            Constraint::Length(prefix_display.len() as u16 + 4),
+            Constraint::Min(0),
+        ])
+        .areas(prefix_area);
+
+        Paragraph::new("Title Prefix: ").render(prefix_label_area, buf);
+
+        // Clickable prefix value
         if let Some(mouse) = self.state.last_mouse_click {
-            if prefix_button_area.contains(Position::new(mouse.column, mouse.row)) {
+            if prefix_value_area.contains(Position::new(mouse.column, mouse.row)) {
                 self.state.selected_field = Some(SelectedField::Prefix);
                 self.state.input_buffer = self.state.prefix.clone().unwrap_or_default();
+                self.state.last_mouse_click = None;
             }
         }
-        Paragraph::new("[p]")
+
+        let prefix_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let prefix_inner = prefix_block.inner(prefix_value_area);
+        prefix_block.render(prefix_value_area, buf);
+
+        Paragraph::new(prefix_display)
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center)
+            .render(prefix_inner, buf);
+
+        Paragraph::new(" [p]")
             .style(Style::default().fg(Color::Green))
-            .render(prefix_button_area, buf);
+            .render(prefix_key_area, buf);
 
-        y_offset += line_height + spacing;
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] =
+            make_grid_layout::<3>(toggles_area, 2, Constraint::Length(4));
 
-        // Reading Direction toggle button
+        // Reading Direction toggle
         self.render_toggle_button(
             "Reading Direction",
             if self.state.config.right_to_left {
@@ -715,15 +816,14 @@ impl<'a> Widget for SettingsWidget<'a> {
                 "Left to Right"
             },
             "[m]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            reading_direction_area,
             buf,
             |state| {
                 state.config.right_to_left = !state.config.right_to_left;
             },
         );
-        y_offset += line_height;
 
-        // Split Double Pages toggle button
+        // Split Double Pages toggle
         self.render_toggle_button(
             "Split Double Pages",
             if self.state.config.split_double_page {
@@ -732,15 +832,14 @@ impl<'a> Widget for SettingsWidget<'a> {
                 "No"
             },
             "[s]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            split_double_pages_area,
             buf,
             |state| {
                 state.config.split_double_page = !state.config.split_double_page;
             },
         );
-        y_offset += line_height;
 
-        // Auto Crop toggle button
+        // Auto Crop toggle
         self.render_toggle_button(
             "Auto Crop",
             if self.state.config.auto_crop {
@@ -749,20 +848,19 @@ impl<'a> Widget for SettingsWidget<'a> {
                 "No"
             },
             "[c]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            auto_crop_area,
             buf,
             |state| {
                 state.config.auto_crop = !state.config.auto_crop;
             },
         );
-        y_offset += line_height;
 
-        // Quality with +/- buttons
+        // Quality adjustable setting
         self.render_adjustable_setting(
             "Quality",
             &format!("{:3}", self.state.config.compression_quality),
             "[u]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            quality_area,
             buf,
             self.state.selected_field == Some(SelectedField::Quality),
             |state| {
@@ -774,14 +872,13 @@ impl<'a> Widget for SettingsWidget<'a> {
                 }
             },
         );
-        y_offset += line_height;
 
-        // Brightness with +/- buttons
+        // Brightness adjustable setting
         self.render_adjustable_setting(
             "Brightness",
             &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
             "[b]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            brightness_area,
             buf,
             self.state.selected_field == Some(SelectedField::Brightness),
             |state| {
@@ -793,14 +890,13 @@ impl<'a> Widget for SettingsWidget<'a> {
                 }
             },
         );
-        y_offset += line_height;
 
-        // Contrast with +/- buttons
+        // Contrast adjustable setting
         self.render_adjustable_setting(
             "Contrast",
             &format!("{:3.1}", self.state.config.contrast.unwrap_or(1.0)),
             "[t]",
-            Rect::new(inner.x + 2, y_offset, inner.width - 4, 1),
+            contrast_area,
             buf,
             self.state.selected_field == Some(SelectedField::Contrast),
             |state| {
@@ -812,39 +908,35 @@ impl<'a> Widget for SettingsWidget<'a> {
                 }
             },
         );
-        y_offset += line_height + spacing;
 
-        // Device info (non-interactive)
-        let device_area = Rect::new(inner.x + 2, y_offset, inner.width - 4, 1);
-        Paragraph::new(Line::from(vec![
-            Span::raw("Device: "),
-            Span::styled(
-                format!(
-                    "{}x{}",
-                    self.state.config.device_dimensions.0, self.state.config.device_dimensions.1
-                ),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]))
-        .render(device_area, buf);
+        let current_dims = self.state.config.device_dimensions;
+        let [label_area, current_dims_area] =
+            Layout::horizontal([Constraint::Length(12), Constraint::Min(0)])
+                .areas(device_presets_area);
 
-        // Render the process button at the bottom of the settings area
-        let button_height = 3;
-        let button_y = inner.y + inner.height.saturating_sub(button_height + 1);
-        let button_area = Rect::new(inner.x, button_y, inner.width, button_height);
+        Paragraph::new("Dimensions:")
+            .style(Style::default().fg(CONTENT))
+            .render(label_area, buf);
 
+        Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
+            .style(Style::default().fg(CONFIG_BUTTON))
+            .render(current_dims_area, buf);
+
+        self.render_dimension_presets(_device_presets_area, buf);
+
+        // Process button
         ButtonWidget::new()
-            .text("Start Processing".to_string())
+            .text("Start ⏵".to_string())
             .style(
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(ACTION_BUTTON)
                     .add_modifier(Modifier::BOLD),
             )
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
                 self.state.send_start_processing();
             })
-            .render(button_area, buf);
+            .render(process_button_area, buf);
 
         // Render editing overlay if editing prefix
         if let Some(SelectedField::Prefix) = self.state.selected_field {
@@ -930,7 +1022,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .text(button_text.to_string())
             .style(
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(ACTION_BUTTON)
                     .add_modifier(Modifier::BOLD),
             )
             .with_mouse_event(self.state.last_mouse_click)
@@ -1198,4 +1290,24 @@ fn calculate_centered_image_area(
         .areas(centered_area);
 
     final_area
+}
+
+fn make_grid_layout<const N: usize>(
+    area: Rect,
+    items_per_row: u16,
+    height: Constraint,
+) -> [Rect; N] {
+    let col_constraints = (0..items_per_row).map(|_| Constraint::Min(0));
+    let row_constraints =
+        (0..((N + items_per_row as usize - 1) / items_per_row as usize)).map(|_| height);
+    let horizontal = Layout::horizontal(col_constraints).spacing(1);
+    let vertical = Layout::vertical(row_constraints);
+
+    let rows = vertical.split(area);
+    rows.iter()
+        .flat_map(move |&row| horizontal.split(row).to_vec())
+        .take(N)
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap()
 }
