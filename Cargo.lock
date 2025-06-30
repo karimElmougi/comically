@@ -393,6 +393,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-error",
+ "tracing-log",
  "tracing-subscriber",
  "unrar",
  "uuid",

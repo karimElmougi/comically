@@ -89,19 +89,14 @@ pub struct ComicConfig {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    
-    // Change to the specified directory if provided
-    if let Some(dir) = &args.directory {
-        std::env::set_current_dir(dir)?;
-    }
-    
+
     let log_path = "comically.log";
-    let log_file = std::fs::File::create(log_path)?;
+    let log_file = std::fs::File::create(log_path).unwrap();
+
+    // set the log level to info, if not set
     std::env::set_var(
         "RUST_LOG",
-        std::env::var("RUST_LOG")
-            .or_else(|_| std::env::var("LOG_ENV".to_string()))
-            .unwrap_or_else(|_| format!("{}=info", env!("CARGO_CRATE_NAME"))),
+        std::env::var("RUST_LOG").unwrap_or_else(|_| format!("{}=info", env!("CARGO_CRATE_NAME"))),
     );
 
     let file_subscriber = tracing_subscriber::fmt::layer()
@@ -116,6 +111,11 @@ fn main() -> anyhow::Result<()> {
         .with(file_subscriber)
         .with(tracing_error::ErrorLayer::default())
         .init();
+
+    // Change to the specified directory if provided
+    if let Some(dir) = &args.directory {
+        std::env::set_current_dir(dir)?;
+    }
 
     if cfg!(target_os = "macos") {
         let additional_paths = [
@@ -144,8 +144,6 @@ fn main() -> anyhow::Result<()> {
 
     result
 }
-
-
 
 pub fn process_files(
     files: Vec<PathBuf>,
@@ -283,8 +281,6 @@ pub struct Comic {
     config: ComicConfig,
 }
 
-
-
 impl Drop for Comic {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.temp_dir);
@@ -373,8 +369,6 @@ impl Comic {
         });
     }
 }
-
-
 
 pub fn poll_kindlegen(tx: mpsc::Receiver<Comic>) {
     struct KindleGenStatus {

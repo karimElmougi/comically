@@ -23,6 +23,7 @@ ratatui = "0.29.0"
 tracing-error = "0.2.1"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-log = { version = "0.2.0" }
 unrar = "0.5.8"
 itertools = "0.14.0"
 ratatui-image = { version = "8.0.1", features = ["crossterm"] }

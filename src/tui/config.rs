@@ -8,13 +8,14 @@ use ratatui::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
     },
 };
-use ratatui_image::{picker::Picker, protocol::StatefulProtocol, StatefulImage};
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
 use crate::{comic_archive, ComicConfig};
+use image::GenericImageView;
 
 pub struct ConfigState {
     pub files: Vec<MangaFile>,
@@ -60,7 +61,7 @@ pub struct PreviewState {
 }
 
 enum PreviewRequest {
-    LoadFile(PathBuf, ComicConfig),
+    LoadFile(PathBuf, ComicConfig, usize), // Add file index to track
 }
 
 enum PreviewResult {
@@ -174,6 +175,7 @@ impl ConfigState {
     fn handle_file_list_keys(&mut self, key: KeyEvent) -> ConfigAction {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
+                let start = Instant::now();
                 if let Some(selected) = self.list_state.selected() {
                     if selected > 0 {
                         self.list_state.select(Some(selected - 1));
@@ -181,8 +183,10 @@ impl ConfigState {
                         self.request_preview();
                     }
                 }
+                tracing::info!("Up key handler took {:?}", start.elapsed());
             }
             KeyCode::Down | KeyCode::Char('j') => {
+                let start = Instant::now();
                 if let Some(selected) = self.list_state.selected() {
                     if selected < self.files.len() - 1 {
                         self.list_state.select(Some(selected + 1));
@@ -190,6 +194,7 @@ impl ConfigState {
                         self.request_preview();
                     }
                 }
+                tracing::info!("Down key handler took {:?}", start.elapsed());
             }
             KeyCode::Char(' ') => {
                 if let Some(selected) = self.list_state.selected() {
@@ -221,10 +226,11 @@ impl ConfigState {
             if let Some(file) = self.files.get(file_idx) {
                 self.preview_state.loading = true;
                 self.preview_state.last_request = Some(now);
-                let _ = self
-                    .preview_state
-                    .preview_tx
-                    .send(PreviewRequest::LoadFile(file.path.clone(), self.config));
+                let _ = self.preview_state.preview_tx.send(PreviewRequest::LoadFile(
+                    file.path.clone(),
+                    self.config,
+                    file_idx,
+                ));
             }
         }
     }
@@ -235,10 +241,11 @@ impl ConfigState {
             self.preview_state.loading = false;
             match result {
                 PreviewResult::Loaded(protocol) => {
+                    tracing::info!("Received new protocol for preview");
                     self.preview_state.protocol = Some(protocol);
                 }
                 PreviewResult::Error(err) => {
-                    log::warn!("Preview error: {}", err);
+                    tracing::warn!("Preview error: {}", err);
                     self.preview_state.protocol = None;
                 }
             }
@@ -642,6 +649,7 @@ impl<'a> PreviewWidget<'a> {
 
 impl<'a> Widget for PreviewWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let start = Instant::now();
         let block = Block::default()
             .title("Preview")
             .borders(Borders::ALL)
@@ -658,32 +666,51 @@ impl<'a> Widget for PreviewWidget<'a> {
             msg.render(inner, buf);
         } else if let Some(ref mut protocol) = self.state.preview_state.protocol {
             // The image widget
-            let image = StatefulImage::default();
+            let render_start = Instant::now();
+            // Try different resize options
+            let image = StatefulImage::new().resize(Resize::Scale(None));
             // Render with the protocol state
+            tracing::info!("Rendering image in area: {:?}", inner);
             StatefulWidget::render(image, inner, buf, protocol);
+            tracing::info!("Image render took {:?}", render_start.elapsed());
         } else {
             let msg = Paragraph::new("No preview available\nSelect a file to preview")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::DarkGray));
             msg.render(inner, buf);
         }
+        log::info!("PreviewWidget render took {:?}", start.elapsed());
     }
 }
-
 fn preview_worker(rx: mpsc::Receiver<PreviewRequest>, tx: mpsc::Sender<PreviewResult>) {
-    let picker = match Picker::from_query_stdio() {
-        Ok(picker) => picker,
-        Err(_) => Picker::from_fontsize((8, 16)), // Slightly taller default
-    };
+    let mut picker = Picker::from_query_stdio()
+        .inspect(|p| log::info!("Auto Picker: {:?}", p))
+        .unwrap_or_else(|_| Picker::from_fontsize((8, 16)));
+
+    log::info!("Picker: {:?}", picker);
 
     while let Ok(request) = rx.recv() {
-        match request {
-            PreviewRequest::LoadFile(path, config) => {
+        // Clear any pending requests in the queue - we only care about the latest
+        let mut latest_request = request;
+        while let Ok(newer_request) = rx.try_recv() {
+            log::info!("Dropping stale preview request");
+            latest_request = newer_request;
+        }
+
+        match latest_request {
+            PreviewRequest::LoadFile(path, config, file_idx) => {
+                log::info!("Processing preview for file {}", file_idx);
+                let load_start = Instant::now();
                 let result = load_and_process_preview(&path, &config);
+                log::info!("Load and process took {:?}", load_start.elapsed());
+
                 match result {
                     Ok(img) => {
                         // Do the protocol encoding in the background thread
+                        let encode_start = Instant::now();
+                        log::info!("Image dimensions before protocol: {:?}", img.dimensions());
                         let protocol = picker.new_resize_protocol(img);
+                        log::info!("Protocol encoding took {:?}", encode_start.elapsed());
                         let _ = tx.send(PreviewResult::Loaded(protocol));
                     }
                     Err(e) => {
@@ -699,16 +726,21 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
 ) -> anyhow::Result<image::DynamicImage> {
+    let config = ComicConfig {
+        device_dimensions: (600, 800),
+        ..config.clone()
+    };
+
     // Load first image from archive
-    let mut images = comic_archive::unarchive_comic_iter(path)?;
-    let archive_file = images
+    let mut files = comic_archive::unarchive_comic_iter(path)?;
+    let archive_file = files
         .next()
         .ok_or_else(|| anyhow::anyhow!("No images in archive"))??;
 
     let img = image::load_from_memory(&archive_file.data)?;
 
     // Process using the same pipeline as the main processing
-    let processed_images = crate::image_processor::process_image(img, config);
+    let processed_images = crate::image_processor::process_image(img, &config);
 
     // Take the first processed image and convert back to DynamicImage
     let first_image = processed_images

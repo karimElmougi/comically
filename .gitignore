@@ -1,6 +1,6 @@
 target/
 
-*.log
+# *.log
 
 *.zip
 *.rar

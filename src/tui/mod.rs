@@ -35,9 +35,12 @@ pub fn run(
             config_state.update_preview();
         }
         
+        let draw_start = std::time::Instant::now();
         terminal.draw(|frame| match &mut state {
             AppState::Config(config_state) => {
+                let render_start = std::time::Instant::now();
                 config::ConfigScreen::new(config_state).render(frame.area(), frame.buffer_mut());
+                log::info!("ConfigScreen render took {:?}", render_start.elapsed());
             }
             AppState::Processing(processing_state) => {
                 processing::ProcessingScreen::new(processing_state)
@@ -47,6 +50,7 @@ pub fn run(
                 render_completion_screen(frame.area(), frame.buffer_mut());
             }
         })?;
+        log::info!("Terminal draw took {:?}", draw_start.elapsed());
 
         // Handle events
         if event::poll(Duration::from_millis(16))? { // ~60fps
