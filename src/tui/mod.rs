@@ -45,11 +45,6 @@ pub fn run(
             break 'outer;
         }
 
-        // Update preview if in config state
-        if let AppState::Config(config_state) = &mut state {
-            config_state.check_preview_debounce();
-        }
-
         // Draw if there were pending events
         if pending {
             terminal.draw(|frame| {

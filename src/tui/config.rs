@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
-    layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use crate::{
     comic_archive,
-    tui::{BACKGROUND, CONTENT},
+    tui::{BACKGROUND, BORDER, CONTENT},
     ComicConfig,
 };
 
@@ -66,6 +66,13 @@ pub struct PreviewState {
     resize_tx: mpsc::Sender<ResizeRequest>,
     loading: bool,
     selection_changed_at: Option<Instant>,
+    loaded_image: Option<LoadedPreviewImage>,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct LoadedPreviewImage {
+    width: u32,
+    height: u32,
 }
 
 enum PreviewRequest {
@@ -88,8 +95,6 @@ impl ConfigState {
             list_state.select(Some(0));
         }
 
-        let has_files = !files.is_empty();
-
         // Create channels for preview processing
         let (preview_tx, worker_rx) = mpsc::channel::<PreviewRequest>();
         // Create channel for resize requests
@@ -103,7 +108,7 @@ impl ConfigState {
             preview_worker(worker_rx, resize_rx, event_tx_clone);
         });
 
-        let mut state = Self {
+        let state = Self {
             files,
             selected_files,
             list_state,
@@ -126,16 +131,12 @@ impl ConfigState {
                 resize_tx,
                 loading: false,
                 selection_changed_at: None,
+                loaded_image: None,
             },
             picker,
             event_tx,
             last_mouse_click: None,
         };
-
-        // Mark selection changed to trigger initial preview after debounce
-        if has_files {
-            state.preview_state.selection_changed_at = Some(Instant::now());
-        }
 
         Ok(state)
     }
@@ -162,6 +163,7 @@ impl ConfigState {
                     self.send_start_processing();
                 }
             }
+
             _ => match self.focus {
                 Focus::FileList => self.handle_file_list_keys(key),
                 Focus::Settings => self.handle_settings_keys(key),
@@ -250,23 +252,10 @@ impl ConfigState {
         }
     }
 
-    pub fn check_preview_debounce(&mut self) {
-        if let Some(changed_at) = self.preview_state.selection_changed_at {
-            if changed_at.elapsed().as_millis() >= 500 && !self.preview_state.loading {
-                self.request_preview();
-            }
-        }
-    }
-
-    pub fn mark_preview_dirty(&mut self) {
-        self.preview_state.selection_changed_at = Some(Instant::now());
-    }
-
     fn select_previous(&mut self) {
         if let Some(selected) = self.list_state.selected() {
             if selected > 0 {
                 self.list_state.select(Some(selected - 1));
-                self.mark_preview_dirty();
             }
         }
     }
@@ -275,13 +264,12 @@ impl ConfigState {
         if let Some(selected) = self.list_state.selected() {
             if selected < self.files.len() - 1 {
                 self.list_state.select(Some(selected + 1));
-                self.mark_preview_dirty();
             }
         }
     }
 
     fn adjust_setting(&mut self, field: SelectedField, increase: bool, is_fine: bool) {
-        let should_update_preview = match field {
+        match field {
             SelectedField::Quality => {
                 let step = if is_fine { 1 } else { 5 };
                 self.config.compression_quality = if increase {
@@ -292,7 +280,6 @@ impl ConfigState {
                 } else {
                     self.config.compression_quality.saturating_sub(step)
                 };
-                true
             }
             SelectedField::Brightness => {
                 let step = if is_fine { 1 } else { 5 };
@@ -302,7 +289,6 @@ impl ConfigState {
                 } else {
                     (current - step).max(-100)
                 });
-                true
             }
             SelectedField::Contrast => {
                 let step = if is_fine { 0.05 } else { 0.1 };
@@ -312,23 +298,22 @@ impl ConfigState {
                 } else {
                     (current - step).max(0.5)
                 });
-                true
             }
-            SelectedField::Prefix => false, // Prefix doesn't use adjustment
+            SelectedField::Prefix => {}
         };
-
-        if should_update_preview {
-            self.mark_preview_dirty();
-        }
     }
 
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded(img) => {
-                tracing::debug!("Received new image for preview");
                 self.preview_state.loading = false;
+                self.preview_state.loaded_image = Some(LoadedPreviewImage {
+                    width: img.width(),
+                    height: img.height(),
+                });
                 // Create a new resize protocol for the image
                 let protocol = self.picker.new_resize_protocol(img);
+                log::debug!("Created resize protocol for image");
                 self.preview_state.thread_protocol =
                     ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
             }
@@ -360,7 +345,6 @@ impl ConfigState {
             }
             KeyCode::Char('c') => {
                 self.config.auto_crop = !self.config.auto_crop;
-                self.mark_preview_dirty();
             }
             KeyCode::Char('u') => {
                 self.selected_field = Some(SelectedField::Quality);
@@ -487,6 +471,9 @@ impl<'a> Widget for ConfigScreen<'a> {
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
         footer.render(footer_area, buf);
+
+        // clear the mouse click state
+        self.state.last_mouse_click = None;
     }
 }
 
@@ -777,7 +764,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             buf,
             |state| {
                 state.config.auto_crop = !state.config.auto_crop;
-                state.mark_preview_dirty();
             },
         );
         y_offset += line_height;
@@ -858,16 +844,18 @@ impl<'a> Widget for SettingsWidget<'a> {
         let button_y = inner.y + inner.height.saturating_sub(button_height + 1);
         let button_area = Rect::new(inner.x, button_y, inner.width, button_height);
 
-        ButtonWidget::new("Start Processing".to_string(), || {
-            self.state.send_start_processing();
-        })
-        .style(
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-        .with_mouse_event(self.state.last_mouse_click)
-        .render(button_area, buf);
+        ButtonWidget::new()
+            .text("Start Processing".to_string())
+            .style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .with_mouse_event(self.state.last_mouse_click)
+            .on_click(|| {
+                self.state.send_start_processing();
+            })
+            .render(button_area, buf);
 
         // Render editing overlay if editing prefix
         if let Some(SelectedField::Prefix) = self.state.selected_field {
@@ -927,33 +915,82 @@ impl<'a> PreviewWidget<'a> {
 
 impl<'a> Widget for PreviewWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let start = Instant::now();
         let block = Block::default()
             .title("Preview")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(BORDER))
             .style(Style::default());
 
         let inner = block.inner(area);
         block.render(area, buf);
 
+        // Split the area to have a button at the bottom
+        let [preview_area, button_area] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),    // Preview area
+                Constraint::Length(3), // Button area
+            ])
+            .areas(inner);
+
+        // Render the load preview button
+        let button_text = if self.state.preview_state.loading {
+            "Loading..."
+        } else {
+            "Load Preview"
+        };
+
+        // The ButtonWidget handles click detection internally
+        ButtonWidget::new()
+            .text(button_text.to_string())
+            .style(if self.state.preview_state.loading {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            })
+            .with_mouse_event(self.state.last_mouse_click)
+            .on_click(|| {
+                if !self.state.preview_state.loading {
+                    self.state.request_preview();
+                }
+            })
+            .render(button_area, buf);
+
         if self.state.preview_state.loading {
             let msg = Paragraph::new("Loading preview...")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Yellow));
-            msg.render(inner, buf);
-        } else {
-            // Render using ThreadProtocol
+            msg.render(preview_area, buf);
+        } else if let Some(loaded_image) = self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(None));
+
+            let area = calculate_centered_image_area(
+                preview_area,
+                loaded_image,
+                self.state.picker.font_size(),
+            );
+
             StatefulWidget::render(
                 image,
-                inner,
+                area,
                 buf,
                 &mut self.state.preview_state.thread_protocol,
             );
-        }
-        if start.elapsed() > std::time::Duration::from_millis(100) {
-            log::error!("PreviewWidget render took {:?}", start.elapsed());
+        } else {
+            // Show instructions when no preview is loaded
+            let instructions = vec![
+                Line::from(""),
+                Line::from("No preview loaded"),
+                Line::from(""),
+                Line::from("Click button below to load"),
+            ];
+
+            let msg = Paragraph::new(instructions)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(CONTENT));
+            msg.render(preview_area, buf);
         }
     }
 }
@@ -1062,26 +1099,37 @@ fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
     latest
 }
 
-pub struct ButtonWidget<F> {
+pub struct ButtonWidget<'a> {
     pub text: String,
     pub style: Style,
     pub mouse_event: Option<MouseEvent>,
-    pub on_click: F,
+    pub on_click: Option<Box<dyn FnOnce() + 'a>>,
 }
 
-impl<F> ButtonWidget<F>
-where
-    F: FnOnce(),
-{
-    pub fn new(text: String, on_click: F) -> Self {
+impl ButtonWidget<'_> {
+    pub fn new() -> Self {
         Self {
-            text,
+            text: "".to_string(),
             style: Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
             mouse_event: None,
-            on_click,
+            on_click: None,
         }
+    }
+
+    pub fn on_click<'a>(self, on_click: impl FnOnce() + 'a) -> ButtonWidget<'a> {
+        ButtonWidget {
+            text: self.text,
+            style: self.style,
+            mouse_event: self.mouse_event,
+            on_click: Some(Box::new(on_click)),
+        }
+    }
+
+    pub fn text(mut self, text: String) -> Self {
+        self.text = text;
+        self
     }
 
     pub fn style(mut self, style: Style) -> Self {
@@ -1095,10 +1143,7 @@ where
     }
 }
 
-impl<F> Widget for ButtonWidget<F>
-where
-    F: FnOnce(),
-{
+impl<'a> Widget for ButtonWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let button_text = format!(" {} ", self.text);
         let button_width = button_text.len() as u16 + 10;
@@ -1120,7 +1165,9 @@ where
         // Check for click event during render (immediate-mode pattern)
         if let Some(event) = self.mouse_event {
             if button_area.contains(Position::new(event.column, event.row)) {
-                (self.on_click)();
+                if let Some(on_click) = self.on_click {
+                    on_click();
+                }
             }
         }
 
@@ -1129,4 +1176,47 @@ where
             .alignment(Alignment::Center)
             .render(button_inner, buf);
     }
+}
+
+fn calculate_centered_image_area(
+    area: Rect,
+    img: LoadedPreviewImage,
+    font_size: (u16, u16),
+) -> Rect {
+    // Get terminal cell dimensions from picker (pixels per cell)
+    let cell_width_px = font_size.0 as f32;
+    let cell_height_px = font_size.1 as f32;
+
+    // Calculate image aspect ratio
+    let img_aspect = img.width as f32 / img.height as f32;
+    let area_aspect = (area.width as f32 * cell_width_px) / (area.height as f32 * cell_height_px);
+
+    let (target_width_cells, target_height_cells) = if img_aspect > area_aspect {
+        // Image is wider - constrain by width
+        let width_cells = area.width;
+        let height_cells =
+            ((width_cells as f32 * cell_width_px) / img_aspect / cell_height_px) as u16;
+        (width_cells, height_cells.min(area.height))
+    } else {
+        // Image is taller - constrain by height
+        let height_cells = area.height;
+        let width_cells =
+            ((height_cells as f32 * cell_height_px) * img_aspect / cell_width_px) as u16;
+        (width_cells.min(area.width), height_cells)
+    };
+
+    // Center the calculated dimensions
+    let [centered_area] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(target_height_cells)])
+        .flex(Flex::Center)
+        .areas(area);
+
+    let [final_area] = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(target_width_cells)])
+        .flex(Flex::Center)
+        .areas(centered_area);
+
+    final_area
 }
