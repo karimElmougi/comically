@@ -13,11 +13,57 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     env,
     path::PathBuf,
+    str::FromStr,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl FromStr for Size {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('x').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "Invalid format '{}'. Expected format: WIDTHxHEIGHT (e.g., 1236x1648)",
+                s
+            ));
+        }
+
+        let width = parts[0]
+            .parse::<u32>()
+            .map_err(|_| format!("Invalid width '{}'. Must be a positive integer", parts[0]))?;
+
+        let height = parts[1]
+            .parse::<u32>()
+            .map_err(|_| format!("Invalid height '{}'. Must be a positive integer", parts[1]))?;
+
+        Ok(Size { width, height })
+    }
+}
+
+impl Default for Size {
+    fn default() -> Self {
+        Self {
+            width: 1236,
+            height: 1648,
+        }
+    }
+}
+
+impl From<Size> for (u32, u32) {
+    fn from(dims: Size) -> Self {
+        (dims.width, dims.height)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -65,6 +111,10 @@ struct Cli {
     /// split double pages into two separate pages
     #[arg(long, default_value = "true", default_missing_value = "true")]
     split: Option<bool>,
+
+    /// target device dimensions in pixels (format: WIDTHxHEIGHT, e.g., 1236x1648)
+    #[arg(long, short, default_value = "1236x1648")]
+    size: Size,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -195,8 +245,7 @@ fn process_files(
     kindlegen_tx: mpsc::Sender<Comic>,
 ) {
     let config = ComicConfig {
-        device_dimensions: (1236, 1648),
-        // device_dimensions: (600, 800),
+        device_dimensions: cli.size.into(),
         right_to_left: cli.manga.unwrap_or(true),
         split_double_page: cli.split.unwrap_or(true),
         compression_quality: cli.quality,
