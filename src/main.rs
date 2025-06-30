@@ -13,7 +13,6 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     env,
     path::PathBuf,
-    str::FromStr,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -86,18 +85,54 @@ fn main() -> anyhow::Result<()> {
         env::set_var("PATH", new_path);
     }
 
-    let (_event_tx, event_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::spawn({
+        let event_tx = event_tx.clone();
+        move || input_handling(event_tx)
+    });
 
     let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: Viewport::Fullscreen,
     });
     std::io::stderr().execute(ratatui::crossterm::terminal::EnterAlternateScreen)?;
 
-    let result = tui::run(&mut terminal, event_rx);
+    let result = tui::run(&mut terminal, event_tx, event_rx);
 
     ratatui::restore();
 
     result
+}
+
+fn input_handling(tx: mpsc::Sender<Event>) {
+    let tick_rate = Duration::from_millis(200);
+    let mut last_tick = Instant::now();
+
+    loop {
+        // poll for tick rate duration, if no events, send tick event.
+        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout).unwrap() {
+            match event::read().unwrap() {
+                event::Event::Key(key) => {
+                    if tx.send(Event::Input(key)).is_err() {
+                        break;
+                    }
+                }
+                event::Event::Resize(_, _) => {
+                    if tx.send(Event::Resize).is_err() {
+                        break;
+                    }
+                }
+                _ => {}
+            };
+        }
+        if last_tick.elapsed() >= tick_rate {
+            if tx.send(Event::Tick).is_err() {
+                break;
+            }
+            last_tick = Instant::now();
+        }
+    }
 }
 
 pub fn process_files(
@@ -121,10 +156,10 @@ pub fn process_files(
                 .to_string();
 
             event_tx
-                .send(Event::RegisterComic {
+                .send(Event::ProcessingEvent(ProcessingEvent::RegisterComic {
                     id,
                     file_name: title.clone(),
-                })
+                }))
                 .unwrap();
 
             // Create comic
@@ -139,10 +174,10 @@ pub fn process_files(
                 Ok(comic) => Some(comic),
                 Err(e) => {
                     event_tx
-                        .send(Event::ComicUpdate {
+                        .send(Event::ProcessingEvent(ProcessingEvent::ComicUpdate {
                             id,
                             status: ComicStatus::Failed { error: e },
-                        })
+                        }))
                         .unwrap();
                     None
                 }
@@ -292,7 +327,7 @@ impl Comic {
 
     fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {
         let start = Instant::now();
-        let _ = self.tx.send(Event::ComicUpdate {
+        self.notify(ProcessingEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Processing {
                 stage,
@@ -304,24 +339,28 @@ impl Comic {
     }
 
     fn stage_completed(&self, stage: ComicStage, duration: Duration) {
-        let _ = self.tx.send(Event::ComicUpdate {
+        self.notify(ProcessingEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::StageCompleted { stage, duration },
         });
     }
 
     fn success(&self) {
-        let _ = self.tx.send(Event::ComicUpdate {
+        self.notify(ProcessingEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Success,
         });
     }
 
     fn failed(&self, error: anyhow::Error) {
-        let _ = self.tx.send(Event::ComicUpdate {
+        self.notify(ProcessingEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Failed { error },
         });
+    }
+
+    fn notify(&self, event: ProcessingEvent) {
+        let _ = self.tx.send(Event::ProcessingEvent(event));
     }
 }
 
@@ -403,6 +442,10 @@ pub enum Event {
     Input(event::KeyEvent),
     Tick,
     Resize,
+    ProcessingEvent(ProcessingEvent),
+}
+
+pub enum ProcessingEvent {
     RegisterComic { id: usize, file_name: String },
     ComicUpdate { id: usize, status: ComicStatus },
     ProcessingComplete,

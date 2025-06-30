@@ -77,8 +77,11 @@ enum PreviewEvent {
 
 pub enum ConfigAction {
     Continue,
-    StartProcessing(Vec<PathBuf>, ComicConfig, Option<String>),
-    Quit,
+    StartProcessing {
+        files: Vec<PathBuf>,
+        config: ComicConfig,
+        prefix: Option<String>,
+    },
 }
 
 impl ConfigState {
@@ -149,7 +152,6 @@ impl ConfigState {
         }
 
         match key.code {
-            KeyCode::Char('q') => ConfigAction::Quit,
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::FileList => Focus::Settings,
@@ -169,11 +171,11 @@ impl ConfigState {
                         .collect();
 
                     if !selected_paths.is_empty() {
-                        return ConfigAction::StartProcessing(
-                            selected_paths,
-                            self.config,
-                            self.prefix.clone(),
-                        );
+                        return ConfigAction::StartProcessing {
+                            files: selected_paths,
+                            config: self.config,
+                            prefix: self.prefix.clone(),
+                        };
                     }
                 }
                 ConfigAction::Continue
@@ -696,16 +698,13 @@ impl<'a> Widget for PreviewWidget<'a> {
             msg.render(inner, buf);
         } else {
             // Render using ThreadProtocol
-            let render_start = Instant::now();
             let image = StatefulImage::new().resize(Resize::Scale(None));
-            tracing::info!("Rendering image in area: {:?}", inner);
             StatefulWidget::render(
                 image,
                 inner,
                 buf,
                 &mut self.state.preview_state.thread_protocol,
             );
-            tracing::info!("Image render took {:?}", render_start.elapsed());
         }
         log::info!("PreviewWidget render took {:?}", start.elapsed());
     }

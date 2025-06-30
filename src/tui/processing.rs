@@ -1,13 +1,14 @@
 use ratatui::{
     buffer::Buffer,
+    crossterm::event::{self, KeyEvent},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{palette, Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Padding, Paragraph, Widget, StatefulWidget},
+    widgets::{Block, Borders, Gauge, Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::time::{Duration, Instant};
 
-use crate::{ComicStage, ComicStatus, Event};
+use crate::{ComicStage, ComicStatus, ProcessingEvent};
 
 pub struct ProcessingState {
     start: Instant,
@@ -68,9 +69,9 @@ impl ProcessingState {
         }
     }
 
-    pub fn handle_event(&mut self, event: Event) {
+    pub fn handle_event(&mut self, event: ProcessingEvent) {
         match event {
-            Event::RegisterComic { id, file_name } => {
+            ProcessingEvent::RegisterComic { id, file_name } => {
                 debug_assert!(self.comics.get(id).is_none(), "comic already registered");
                 debug_assert!(id <= self.comics.len(), "id out of bounds");
 
@@ -88,7 +89,7 @@ impl ProcessingState {
                     };
                 }
             }
-            Event::ComicUpdate { id, status } => {
+            ProcessingEvent::ComicUpdate { id, status } => {
                 if let Some(comic) = self.comics.get_mut(id) {
                     match status {
                         ComicStatus::StageCompleted { stage, duration } => {
@@ -101,32 +102,23 @@ impl ProcessingState {
                     panic!("Comic state not found for id: {}", id);
                 }
             }
-            Event::ProcessingComplete => {
+            ProcessingEvent::ProcessingComplete => {
                 self.processing_complete = Some(self.start.elapsed());
             }
-            _ => {}
         }
     }
 
-    pub fn handle_scroll(&mut self, direction: ScrollDirection) {
-        match direction {
-            ScrollDirection::Up => {
-                if self.scroll_offset > 0 {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                }
+    pub fn handle_key(&mut self, key: KeyEvent) {
+        if key.code == event::KeyCode::Up || key.code == event::KeyCode::Char('k') {
+            if self.scroll_offset > 0 {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
             }
-            ScrollDirection::Down => {
-                if !self.comics.is_empty() {
-                    self.scroll_offset = self.scroll_offset.saturating_add(1);
-                }
+        } else if key.code == event::KeyCode::Down || key.code == event::KeyCode::Char('j') {
+            if !self.comics.is_empty() {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
             }
         }
     }
-}
-
-pub enum ScrollDirection {
-    Up,
-    Down,
 }
 
 pub struct ProcessingScreen<'a> {
@@ -237,7 +229,7 @@ fn draw_main_content(buf: &mut Buffer, state: &mut ProcessingState, area: Rect) 
 
     let names_inner_area = names_block.inner(names_area);
     let status_inner_area = status_block.inner(status_area);
-    
+
     names_block.render(names_area, buf);
     status_block.render(status_area, buf);
 
@@ -350,7 +342,7 @@ fn draw_scrollbar(
                 .thumb_style(Style::default().fg(palette::tailwind::STONE.c300)),
             area,
             buf,
-            &mut scroll_state
+            &mut scroll_state,
         );
     }
 }

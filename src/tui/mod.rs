@@ -1,72 +1,98 @@
 pub mod config;
 pub mod processing;
 
-use ratatui::{
-    backend::Backend,
-    buffer::Buffer,
-    crossterm::event,
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
-    Terminal,
-};
-use std::{sync::mpsc, time::Duration};
+use ratatui::{backend::Backend, crossterm::event, widgets::Widget, Terminal};
+use std::sync::mpsc;
 
-use crate::{poll_kindlegen, process_files, Comic, Event};
+use crate::{poll_kindlegen, process_files, Comic, Event, ProcessingEvent};
 use std::thread;
 
 pub enum AppState {
     Config(config::ConfigState),
     Processing(processing::ProcessingState),
-    Complete,
 }
 
 pub fn run(
     terminal: &mut Terminal<impl Backend>,
-    _event_rx: mpsc::Receiver<Event>,
+    event_tx: mpsc::Sender<Event>,
+    event_rx: mpsc::Receiver<Event>,
 ) -> anyhow::Result<()> {
     let mut state = AppState::Config(config::ConfigState::new()?);
-    let (event_tx, new_event_rx) = mpsc::channel();
+    let mut pending_events = Vec::with_capacity(50);
 
-    loop {
+    'outer: loop {
+        // Collect all pending events
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => pending_events.push(event),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break 'outer,
+            }
+        }
+
+        let pending = !pending_events.is_empty();
+
+        // Process events
+        if !process_events(terminal, &mut state, &mut pending_events, &event_tx)? {
+            break 'outer;
+        }
+
         // Update preview if in config state
         if let AppState::Config(config_state) = &mut state {
             config_state.update_preview();
-        }
-
-        // Check preview debounce before rendering
-        if let AppState::Config(config_state) = &mut state {
             config_state.check_preview_debounce();
         }
 
-        let draw_start = std::time::Instant::now();
-        terminal.draw(|frame| match &mut state {
-            AppState::Config(config_state) => {
-                let render_start = std::time::Instant::now();
-                config::ConfigScreen::new(config_state).render(frame.area(), frame.buffer_mut());
-                log::info!("ConfigScreen render took {:?}", render_start.elapsed());
-            }
-            AppState::Processing(processing_state) => {
-                processing::ProcessingScreen::new(processing_state)
-                    .render(frame.area(), frame.buffer_mut());
-            }
-            AppState::Complete => {
-                render_completion_screen(frame.area(), frame.buffer_mut());
-            }
-        })?;
-        log::info!("Terminal draw took {:?}", draw_start.elapsed());
+        // Draw if there were pending events
+        if pending {
+            let draw_start = std::time::Instant::now();
+            terminal.draw(|frame| match &mut state {
+                AppState::Config(config_state) => {
+                    config::ConfigScreen::new(config_state)
+                        .render(frame.area(), frame.buffer_mut());
+                    log::info!("ConfigScreen render took {:?}", draw_start.elapsed());
+                }
+                AppState::Processing(processing_state) => {
+                    processing::ProcessingScreen::new(processing_state)
+                        .render(frame.area(), frame.buffer_mut());
+                }
+            })?;
+            log::info!("Terminal draw took {:?}", draw_start.elapsed());
+        }
 
-        // Handle events
-        if event::poll(Duration::from_millis(16))? {
-            // ~60fps
-            match event::read()? {
-                event::Event::Key(key) => match &mut state {
+        // Wait for next event
+        match event_rx.recv() {
+            Ok(event) => pending_events.push(event),
+            Err(_) => break 'outer,
+        }
+    }
+
+    Ok(())
+}
+
+fn process_events(
+    terminal: &mut Terminal<impl Backend>,
+    state: &mut AppState,
+    pending_events: &mut Vec<Event>,
+    event_tx: &mpsc::Sender<Event>,
+) -> anyhow::Result<bool> {
+    for event in pending_events.drain(..) {
+        match event {
+            Event::Input(key) => {
+                if key.code == event::KeyCode::Char('q') {
+                    return Ok(false);
+                }
+
+                match state {
                     AppState::Config(config_state) => {
                         match config_state.handle_key(key) {
-                            config::ConfigAction::StartProcessing(files, config, prefix) => {
+                            config::ConfigAction::StartProcessing {
+                                files,
+                                config,
+                                prefix,
+                            } => {
                                 // Transition to processing state
-                                state = AppState::Processing(processing::ProcessingState::new());
+                                *state = AppState::Processing(processing::ProcessingState::new());
 
                                 // Create channels for processing
                                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
@@ -88,106 +114,29 @@ pub fn run(
                                 let event_tx_clone = event_tx.clone();
                                 thread::spawn(move || {
                                     poll_kindlegen(kindlegen_rx);
-                                    event_tx_clone.send(Event::ProcessingComplete).unwrap();
+                                    event_tx_clone
+                                        .send(Event::ProcessingEvent(
+                                            ProcessingEvent::ProcessingComplete,
+                                        ))
+                                        .unwrap();
                                 });
                             }
-                            config::ConfigAction::Quit => return Ok(()),
                             config::ConfigAction::Continue => {}
                         }
                     }
-                    AppState::Processing(processing_state) => {
-                        if key.code == event::KeyCode::Char('q') {
-                            return Ok(());
-                        } else if key.code == event::KeyCode::Up
-                            || key.code == event::KeyCode::Char('k')
-                        {
-                            processing_state.handle_scroll(processing::ScrollDirection::Up);
-                        } else if key.code == event::KeyCode::Down
-                            || key.code == event::KeyCode::Char('j')
-                        {
-                            processing_state.handle_scroll(processing::ScrollDirection::Down);
-                        }
-                    }
-                    AppState::Complete => {
-                        if key.code == event::KeyCode::Char('q') {
-                            return Ok(());
-                        }
-                    }
-                },
-                _ => {}
+                    AppState::Processing(processing_state) => processing_state.handle_key(key),
+                }
             }
-        }
-
-        // Handle processing events
-        let mut should_complete = false;
-        match &mut state {
-            AppState::Processing(processing_state) => {
-                // Check new event receiver
-                while let Ok(event) = new_event_rx.try_recv() {
-                    // Check if processing is complete
-                    if matches!(event, Event::ProcessingComplete) {
-                        should_complete = true;
-                    }
+            Event::Resize => {
+                terminal.autoresize()?;
+            }
+            Event::Tick => {}
+            Event::ProcessingEvent(event) => {
+                if let AppState::Processing(processing_state) = state {
                     processing_state.handle_event(event);
                 }
             }
-            _ => {}
-        }
-
-        if should_complete {
-            state = AppState::Complete;
         }
     }
-}
-
-fn render_completion_screen(area: Rect, buf: &mut Buffer) {
-    let chunks = Layout::default()
-        .direction(ratatui::layout::Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
-        ])
-        .split(area);
-
-    // Title
-    let title = Paragraph::new("Processing Complete!")
-        .style(
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::NONE));
-    title.render(chunks[0], buf);
-
-    // Success message
-    let message = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("✓ ", Style::default().fg(Color::Green)),
-            Span::raw("All manga files have been processed successfully!"),
-        ]),
-        Line::from(""),
-        Line::from(
-            "The converted .mobi files are saved in the same directory as the source files.",
-        ),
-        Line::from(""),
-        Line::from("You can now transfer them to your Kindle device."),
-    ];
-
-    let content = Paragraph::new(message).alignment(Alignment::Center).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green))
-            .title("Summary")
-            .title_alignment(Alignment::Center),
-    );
-    content.render(chunks[1], buf);
-
-    // Footer
-    let footer = Paragraph::new("Press 'q' to quit")
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Center);
-    footer.render(chunks[2], buf);
+    Ok(true)
 }
