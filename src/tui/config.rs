@@ -7,7 +7,6 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
-    errors::Errors,
     picker::Picker,
     thread::{ResizeRequest, ResizeResponse, ThreadProtocol},
     Resize, StatefulImage,
@@ -38,7 +37,7 @@ pub struct ConfigState {
 
 #[derive(Debug)]
 pub struct MangaFile {
-    pub path: PathBuf,
+    pub archive_path: PathBuf,
     pub name: String,
 }
 
@@ -59,7 +58,7 @@ pub struct PreviewState {
     thread_protocol: ThreadProtocol,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
-    pub loaded_image: Option<LoadedPreviewImage>,
+    loaded_image: Option<LoadedPreviewImage>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +71,10 @@ pub struct LoadedPreviewImage {
 }
 
 enum PreviewRequest {
-    LoadFile { path: PathBuf, config: ComicConfig },
+    LoadFile {
+        archive_path: PathBuf,
+        config: ComicConfig,
+    },
 }
 
 pub enum ConfigEvent {
@@ -82,7 +84,7 @@ pub enum ConfigEvent {
         file: ArchiveFile,
         config: ComicConfig,
     },
-    ResizeComplete(Result<ResizeResponse, Errors>),
+    ResizeComplete(ResizeResponse),
     Error(String),
 }
 
@@ -165,7 +167,7 @@ impl ConfigState {
             .iter()
             .zip(&self.selected_files)
             .filter(|(_, selected)| **selected)
-            .map(|(file, _)| file.path.clone())
+            .map(|(file, _)| file.archive_path.clone())
             .collect();
 
         if !selected_paths.is_empty() {
@@ -224,18 +226,43 @@ impl ConfigState {
         }
     }
 
-    pub fn request_preview(&mut self) {
+    // request a preview for the selected file
+    fn request_preview_for_selected(&mut self) {
         if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
                 let _ = self
                     .preview_state
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
-                        path: file.path.clone(),
+                        archive_path: file.archive_path.clone(),
                         config: self.config,
                     });
             }
         }
+    }
+
+    /// refresh the current preview
+    fn refresh_preview(&mut self) {
+        if let Some(loaded_image) = self.preview_state.loaded_image.as_ref() {
+            let file = self
+                .files
+                .iter()
+                .any(|f| f.archive_path == loaded_image.archive_path);
+            if file {
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile {
+                        archive_path: loaded_image.archive_path.clone(),
+                        config: self.config,
+                    });
+            }
+        }
+    }
+    pub fn update_picker(&mut self, new_picker: Picker) {
+        self.picker = new_picker;
+        self.preview_state.thread_protocol.empty_protocol();
+        self.refresh_preview();
     }
 
     fn select_previous(&mut self) {
@@ -308,17 +335,12 @@ impl ConfigState {
                 self.preview_state.thread_protocol =
                     ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
             }
-            ConfigEvent::ResizeComplete(result) => match result {
-                Ok(response) => {
-                    let _ = self
-                        .preview_state
-                        .thread_protocol
-                        .update_resized_protocol(response);
-                }
-                Err(e) => {
-                    tracing::warn!("Resize error: {:?}", e);
-                }
-            },
+            ConfigEvent::ResizeComplete(response) => {
+                let _ = self
+                    .preview_state
+                    .thread_protocol
+                    .update_resized_protocol(response);
+            }
             ConfigEvent::Error(err) => {
                 tracing::warn!("Preview error: {}", err);
             }
@@ -858,7 +880,10 @@ fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                files.push(MangaFile { path, name });
+                files.push(MangaFile {
+                    archive_path: path,
+                    name,
+                });
             }
         }
     }
@@ -915,7 +940,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                     .preview_state
                     .loaded_image
                     .as_ref()
-                    .map(|loaded| loaded.archive_path != selected_file.path)
+                    .map(|loaded| loaded.archive_path != selected_file.archive_path)
             })
             .unwrap_or(true);
 
@@ -924,7 +949,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .with_mouse_event(self.state.last_mouse_click)
             .enabled(config_changed || file_changed)
             .on_click(|| {
-                self.state.request_preview();
+                self.state.request_preview_for_selected();
             })
             .render(button_area, buf);
 
@@ -986,7 +1011,10 @@ fn preview_worker(
     loop {
         if let Some(request) = get_latest(&rx) {
             match request {
-                PreviewRequest::LoadFile { path, config } => rayon::spawn({
+                PreviewRequest::LoadFile {
+                    archive_path: path,
+                    config,
+                } => rayon::spawn({
                     let tx = tx.clone();
                     move || {
                         let result = load_and_process_preview(&path, &config);
@@ -1016,11 +1044,15 @@ fn preview_worker(
             log::debug!("Processing resize request");
             rayon::spawn({
                 let tx = tx.clone();
-                move || {
-                    let result = resize_request.resize_encode();
-                    let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
-                        result,
-                    )));
+                move || match resize_request.resize_encode() {
+                    Ok(response) => {
+                        let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
+                            response,
+                        )));
+                    }
+                    Err(e) => {
+                        tracing::warn!("Resize error: {:?}", e);
+                    }
                 }
             });
         }

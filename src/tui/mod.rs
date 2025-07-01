@@ -113,10 +113,7 @@ fn process_events(
                 terminal.autoresize()?;
                 if let AppState::Config(c) = state {
                     if let Some(picker) = picker {
-                        c.picker = picker;
-                        if c.preview_state.loaded_image.is_some() {
-                            c.request_preview();
-                        }
+                        c.update_picker(picker);
                     }
                 }
             }
