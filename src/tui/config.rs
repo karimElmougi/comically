@@ -316,7 +316,7 @@ impl ConfigState {
                 self.config.contrast = if increase {
                     (current + step).min(2.0)
                 } else {
-                    (current - step).max(0.5)
+                    (current - step).max(0.0)
                 };
             }
         };
