@@ -5,7 +5,7 @@ pub mod theme;
 use ratatui::{
     backend::Backend,
     crossterm::event,
-    style::{palette, Modifier, Style},
+    style::{palette, Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
     Terminal,
@@ -177,18 +177,18 @@ pub fn render_title(theme: &Theme) -> impl Widget {
 
     let (c1, c2, c3, c4, c5) = match theme.mode {
         ThemeMode::Dark => (
-            palette::tailwind::STONE.c100,
-            palette::tailwind::STONE.c200,
-            palette::tailwind::STONE.c300,
-            palette::tailwind::STONE.c400,
-            palette::tailwind::STONE.c500,
+            palette::tailwind::SLATE.c300,
+            palette::tailwind::SLATE.c400,
+            palette::tailwind::CYAN.c600,
+            palette::tailwind::CYAN.c500,
+            palette::tailwind::CYAN.c400,
         ),
         ThemeMode::Light => (
-            palette::tailwind::STONE.c900,
-            palette::tailwind::STONE.c800,
-            palette::tailwind::STONE.c700,
-            palette::tailwind::STONE.c600,
-            palette::tailwind::STONE.c500,
+            Color::Rgb(131, 148, 150),  // Solarized base0
+            Color::Rgb(101, 123, 131),  // Solarized base00
+            Color::Rgb(88, 110, 117),   // Solarized base01
+            Color::Rgb(38, 139, 210),   // Solarized blue
+            Color::Rgb(42, 161, 152),   // Solarized cyan
         ),
     };
 

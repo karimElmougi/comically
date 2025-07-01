@@ -448,12 +448,12 @@ impl<'a> Widget for ConfigScreen<'a> {
 
         let footer_text = match (self.state.focus, self.state.selected_field) {
             (Focus::FileList, _) => {
-                "↑/↓: Navigate | Space: Toggle | a: Toggle All | Tab: Switch Panel | q: Quit"
+                "↑/↓: navigate | space: toggle | a: toggle all | tab: switch panel | t: theme | q: quit"
             }
             (Focus::Settings, Some(_)) => {
-                "←/→: Adjust | Shift+←/→: Fine adjust | Esc: Cancel | Enter: Process | q: Quit"
+                "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | t: theme | q: quit"
             }
-            (Focus::Settings, None) => "Enter: Start | Tab: Switch | q: Quit | d: Toggle Theme",
+            (Focus::Settings, None) => "enter: start | tab: switch | t: theme| q: quit",
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(self.theme.content))
@@ -506,7 +506,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .block(
                 Block::default()
                     .title(format!(
-                        "Files ({} selected)",
+                        "files ({} selected)",
                         self.state.selected_files.iter().filter(|&&s| s).count()
                     ))
                     .borders(Borders::ALL)
@@ -748,7 +748,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         }
 
         let block = Block::default()
-            .title("Settings")
+            .title("settings")
             .borders(Borders::ALL)
             .style(Style::default().fg(if self.state.focus == Focus::Settings {
                 self.theme.focused
@@ -773,13 +773,12 @@ impl<'a> Widget for SettingsWidget<'a> {
         let [reading_direction_area, split_double_pages_area, auto_crop_area] =
             make_grid_layout::<3>(toggles_area, 2, Constraint::Length(4));
 
-        // Reading Direction toggle
         self.render_toggle_button(
-            "Reading Direction",
+            "reading direction",
             if self.state.config.right_to_left {
-                "Right to Left (Manga)"
+                "right to left (manga)"
             } else {
-                "Left to Right"
+                "left to right"
             },
             "[m]",
             reading_direction_area,
@@ -791,11 +790,11 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         // Split Double Pages toggle
         self.render_toggle_button(
-            "Split Double Pages",
+            "split double pages",
             if self.state.config.split_double_page {
-                "Yes"
+                "yes"
             } else {
-                "No"
+                "no"
             },
             "[s]",
             split_double_pages_area,
@@ -805,13 +804,12 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        // Auto Crop toggle
         self.render_toggle_button(
-            "Auto Crop",
+            "auto crop",
             if self.state.config.auto_crop {
-                "Yes"
+                "yes"
             } else {
-                "No"
+                "no"
             },
             "[c]",
             auto_crop_area,
@@ -825,7 +823,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             make_grid_layout::<3>(buttons_area, 3, Constraint::Length(4));
 
         self.render_adjustable_setting(
-            "Quality",
+            "quality",
             &format!("{:3}", self.state.config.compression_quality),
             "[u]",
             quality_area,
@@ -842,7 +840,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         );
 
         self.render_adjustable_setting(
-            "Brightness",
+            "brightness",
             &format!("{:4}", self.state.config.brightness),
             "[b]",
             brightness_area,
@@ -936,7 +934,7 @@ impl<'a> PreviewWidget<'a> {
 impl<'a> Widget for PreviewWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
-            .title("Preview")
+            .title("preview")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border))
             .style(Style::default());
@@ -1023,7 +1021,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                 }
             }
         } else {
-            // Show instructions when no preview is loaded
+            // TODO: REMOVE
             let instructions = vec![
                 Line::from(""),
                 Line::from("No preview loaded"),

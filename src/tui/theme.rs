@@ -22,6 +22,7 @@ pub struct Theme {
     pub scrollbar: Color,
     pub scrollbar_thumb: Color,
     pub stage_colors: StageColors,
+    pub gauge_label: Color, // Color for text on progress bars
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -36,47 +37,50 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             mode: ThemeMode::Dark,
-            border: palette::tailwind::STONE.c300,
-            content: palette::tailwind::STONE.c100,
-            background: palette::tailwind::STONE.c950,
+            border: palette::tailwind::SLATE.c600,
+            content: palette::tailwind::SLATE.c200, // Lighter for better contrast
+            background: Color::Rgb(15, 15, 23),     // Very dark blue-black
             focused: palette::tailwind::AMBER.c400,
             primary: palette::tailwind::CYAN.c400,
-            secondary: palette::tailwind::FUCHSIA.c500,
-            key_hint: palette::tailwind::YELLOW.c400,
-            error: palette::tailwind::RED.c500,
-            success: palette::tailwind::EMERALD.c500,
-            warning: palette::tailwind::AMBER.c500,
-            scrollbar: Color::White,
-            scrollbar_thumb: palette::tailwind::CYAN.c400,
+            secondary: palette::tailwind::FUCHSIA.c400,
+            key_hint: palette::tailwind::YELLOW.c300,
+            error: palette::tailwind::RED.c400,
+            success: palette::tailwind::EMERALD.c400,
+            warning: palette::tailwind::ORANGE.c400,
+            scrollbar: palette::tailwind::SLATE.c700,
+            scrollbar_thumb: palette::tailwind::CYAN.c500,
+            gauge_label: palette::tailwind::SLATE.c200, // Same as content for dark mode
             stage_colors: StageColors {
-                extract: palette::tailwind::STONE.c100,
-                process: palette::tailwind::STONE.c300,
-                mobi: palette::tailwind::STONE.c400,
-                epub: palette::tailwind::STONE.c500,
+                extract: palette::tailwind::BLUE.c700,   // Darker, more subtle
+                process: palette::tailwind::PURPLE.c700, // Darker, more subtle
+                mobi: palette::tailwind::PINK.c700,      // Darker, more subtle
+                epub: palette::tailwind::EMERALD.c700,   // Darker, more subtle
             },
         }
     }
 
     pub fn light() -> Self {
+        // Paper-like theme inspired by Solarized Light and old books
         Self {
             mode: ThemeMode::Light,
-            border: palette::tailwind::STONE.c400,
-            content: palette::tailwind::STONE.c800,
-            background: palette::tailwind::STONE.c50,
-            focused: palette::tailwind::AMBER.c600,
-            primary: palette::tailwind::CYAN.c600,
-            secondary: palette::tailwind::FUCHSIA.c600,
-            key_hint: palette::tailwind::AMBER.c700,
-            error: palette::tailwind::RED.c600,
-            success: palette::tailwind::EMERALD.c600,
-            warning: palette::tailwind::AMBER.c600,
-            scrollbar: palette::tailwind::STONE.c300,
-            scrollbar_thumb: palette::tailwind::CYAN.c600,
+            border: Color::Rgb(147, 161, 161), // Solarized base1
+            content: Color::Rgb(88, 110, 117), // Solarized base01 - better contrast
+            background: Color::Rgb(253, 246, 227), // Warm paper color (Solarized base3)
+            focused: Color::Rgb(181, 137, 0),  // Solarized yellow
+            primary: Color::Rgb(38, 139, 210), // Solarized blue
+            secondary: Color::Rgb(108, 113, 196), // Solarized violet
+            key_hint: Color::Rgb(133, 153, 0), // Solarized green
+            error: Color::Rgb(220, 50, 47),    // Solarized red
+            success: Color::Rgb(133, 153, 0),  // Solarized green
+            warning: Color::Rgb(203, 75, 22),  // Solarized orange
+            scrollbar: Color::Rgb(238, 232, 213), // Solarized base2
+            scrollbar_thumb: Color::Rgb(147, 161, 161), // Solarized base1
+            gauge_label: Color::Rgb(7, 54, 66), // Solarized base02 - dark enough for both backgrounds
             stage_colors: StageColors {
-                extract: palette::tailwind::STONE.c300,
-                process: palette::tailwind::STONE.c400,
-                mobi: palette::tailwind::STONE.c500,
-                epub: palette::tailwind::STONE.c600,
+                extract: Color::Rgb(191, 211, 230), // Soft pastel blue
+                process: Color::Rgb(211, 191, 230), // Soft pastel lavender
+                mobi: Color::Rgb(230, 191, 211),    // Soft pastel pink
+                epub: Color::Rgb(191, 230, 211),    // Soft pastel mint
             },
         }
     }

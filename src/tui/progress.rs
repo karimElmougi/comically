@@ -2,8 +2,8 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, KeyEvent, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{palette, Color, Style},
-    text::Line,
+    style::{Color, Style, Stylize},
+    text::{Line, Span},
     widgets::{Block, Borders, Gauge, Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::time::{Duration, Instant};
@@ -302,10 +302,11 @@ fn draw_file_title(buf: &mut Buffer, comic_state: &ComicState, area: Rect, theme
 fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, theme: &Theme) {
     match comic_state.current_status() {
         ComicStatus::Waiting => {
+            let label = Span::styled("waiting", Style::default().fg(theme.content));
             let gauge = Gauge::default()
-                .gauge_style(palette::tailwind::STONE.c500)
+                .gauge_style(theme.border)
                 .ratio(0.0)
-                .label("waiting");
+                .label(label);
 
             gauge.render(area, buf);
         }
@@ -316,10 +317,14 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
         } => {
             let elapsed = start.elapsed();
             let color = stage_color(*stage, theme);
+            let label = Span::styled(
+                format!("{} {:.1}s", stage, elapsed.as_secs_f64()),
+                Style::default().fg(theme.gauge_label),
+            );
             let gauge = Gauge::default()
                 .gauge_style(Style::default().fg(color))
                 .ratio(*progress / 100.0)
-                .label(format!("{} {:.1}s", stage, elapsed.as_secs_f64()));
+                .label(label);
 
             gauge.render(area, buf);
         }
@@ -330,12 +335,13 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
                 .render(area, buf);
         }
         ComicStatus::Failed { error, .. } => {
-            let error = error.to_string();
+            let error_text = error.to_string();
+            let label = Span::styled(error_text, Style::default().fg(theme.content));
 
             let gauge = Gauge::default()
                 .gauge_style(theme.error)
                 .ratio(1.0)
-                .label(error);
+                .label(label);
 
             gauge.render(area, buf);
         }
@@ -375,9 +381,9 @@ fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect, theme: &Them
         Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
     let keys = if show_scrollbar {
-        "q: quit | ↑/k: up | ↓/j: down | t: toggle theme"
+        "↑/k: up | ↓/j: down | t: toggle theme | q: quit"
     } else {
-        "q: quit | t: toggle theme"
+        "t: toggle theme | q: quit"
     };
 
     let keys = Paragraph::new(keys)
@@ -489,6 +495,7 @@ impl<'a> Widget for StageTimingBar<'a> {
                     let label = format!("{:.1}s", stage.duration.as_secs_f64());
 
                     Paragraph::new(label)
+                        .style(Style::default().fg(self.theme.gauge_label))
                         .alignment(ratatui::layout::Alignment::Center)
                         .render(area.clone(), buf);
                 }
@@ -500,8 +507,9 @@ impl<'a> Widget for StageTimingBar<'a> {
         Paragraph::new(total_label)
             .style(
                 Style::default()
-                    .fg(self.theme.content)
-                    .bg(self.theme.primary),
+                    .fg(self.theme.background)
+                    .bg(self.theme.primary)
+                    .bold(),
             )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
