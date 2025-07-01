@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use unrar::Archive;
 use zip::ZipArchive;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArchiveFile {
     // fully qualified path in the archive
     pub file_name: PathBuf,

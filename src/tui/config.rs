@@ -64,7 +64,8 @@ pub struct PreviewState {
 
 #[derive(Debug, Clone)]
 pub struct LoadedPreviewImage {
-    name: String,
+    archive_path: PathBuf,
+    image_file: ArchiveFile,
     width: u32,
     height: u32,
     config: ComicConfig,
@@ -118,8 +119,8 @@ impl ConfigState {
                 split_double_page: true,
                 auto_crop: true,
                 compression_quality: 75,
-                brightness: Some(-10),
-                contrast: Some(1.0),
+                brightness: -10,
+                contrast: 1.0,
             },
             prefix: None,
             focus: Focus::FileList,
@@ -268,21 +269,21 @@ impl ConfigState {
             }
             SelectedField::Brightness => {
                 let step = if is_fine { 1 } else { 5 };
-                let current = self.config.brightness.unwrap_or(-10);
-                self.config.brightness = Some(if increase {
+                let current = self.config.brightness;
+                self.config.brightness = if increase {
                     (current + step).min(100)
                 } else {
                     (current - step).max(-100)
-                });
+                };
             }
             SelectedField::Contrast => {
                 let step = if is_fine { 0.05 } else { 0.1 };
-                let current = self.config.contrast.unwrap_or(1.0);
-                self.config.contrast = Some(if increase {
+                let current = self.config.contrast;
+                self.config.contrast = if increase {
                     (current + step).min(2.0)
                 } else {
                     (current - step).max(0.5)
-                });
+                };
             }
         };
     }
@@ -295,14 +296,9 @@ impl ConfigState {
                 file,
                 config,
             } => {
-                let name = format!(
-                    "{} - {}",
-                    archive_path.file_stem().unwrap().display(),
-                    file.file_stem().display()
-                );
-
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
-                    name,
+                    archive_path,
+                    image_file: file,
                     width: image.width(),
                     height: image.height(),
                     config,
@@ -781,7 +777,7 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         self.render_adjustable_setting(
             "Brightness",
-            &format!("{:4}", self.state.config.brightness.unwrap_or(-10)),
+            &format!("{:4}", self.state.config.brightness),
             "[b]",
             brightness_area,
             buf,
@@ -799,7 +795,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         // Contrast adjustable setting
         self.render_adjustable_setting(
             "Contrast",
-            &format!("{:3.1}", self.state.config.contrast.unwrap_or(1.0)),
+            &format!("{:3.1}", self.state.config.contrast),
             "[t]",
             contrast_area,
             buf,
@@ -888,21 +884,32 @@ impl<'a> Widget for PreviewWidget<'a> {
             ])
             .areas(inner);
 
-        // Render the load preview button
-        let button_text = "Load Preview";
+        let config_changed = self
+            .state
+            .preview_state
+            .loaded_image
+            .as_ref()
+            .map(|loaded| &loaded.config != &self.state.config)
+            .unwrap_or(true);
+
+        let file_changed = self
+            .state
+            .list_state
+            .selected()
+            .and_then(|idx| self.state.files.get(idx))
+            .and_then(|selected_file| {
+                self.state
+                    .preview_state
+                    .loaded_image
+                    .as_ref()
+                    .map(|loaded| loaded.archive_path != selected_file.path)
+            })
+            .unwrap_or(true);
 
         ButtonWidget::new()
-            .text(button_text.to_string())
+            .text("Load Preview".to_string())
             .with_mouse_event(self.state.last_mouse_click)
-            .enabled(
-                Some(&self.state.config)
-                    != self
-                        .state
-                        .preview_state
-                        .loaded_image
-                        .as_ref()
-                        .map(|i| &i.config),
-            )
+            .enabled(config_changed || file_changed)
             .on_click(|| {
                 self.state.request_preview();
             })
@@ -914,7 +921,13 @@ impl<'a> Widget for PreviewWidget<'a> {
             let [title_area, image_area] =
                 Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(preview_area);
 
-            Paragraph::new(loaded_image.name.clone())
+            let name = format!(
+                "{} - {}",
+                loaded_image.archive_path.file_stem().unwrap().display(),
+                loaded_image.image_file.file_stem().display()
+            );
+
+            Paragraph::new(name)
                 .style(Style::default().fg(CONTENT))
                 .alignment(Alignment::Center)
                 .render(title_area, buf);
@@ -1098,8 +1111,6 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
 ) -> anyhow::Result<(image::DynamicImage, ArchiveFile)> {
-    let config = ComicConfig { ..config.clone() };
-
     let mut files = comic_archive::unarchive_comic_iter(path)?;
     let archive_file = files
         .next()
@@ -1107,7 +1118,7 @@ fn load_and_process_preview(
 
     let img = image::load_from_memory(&archive_file.data)?;
 
-    let processed_images = crate::image_processor::process_image(img, &config);
+    let processed_images = crate::image_processor::process_image(img, config);
 
     let first_image = processed_images
         .into_iter()

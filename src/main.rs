@@ -40,8 +40,8 @@ pub struct ComicConfig {
     pub split_double_page: bool,
     pub auto_crop: bool,
     pub compression_quality: u8,
-    pub brightness: Option<i32>,
-    pub contrast: Option<f32>,
+    pub brightness: i32,
+    pub contrast: f32,
 }
 
 fn main() -> anyhow::Result<()> {

@@ -109,11 +109,11 @@ where
     processed_images
 }
 
-fn auto_contrast(img: &mut GrayImage, brightness: Option<i32>, contrast: Option<f32>) {
-    if let Some(brightness) = brightness {
+fn auto_contrast(img: &mut GrayImage, brightness: i32, contrast: f32) {
+    if brightness != 0 {
         image::imageops::colorops::brighten_in_place(img, brightness);
     }
-    if let Some(contrast) = contrast {
+    if contrast != 0.0 {
         image::imageops::colorops::contrast_in_place(img, contrast);
     }
 }
@@ -300,11 +300,11 @@ where
     W: std::io::Write,
 {
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
-    
+
     encoder
         .encode_image(img)
         .with_context(|| "Failed to compress image to JPEG")?;
-    
+
     Ok(())
 }
 
