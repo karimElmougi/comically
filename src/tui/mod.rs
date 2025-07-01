@@ -1,5 +1,5 @@
 pub mod config;
-pub mod processing;
+pub mod progress;
 
 use ratatui::{
     backend::Backend,
@@ -11,7 +11,7 @@ use ratatui::{
 };
 use std::sync::mpsc;
 
-use crate::{poll_kindlegen, process_files, Comic, Event, ProcessingEvent};
+use crate::{poll_kindlegen, process_files, Comic, Event, ProgressEvent};
 use std::thread;
 
 pub const BORDER: Color = palette::tailwind::STONE.c300;
@@ -24,7 +24,7 @@ pub const KEY_HINT: Color = palette::tailwind::YELLOW.c400;
 
 pub enum AppState {
     Config(config::ConfigState),
-    Processing(processing::ProcessingState),
+    Processing(progress::ProgressState),
 }
 
 pub fn run(
@@ -60,7 +60,7 @@ pub fn run(
                             .render(frame.area(), frame.buffer_mut());
                     }
                     AppState::Processing(processing_state) => {
-                        processing::ProcessingScreen::new(processing_state)
+                        progress::ProgressScreen::new(processing_state)
                             .render(frame.area(), frame.buffer_mut());
                     }
                 }
@@ -118,12 +118,12 @@ fn process_events(
                 }
             }
             Event::Tick => {}
-            Event::ProcessingEvent(event) => {
+            Event::Progress(event) => {
                 if let AppState::Processing(processing_state) = state {
                     processing_state.handle_event(event);
                 }
             }
-            Event::ConfigEvent(event) => {
+            Event::Config(event) => {
                 if let AppState::Config(config_state) = state {
                     config_state.handle_event(event);
                 }
@@ -134,7 +134,7 @@ fn process_events(
                 prefix,
             } => {
                 // Transition to processing state
-                *state = AppState::Processing(processing::ProcessingState::new());
+                *state = AppState::Processing(progress::ProgressState::new());
 
                 // Create channels for processing
                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
@@ -151,7 +151,7 @@ fn process_events(
                 thread::spawn(move || {
                     poll_kindlegen(kindlegen_rx);
                     event_tx_clone
-                        .send(Event::ProcessingEvent(ProcessingEvent::ProcessingComplete))
+                        .send(Event::Progress(ProgressEvent::ProcessingComplete))
                         .unwrap();
                 });
             }

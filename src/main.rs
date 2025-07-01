@@ -190,7 +190,7 @@ pub fn process_files(
                 .to_string();
 
             event_tx
-                .send(Event::ProcessingEvent(ProcessingEvent::RegisterComic {
+                .send(Event::Progress(ProgressEvent::RegisterComic {
                     id,
                     file_name: title.clone(),
                 }))
@@ -208,7 +208,7 @@ pub fn process_files(
                 Ok(comic) => Some(comic),
                 Err(e) => {
                     event_tx
-                        .send(Event::ProcessingEvent(ProcessingEvent::ComicUpdate {
+                        .send(Event::Progress(ProgressEvent::ComicUpdate {
                             id,
                             status: ComicStatus::Failed { error: e },
                         }))
@@ -361,9 +361,9 @@ impl Comic {
 
     fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {
         let start = Instant::now();
-        self.notify(ProcessingEvent::ComicUpdate {
+        self.notify(ProgressEvent::ComicUpdate {
             id: self.id,
-            status: ComicStatus::Processing {
+            status: ComicStatus::Progress {
                 stage,
                 progress,
                 start,
@@ -373,28 +373,28 @@ impl Comic {
     }
 
     fn stage_completed(&self, stage: ComicStage, duration: Duration) {
-        self.notify(ProcessingEvent::ComicUpdate {
+        self.notify(ProgressEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::StageCompleted { stage, duration },
         });
     }
 
     fn success(&self) {
-        self.notify(ProcessingEvent::ComicUpdate {
+        self.notify(ProgressEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Success,
         });
     }
 
     fn failed(&self, error: anyhow::Error) {
-        self.notify(ProcessingEvent::ComicUpdate {
+        self.notify(ProgressEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Failed { error },
         });
     }
 
-    fn notify(&self, event: ProcessingEvent) {
-        let _ = self.tx.send(Event::ProcessingEvent(event));
+    fn notify(&self, event: ProgressEvent) {
+        let _ = self.tx.send(Event::Progress(event));
     }
 }
 
@@ -477,8 +477,8 @@ pub enum Event {
     Key(event::KeyEvent),
     Tick,
     Resize(Option<ratatui_image::picker::Picker>),
-    ProcessingEvent(ProcessingEvent),
-    ConfigEvent(ConfigEvent),
+    Progress(ProgressEvent),
+    Config(ConfigEvent),
     StartProcessing {
         files: Vec<PathBuf>,
         config: ComicConfig,
@@ -486,7 +486,7 @@ pub enum Event {
     },
 }
 
-pub enum ProcessingEvent {
+pub enum ProgressEvent {
     RegisterComic { id: usize, file_name: String },
     ComicUpdate { id: usize, status: ComicStatus },
     ProcessingComplete,
@@ -498,7 +498,7 @@ pub enum ComicStatus {
     Waiting,
 
     // currently processing a specific stage
-    Processing {
+    Progress {
         stage: ComicStage,
         progress: f64,
         start: Instant,

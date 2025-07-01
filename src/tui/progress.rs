@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 
 use crate::{
     tui::{render_title, BACKGROUND, BORDER, CONTENT, PRIMARY},
-    ComicStage, ComicStatus, ProcessingEvent,
+    ComicStage, ComicStatus, ProgressEvent,
 };
 
-pub struct ProcessingState {
+pub struct ProgressState {
     start: Instant,
     comics: Vec<ComicState>,
-    processing_complete: Option<Duration>,
+    complete: Option<Duration>,
     scroll_offset: usize,
 }
 
@@ -62,19 +62,19 @@ impl ComicState {
     }
 }
 
-impl ProcessingState {
+impl ProgressState {
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
             comics: Vec::new(),
-            processing_complete: None,
+            complete: None,
             scroll_offset: 0,
         }
     }
 
-    pub fn handle_event(&mut self, event: ProcessingEvent) {
+    pub fn handle_event(&mut self, event: ProgressEvent) {
         match event {
-            ProcessingEvent::RegisterComic { id, file_name } => {
+            ProgressEvent::RegisterComic { id, file_name } => {
                 debug_assert!(self.comics.get(id).is_none(), "comic already registered");
                 debug_assert!(id <= self.comics.len(), "id out of bounds");
 
@@ -92,7 +92,7 @@ impl ProcessingState {
                     };
                 }
             }
-            ProcessingEvent::ComicUpdate { id, status } => {
+            ProgressEvent::ComicUpdate { id, status } => {
                 if let Some(comic) = self.comics.get_mut(id) {
                     match status {
                         ComicStatus::StageCompleted { stage, duration } => {
@@ -105,8 +105,8 @@ impl ProcessingState {
                     panic!("Comic state not found for id: {}", id);
                 }
             }
-            ProcessingEvent::ProcessingComplete => {
-                self.processing_complete = Some(self.start.elapsed());
+            ProgressEvent::ProcessingComplete => {
+                self.complete = Some(self.start.elapsed());
             }
         }
     }
@@ -144,17 +144,17 @@ impl ProcessingState {
     }
 }
 
-pub struct ProcessingScreen<'a> {
-    state: &'a mut ProcessingState,
+pub struct ProgressScreen<'a> {
+    state: &'a mut ProgressState,
 }
 
-impl<'a> ProcessingScreen<'a> {
-    pub fn new(state: &'a mut ProcessingState) -> Self {
+impl<'a> ProgressScreen<'a> {
+    pub fn new(state: &'a mut ProgressState) -> Self {
         Self { state }
     }
 }
 
-impl<'a> Widget for ProcessingScreen<'a> {
+impl<'a> Widget for ProgressScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         buf.set_style(area, Style::default().bg(BACKGROUND));
 
@@ -173,7 +173,7 @@ impl<'a> Widget for ProcessingScreen<'a> {
     }
 }
 
-fn draw_header(buf: &mut Buffer, state: &ProcessingState, header_area: Rect) {
+fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect) {
     let [title_area, progress] =
         Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
             .areas(header_area);
@@ -203,9 +203,7 @@ fn draw_header(buf: &mut Buffer, state: &ProcessingState, header_area: Rect) {
     } else {
         0.0
     };
-    let elapsed = state
-        .processing_complete
-        .unwrap_or_else(|| state.start.elapsed());
+    let elapsed = state.complete.unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
         .gauge_style(Style::default().fg(PRIMARY))
@@ -226,7 +224,7 @@ fn draw_header(buf: &mut Buffer, state: &ProcessingState, header_area: Rect) {
         .render(progress, buf);
 }
 
-fn draw_main_content(buf: &mut Buffer, state: &mut ProcessingState, area: Rect) {
+fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect) {
     let [names_area, status_area, scrollbar_area] = Layout::horizontal([
         Constraint::Percentage(15),
         Constraint::Percentage(85),
@@ -309,7 +307,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
 
             gauge.render(area, buf);
         }
-        ComicStatus::Processing {
+        ComicStatus::Progress {
             stage,
             progress,
             start,
@@ -344,7 +342,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
 
 fn draw_scrollbar(
     buf: &mut Buffer,
-    state: &mut ProcessingState,
+    state: &mut ProgressState,
     area: Rect,
     total_items: usize,
     visible_height: usize,
@@ -367,7 +365,7 @@ fn draw_scrollbar(
     }
 }
 
-fn draw_footer(buf: &mut Buffer, state: &ProcessingState, area: Rect) {
+fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect) {
     let show_scrollbar = !state.comics.is_empty();
 
     let [controls_area, legend_area] =

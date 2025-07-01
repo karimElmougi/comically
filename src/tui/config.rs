@@ -1046,7 +1046,7 @@ fn preview_worker(
 
                     match result {
                         Ok((image, file)) => {
-                            let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded {
+                            let _ = tx.send(crate::Event::Config(ConfigEvent::ImageLoaded {
                                 archive_path: path,
                                 image,
                                 file,
@@ -1054,8 +1054,8 @@ fn preview_worker(
                             }));
                         }
                         Err(e) => {
-                            let _ = tx
-                                .send(crate::Event::ConfigEvent(ConfigEvent::Error(e.to_string())));
+                            let _ =
+                                tx.send(crate::Event::Config(ConfigEvent::Error(e.to_string())));
                         }
                     }
                 }
@@ -1065,9 +1065,7 @@ fn preview_worker(
         if let Some(resize_request) = get_latest(&resize_rx) {
             match resize_request.resize_encode() {
                 Ok(response) => {
-                    let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
-                        response,
-                    )));
+                    let _ = tx.send(crate::Event::Config(ConfigEvent::ResizeComplete(response)));
                 }
                 Err(e) => {
                     log::warn!("preview_worker: Resize error: {:?}", e);
