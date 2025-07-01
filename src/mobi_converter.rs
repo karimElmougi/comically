@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::Comic;
+use crate::comic::Comic;
 
 /// Converts an EPUB file to MOBI using Amazon's KindleGen
 pub fn create_mobi(comic: &Comic) -> Result<SpawnedKindleGen> {

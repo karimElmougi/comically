@@ -11,7 +11,11 @@ use ratatui::{
 };
 use std::sync::mpsc;
 
-use crate::{poll_kindlegen, process_files, Comic, Event, ProgressEvent};
+use crate::{
+    comic::Comic,
+    pipeline::{poll_kindlegen, process_files},
+    Event, ProgressEvent,
+};
 use std::thread;
 
 pub const BORDER: Color = palette::tailwind::STONE.c300;

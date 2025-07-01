@@ -4,8 +4,8 @@ use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 
+use crate::comic::{ComicConfig, ProcessedImage};
 use crate::comic_archive::ArchiveFile;
-use crate::{ComicConfig, ProcessedImage};
 
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,

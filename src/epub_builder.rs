@@ -6,7 +6,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
-use crate::{Comic, ProcessedImage};
+use crate::comic::{Comic, ProcessedImage};
 
 /// Builds an EPUB file from the processed images
 pub fn build_epub(comic: &Comic) -> Result<()> {

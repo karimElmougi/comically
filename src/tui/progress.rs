@@ -9,8 +9,8 @@ use ratatui::{
 use std::time::{Duration, Instant};
 
 use crate::{
+    comic::{ComicStage, ComicStatus, ProgressEvent},
     tui::{render_title, BACKGROUND, BORDER, CONTENT, PRIMARY},
-    ComicStage, ComicStatus, ProgressEvent,
 };
 
 pub struct ProgressState {

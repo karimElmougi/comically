@@ -16,9 +16,9 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
+    comic::ComicConfig,
     comic_archive::{self, ArchiveFile},
     tui::{BACKGROUND, BORDER, CONTENT, FOCUSED, KEY_HINT, PRIMARY, SECONDARY},
-    ComicConfig,
 };
 
 pub struct ConfigState {
