@@ -9,7 +9,7 @@ use ratatui::{
 use ratatui_image::{
     picker::Picker,
     thread::{ResizeRequest, ResizeResponse, ThreadProtocol},
-    Resize, StatefulImage,
+    Resize, ResizeEncodeRender, StatefulImage,
 };
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -54,8 +54,14 @@ pub enum SelectedField {
     Contrast,
 }
 
+enum PreviewProtocolState {
+    None,
+    PendingResize { thread_protocol: ThreadProtocol },
+    Ready { thread_protocol: ThreadProtocol },
+}
+
 pub struct PreviewState {
-    thread_protocol: ThreadProtocol,
+    protocol_state: PreviewProtocolState,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
     loaded_image: Option<LoadedPreviewImage>,
@@ -103,9 +109,6 @@ impl ConfigState {
         // Create channel for resize requests
         let (resize_tx, resize_rx) = mpsc::channel::<ResizeRequest>();
 
-        // Create ThreadProtocol for handling resizing
-        let thread_protocol = ThreadProtocol::new(resize_tx.clone(), None);
-
         let event_tx_clone = event_tx.clone();
         thread::spawn(move || {
             preview_worker(worker_rx, resize_rx, event_tx_clone);
@@ -128,7 +131,7 @@ impl ConfigState {
             focus: Focus::FileList,
             selected_field: None,
             preview_state: PreviewState {
-                thread_protocol,
+                protocol_state: PreviewProtocolState::None,
                 preview_tx,
                 resize_tx,
                 loaded_image: None,
@@ -230,6 +233,9 @@ impl ConfigState {
     fn request_preview_for_selected(&mut self) {
         if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
+                // Reset protocol state when loading a new image
+                self.preview_state.protocol_state = PreviewProtocolState::None;
+
                 let _ = self
                     .preview_state
                     .preview_tx
@@ -241,8 +247,9 @@ impl ConfigState {
         }
     }
 
-    /// refresh the current preview
-    fn refresh_preview(&mut self) {
+    pub fn update_picker(&mut self, new_picker: Picker) {
+        self.picker = new_picker;
+        self.preview_state.protocol_state = PreviewProtocolState::None;
         if let Some(loaded_image) = self.preview_state.loaded_image.as_ref() {
             let file = self
                 .files
@@ -258,11 +265,6 @@ impl ConfigState {
                     });
             }
         }
-    }
-    pub fn update_picker(&mut self, new_picker: Picker) {
-        self.picker = new_picker;
-        self.preview_state.thread_protocol.empty_protocol();
-        self.refresh_preview();
     }
 
     fn select_previous(&mut self) {
@@ -330,17 +332,33 @@ impl ConfigState {
                     height: image.height(),
                     config,
                 });
-                // Create a new resize protocol for the image
                 let protocol = self.picker.new_resize_protocol(image);
-                self.preview_state.thread_protocol =
+                let thread_protocol =
                     ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
+                self.preview_state.protocol_state =
+                    PreviewProtocolState::PendingResize { thread_protocol };
             }
-            ConfigEvent::ResizeComplete(response) => {
-                let _ = self
-                    .preview_state
-                    .thread_protocol
-                    .update_resized_protocol(response);
-            }
+            ConfigEvent::ResizeComplete(response) => match &mut self.preview_state.protocol_state {
+                PreviewProtocolState::PendingResize { thread_protocol } => {
+                    if thread_protocol.update_resized_protocol(response) {
+                        if let PreviewProtocolState::PendingResize { thread_protocol } =
+                            std::mem::replace(
+                                &mut self.preview_state.protocol_state,
+                                PreviewProtocolState::None,
+                            )
+                        {
+                            self.preview_state.protocol_state =
+                                PreviewProtocolState::Ready { thread_protocol };
+                        }
+                    }
+                }
+                PreviewProtocolState::Ready { thread_protocol } => {
+                    let _ = thread_protocol.update_resized_protocol(response);
+                }
+                PreviewProtocolState::None => {
+                    log::warn!("ResizeComplete received but no protocol exists");
+                }
+            },
             ConfigEvent::Error(err) => {
                 tracing::warn!("Preview error: {}", err);
             }
@@ -976,12 +994,21 @@ impl<'a> Widget for PreviewWidget<'a> {
                 self.state.picker.font_size(),
             );
 
-            StatefulWidget::render(
-                image,
-                image_area,
-                buf,
-                &mut self.state.preview_state.thread_protocol,
-            );
+            match &mut self.state.preview_state.protocol_state {
+                PreviewProtocolState::None => {
+                    // Don't render anything, waiting for image to load
+                }
+                PreviewProtocolState::PendingResize { thread_protocol } => {
+                    if let Some(rect) =
+                        thread_protocol.needs_resize(&Resize::Scale(None), image_area)
+                    {
+                        thread_protocol.resize_encode(&Resize::Scale(None), rect);
+                    }
+                }
+                PreviewProtocolState::Ready { thread_protocol } => {
+                    StatefulWidget::render(image, image_area, buf, thread_protocol);
+                }
+            }
         } else {
             // Show instructions when no preview is loaded
             let instructions = vec![
@@ -1036,7 +1063,6 @@ fn preview_worker(
         }
 
         if let Some(resize_request) = get_latest(&resize_rx) {
-            log::debug!("Processing resize request");
             match resize_request.resize_encode() {
                 Ok(response) => {
                     let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
@@ -1044,7 +1070,7 @@ fn preview_worker(
                     )));
                 }
                 Err(e) => {
-                    tracing::warn!("Resize error: {:?}", e);
+                    log::warn!("preview_worker: Resize error: {:?}", e);
                 }
             }
         }

@@ -118,12 +118,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn input_handling(tx: mpsc::Sender<Event>) {
-    const RESIZE_DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
     const TICK_RATE: Duration = Duration::from_millis(200);
 
     let mut last_tick = Instant::now();
     let mut last_dimensions: Option<(u16, u16)> = None;
-    let mut pending_resize: Option<(u16, u16, Instant)> = None;
 
     loop {
         // poll for tick rate duration, if no events, send tick event.
@@ -136,7 +134,23 @@ fn input_handling(tx: mpsc::Sender<Event>) {
                     }
                 }
                 event::Event::Resize(width, height) => {
-                    pending_resize = Some((width, height, Instant::now()));
+                    // only re-create picker if zoom in or out
+                    let picker = last_dimensions
+                        .map_or(true, |(last_width, last_height)| {
+                            width != last_width && height != last_height
+                        })
+                        .then(|| {
+                            ratatui_image::picker::Picker::from_query_stdio()
+                                .inspect_err(|e| log::error!("failed to create picker: {e}"))
+                                .ok()
+                        })
+                        .flatten();
+
+                    last_dimensions = Some((width, height));
+
+                    if tx.send(Event::Resize(picker)).is_err() {
+                        break;
+                    }
                 }
                 event::Event::Mouse(mouse) => {
                     if tx.send(Event::Mouse(mouse)).is_err() {
@@ -146,34 +160,6 @@ fn input_handling(tx: mpsc::Sender<Event>) {
                 _ => {}
             };
         }
-
-        // Check if we have a pending resize that's ready to be processed
-        if let Some((width, height, timestamp)) = pending_resize {
-            if timestamp.elapsed() >= RESIZE_DEBOUNCE_DURATION {
-                let current_dimensions = (width, height);
-
-                // only re-create picker if zoom in or out
-                let picker = last_dimensions
-                    .map_or(true, |(last_width, last_height)| {
-                        width != last_width && height != last_height
-                    })
-                    .then(|| {
-                        ratatui_image::picker::Picker::from_query_stdio()
-                            .inspect_err(|e| log::error!("failed to create picker: {e}"))
-                            .ok()
-                    })
-                    .flatten();
-
-                last_dimensions = Some(current_dimensions);
-
-                if tx.send(Event::Resize(picker)).is_err() {
-                    break;
-                }
-
-                pending_resize = None;
-            }
-        }
-
         if last_tick.elapsed() >= TICK_RATE {
             if tx.send(Event::Tick).is_err() {
                 break;
