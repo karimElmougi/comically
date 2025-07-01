@@ -292,6 +292,22 @@ where
     image::imageops::resize(img, new_width, new_height, filter)
 }
 
+/// Compress an image to JPEG format with the specified quality
+pub fn compress_to_jpeg<I, W>(img: &I, writer: &mut W, quality: u8) -> Result<()>
+where
+    I: GenericImageView,
+    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
+    W: std::io::Write,
+{
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+    
+    encoder
+        .encode_image(img)
+        .with_context(|| "Failed to compress image to JPEG")?;
+    
+    Ok(())
+}
+
 fn save_image<I>(img: &I, path: &Path, quality: u8) -> Result<()>
 where
     I: GenericImageView,
@@ -307,11 +323,7 @@ where
     }
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
-    let mut encoder =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, quality);
-
-    encoder
-        .encode_image(img)
+    compress_to_jpeg(img, &mut output_buffer, quality)
         .with_context(|| format!("Failed to save processed image: {}", path.display()))?;
 
     Ok(())
