@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
-    comic_archive,
+    comic_archive::{self, ArchiveFile},
     tui::{BACKGROUND, BORDER, CONTENT, FOCUSED, KEY_HINT, PRIMARY, SECONDARY},
     ComicConfig,
 };
@@ -62,9 +62,9 @@ pub struct PreviewState {
     pub loaded_image: Option<LoadedPreviewImage>,
 }
 
-#[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct LoadedPreviewImage {
+    name: String,
     width: u32,
     height: u32,
 }
@@ -74,7 +74,11 @@ enum PreviewRequest {
 }
 
 pub enum ConfigEvent {
-    ImageLoaded(image::DynamicImage),
+    ImageLoaded {
+        archive_path: PathBuf,
+        image: image::DynamicImage,
+        file: ArchiveFile,
+    },
     ResizeComplete(Result<ResizeResponse, Errors>),
     Error(String),
 }
@@ -283,14 +287,24 @@ impl ConfigState {
 
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
-            ConfigEvent::ImageLoaded(img) => {
+            ConfigEvent::ImageLoaded {
+                image,
+                archive_path,
+                file,
+            } => {
+                let name = format!(
+                    "{} - {}",
+                    archive_path.file_stem().unwrap().display(),
+                    file.file_stem().display()
+                );
+
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
-                    width: img.width(),
-                    height: img.height(),
+                    name,
+                    width: image.width(),
+                    height: image.height(),
                 });
                 // Create a new resize protocol for the image
-                let protocol = self.picker.new_resize_protocol(img);
-                log::debug!("Created resize protocol for image");
+                let protocol = self.picker.new_resize_protocol(image);
                 self.preview_state.thread_protocol =
                     ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
             }
@@ -881,18 +895,26 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .render(button_area, buf);
 
-        if let Some(loaded_image) = self.state.preview_state.loaded_image {
+        if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(None));
 
-            let area = calculate_centered_image_area(
-                preview_area,
+            let [title_area, image_area] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(preview_area);
+
+            Paragraph::new(loaded_image.name.clone())
+                .style(Style::default().fg(CONTENT))
+                .alignment(Alignment::Center)
+                .render(title_area, buf);
+
+            let image_area = calculate_centered_image_area(
+                image_area,
                 loaded_image,
                 self.state.picker.font_size(),
             );
 
             StatefulWidget::render(
                 image,
-                area,
+                image_area,
                 buf,
                 &mut self.state.preview_state.thread_protocol,
             );
@@ -931,9 +953,13 @@ fn preview_worker(
                         let result = load_and_process_preview(&path, &config);
 
                         match result {
-                            Ok(img) => {
-                                let _ = tx
-                                    .send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded(img)));
+                            Ok((image, file)) => {
+                                let _ =
+                                    tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded {
+                                        archive_path: path,
+                                        image,
+                                        file,
+                                    }));
                             }
                             Err(e) => {
                                 let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::Error(
@@ -966,7 +992,7 @@ fn preview_worker(
 fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
-) -> anyhow::Result<image::DynamicImage> {
+) -> anyhow::Result<(image::DynamicImage, ArchiveFile)> {
     let config = ComicConfig {
         device_dimensions: (600, 800),
         ..config.clone()
@@ -989,7 +1015,7 @@ fn load_and_process_preview(
         .next()
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
 
-    Ok(image::DynamicImage::ImageLuma8(first_image))
+    Ok((image::DynamicImage::ImageLuma8(first_image), archive_file))
 }
 
 fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
@@ -1080,7 +1106,7 @@ impl<'a> Widget for ButtonWidget<'a> {
 
 fn calculate_centered_image_area(
     area: Rect,
-    img: LoadedPreviewImage,
+    img: &LoadedPreviewImage,
     font_size: (u16, u16),
 ) -> Rect {
     // Get terminal cell dimensions from picker (pixels per cell)
