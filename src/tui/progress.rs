@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     comic::{ComicStage, ComicStatus, ProgressEvent},
-    tui::{render_title, BACKGROUND, BORDER, CONTENT, PRIMARY},
+    tui::{render_title, Theme},
 };
 
 pub struct ProgressState {
@@ -146,17 +146,18 @@ impl ProgressState {
 
 pub struct ProgressScreen<'a> {
     state: &'a mut ProgressState,
+    theme: &'a Theme,
 }
 
 impl<'a> ProgressScreen<'a> {
-    pub fn new(state: &'a mut ProgressState) -> Self {
-        Self { state }
+    pub fn new(state: &'a mut ProgressState, theme: &'a Theme) -> Self {
+        Self { state, theme }
     }
 }
 
 impl<'a> Widget for ProgressScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(BACKGROUND));
+        buf.set_style(area, Style::default().bg(self.theme.background));
 
         let vertical = Layout::vertical([
             Constraint::Length(3),
@@ -167,18 +168,18 @@ impl<'a> Widget for ProgressScreen<'a> {
 
         let [header_area, main_area, footer_area] = vertical.areas(area);
 
-        draw_header(buf, self.state, header_area);
-        draw_main_content(buf, self.state, main_area);
-        draw_footer(buf, self.state, footer_area);
+        draw_header(buf, self.state, header_area, self.theme);
+        draw_main_content(buf, self.state, main_area, self.theme);
+        draw_footer(buf, self.state, footer_area, self.theme);
     }
 }
 
-fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect) {
+fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme: &Theme) {
     let [title_area, progress] =
         Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)])
             .areas(header_area);
 
-    render_title().render(title_area, buf);
+    render_title(theme).render(title_area, buf);
 
     let total = state.comics.len();
     let completed = state
@@ -206,7 +207,7 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect) {
     let elapsed = state.complete.unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
-        .gauge_style(Style::default().fg(PRIMARY))
+        .gauge_style(Style::default().fg(theme.primary))
         .label(format!(
             "{}/{} ({:.1}s)",
             successful,
@@ -217,14 +218,14 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect) {
         .block(
             Block::new()
                 .borders(Borders::ALL)
-                .border_style(BORDER)
+                .border_style(theme.border)
                 .title("progress")
                 .title_alignment(Alignment::Center),
         )
         .render(progress, buf);
 }
 
-fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect) {
+fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect, theme: &Theme) {
     let [names_area, status_area, scrollbar_area] = Layout::horizontal([
         Constraint::Percentage(15),
         Constraint::Percentage(85),
@@ -235,13 +236,13 @@ fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect) {
 
     let names_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(BORDER)
+        .border_style(theme.border)
         .title("files")
         .title_alignment(Alignment::Center);
 
     let status_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(BORDER)
+        .border_style(theme.border)
         .title(Line::from("status").centered())
         .title(Line::from("total").right_aligned());
 
@@ -273,11 +274,11 @@ fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect) {
         Layout::vertical(vec![Constraint::Length(1); visible_items.len()]).split(status_inner_area);
 
     for (i, comic) in visible_items.iter().enumerate() {
-        draw_file_title(buf, comic, names_layout[i]);
+        draw_file_title(buf, comic, names_layout[i], theme);
     }
 
     for (i, comic) in visible_items.iter().enumerate() {
-        draw_file_status(buf, comic, status_layout[i]);
+        draw_file_status(buf, comic, status_layout[i], theme);
     }
 
     draw_scrollbar(
@@ -286,18 +287,19 @@ fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect) {
         scrollbar_area,
         state.comics.len(),
         visible_height,
+        theme,
     );
 }
 
-fn draw_file_title(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
+fn draw_file_title(buf: &mut Buffer, comic_state: &ComicState, area: Rect, theme: &Theme) {
     Paragraph::new(comic_state.title.clone())
-        .style(CONTENT)
+        .style(theme.content)
         .alignment(Alignment::Left)
         .block(Block::default().padding(Padding::horizontal(1)))
         .render(area, buf);
 }
 
-fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
+fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, theme: &Theme) {
     match comic_state.current_status() {
         ComicStatus::Waiting => {
             let gauge = Gauge::default()
@@ -313,9 +315,9 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
             start,
         } => {
             let elapsed = start.elapsed();
-            let style: Style = stage_color(*stage).into();
+            let color = stage_color(*stage, theme);
             let gauge = Gauge::default()
-                .gauge_style(style)
+                .gauge_style(Style::default().fg(color))
                 .ratio(*progress / 100.0)
                 .label(format!("{} {:.1}s", stage, elapsed.as_secs_f64()));
 
@@ -323,7 +325,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
         }
         ComicStatus::StageCompleted { .. } => unreachable!(),
         ComicStatus::Success => {
-            StageTimingBar::new(&comic_state.timings)
+            StageTimingBar::new(&comic_state.timings, theme)
                 .width(area.width)
                 .render(area, buf);
         }
@@ -331,7 +333,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect) {
             let error = error.to_string();
 
             let gauge = Gauge::default()
-                .gauge_style(palette::tailwind::RED.c500)
+                .gauge_style(theme.error)
                 .ratio(1.0)
                 .label(error);
 
@@ -346,6 +348,7 @@ fn draw_scrollbar(
     area: Rect,
     total_items: usize,
     visible_height: usize,
+    theme: &Theme,
 ) {
     let show_scrollbar = total_items > visible_height;
     if show_scrollbar {
@@ -356,8 +359,8 @@ fn draw_scrollbar(
         StatefulWidget::render(
             ratatui::widgets::Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(Color::White))
-                .thumb_style(Style::default().fg(PRIMARY)),
+                .style(Style::default().fg(theme.scrollbar))
+                .thumb_style(Style::default().fg(theme.scrollbar_thumb)),
             area,
             buf,
             &mut scroll_state,
@@ -365,30 +368,30 @@ fn draw_scrollbar(
     }
 }
 
-fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect) {
+fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect, theme: &Theme) {
     let show_scrollbar = !state.comics.is_empty();
 
     let [controls_area, legend_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
     let keys = if show_scrollbar {
-        "q: quit | ↑/k: up | ↓/j: down"
+        "q: quit | ↑/k: up | ↓/j: down | t: toggle theme"
     } else {
-        "q: quit"
+        "q: quit | t: toggle theme"
     };
 
     let keys = Paragraph::new(keys)
-        .style(CONTENT)
+        .style(theme.content)
         .alignment(ratatui::layout::Alignment::Center);
 
     keys.render(controls_area, buf);
 
     if !state.comics.is_empty() {
-        draw_stage_legend(buf, legend_area);
+        draw_stage_legend(buf, legend_area, theme);
     }
 }
 
-fn draw_stage_legend(buf: &mut Buffer, area: Rect) {
+fn draw_stage_legend(buf: &mut Buffer, area: Rect, theme: &Theme) {
     let stages = [
         ComicStage::Extract,
         ComicStage::Process,
@@ -403,7 +406,7 @@ fn draw_stage_legend(buf: &mut Buffer, area: Rect) {
     let areas = layout.split(area);
 
     for (i, &stage) in stages.iter().enumerate() {
-        let color = stage_color(stage);
+        let color = stage_color(stage, theme);
 
         let [block_area, text_area] =
             Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(areas[i]);
@@ -411,30 +414,35 @@ fn draw_stage_legend(buf: &mut Buffer, area: Rect) {
         buf.set_style(block_area, Style::default().bg(color));
 
         Paragraph::new(stage.to_string())
-            .style(CONTENT)
+            .style(theme.content)
             .alignment(Alignment::Left)
             .block(Block::default().padding(Padding::horizontal(1)))
             .render(text_area, buf);
     }
 }
 
-fn stage_color(stage: ComicStage) -> Color {
+fn stage_color(stage: ComicStage, theme: &Theme) -> Color {
     match stage {
-        ComicStage::Extract => palette::tailwind::STONE.c100,
-        ComicStage::Process => palette::tailwind::STONE.c300,
-        ComicStage::Mobi => palette::tailwind::STONE.c400,
-        ComicStage::Epub => palette::tailwind::STONE.c500,
+        ComicStage::Extract => theme.stage_colors.extract,
+        ComicStage::Process => theme.stage_colors.process,
+        ComicStage::Mobi => theme.stage_colors.mobi,
+        ComicStage::Epub => theme.stage_colors.epub,
     }
 }
 
 struct StageTimingBar<'a> {
     timing: &'a StageTimings,
+    theme: &'a Theme,
     width: u16,
 }
 
 impl<'a> StageTimingBar<'a> {
-    fn new(timing: &'a StageTimings) -> Self {
-        Self { timing, width: 0 }
+    fn new(timing: &'a StageTimings, theme: &'a Theme) -> Self {
+        Self {
+            timing,
+            theme,
+            width: 0,
+        }
     }
 
     fn width(mut self, width: u16) -> Self {
@@ -473,7 +481,7 @@ impl<'a> Widget for StageTimingBar<'a> {
                 .split(bar_area);
 
             for (stage, area) in self.timing.stages.iter().zip(stage_areas.iter()) {
-                let color = stage_color(stage.stage);
+                let color = stage_color(stage.stage, self.theme);
 
                 buf.set_style(area.clone(), Style::default().bg(color));
 
@@ -490,7 +498,11 @@ impl<'a> Widget for StageTimingBar<'a> {
         let total_label = format!("{:.1}s", total);
 
         Paragraph::new(total_label)
-            .style(Style::default().fg(Color::White).bg(PRIMARY))
+            .style(
+                Style::default()
+                    .fg(self.theme.content)
+                    .bg(self.theme.primary),
+            )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
     }

@@ -18,7 +18,7 @@ use std::thread;
 use crate::{
     comic::ComicConfig,
     comic_archive::{self, ArchiveFile},
-    tui::{BACKGROUND, BORDER, CONTENT, FOCUSED, KEY_HINT, PRIMARY, SECONDARY},
+    tui::Theme,
 };
 
 pub struct ConfigState {
@@ -382,7 +382,7 @@ impl ConfigState {
             KeyCode::Char('b') => {
                 self.selected_field = Some(SelectedField::Brightness);
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('k') => {
                 self.selected_field = Some(SelectedField::Contrast);
             }
             KeyCode::Left => {
@@ -411,17 +411,18 @@ impl ConfigState {
 
 pub struct ConfigScreen<'a> {
     state: &'a mut ConfigState,
+    theme: &'a Theme,
 }
 
 impl<'a> ConfigScreen<'a> {
-    pub fn new(state: &'a mut ConfigState) -> Self {
-        Self { state }
+    pub fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
+        Self { state, theme }
     }
 }
 
 impl<'a> Widget for ConfigScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(BACKGROUND));
+        buf.set_style(area, Style::default().bg(self.theme.background));
 
         let [header_area, main_area, footer_area] = Layout::vertical([
             Constraint::Length(3), // Header
@@ -430,7 +431,7 @@ impl<'a> Widget for ConfigScreen<'a> {
         ])
         .areas(area);
 
-        super::render_title().render(header_area, buf);
+        super::render_title(self.theme).render(header_area, buf);
 
         let [file_list_area, settings_area, preview_area] = Layout::horizontal([
             Constraint::Fill(1),
@@ -439,11 +440,11 @@ impl<'a> Widget for ConfigScreen<'a> {
         ])
         .areas(main_area);
 
-        FileListWidget::new(self.state).render(file_list_area, buf);
+        FileListWidget::new(self.state, self.theme).render(file_list_area, buf);
 
-        SettingsWidget::new(self.state).render(settings_area, buf);
+        SettingsWidget::new(self.state, self.theme).render(settings_area, buf);
 
-        PreviewWidget::new(self.state).render(preview_area, buf);
+        PreviewWidget::new(self.state, self.theme).render(preview_area, buf);
 
         let footer_text = match (self.state.focus, self.state.selected_field) {
             (Focus::FileList, _) => {
@@ -452,12 +453,16 @@ impl<'a> Widget for ConfigScreen<'a> {
             (Focus::Settings, Some(_)) => {
                 "←/→: Adjust | Shift+←/→: Fine adjust | Esc: Cancel | Enter: Process | q: Quit"
             }
-            (Focus::Settings, None) => "Enter: Start | Tab: Switch | q: Quit",
+            (Focus::Settings, None) => "Enter: Start | Tab: Switch | q: Quit | d: Toggle Theme",
         };
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(CONTENT))
+            .style(Style::default().fg(self.theme.content))
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.border),
+            );
         footer.render(footer_area, buf);
 
         // clear the mouse click state
@@ -467,11 +472,12 @@ impl<'a> Widget for ConfigScreen<'a> {
 
 struct FileListWidget<'a> {
     state: &'a mut ConfigState,
+    theme: &'a Theme,
 }
 
 impl<'a> FileListWidget<'a> {
-    fn new(state: &'a mut ConfigState) -> Self {
-        Self { state }
+    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
+        Self { state, theme }
     }
 }
 
@@ -492,7 +498,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .map(|(file, selected)| {
                 let checkbox = if *selected { "[✓]" } else { "[ ]" };
                 let content = format!("{} {}", checkbox, file.name);
-                ListItem::new(content).style(CONTENT)
+                ListItem::new(content).style(self.theme.content)
             })
             .collect();
 
@@ -505,9 +511,9 @@ impl<'a> Widget for FileListWidget<'a> {
                     ))
                     .borders(Borders::ALL)
                     .border_style(if self.state.focus == Focus::FileList {
-                        FOCUSED
+                        self.theme.focused
                     } else {
-                        BORDER
+                        self.theme.border
                     }),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -519,11 +525,12 @@ impl<'a> Widget for FileListWidget<'a> {
 
 struct SettingsWidget<'a> {
     state: &'a mut ConfigState,
+    theme: &'a Theme,
 }
 
 impl<'a> SettingsWidget<'a> {
-    fn new(state: &'a mut ConfigState) -> Self {
-        Self { state }
+    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
+        Self { state, theme }
     }
 
     fn render_toggle_button(
@@ -543,7 +550,7 @@ impl<'a> SettingsWidget<'a> {
                 .areas(label_area);
 
         Paragraph::new(label)
-            .style(Style::default().fg(CONTENT))
+            .style(Style::default().fg(self.theme.content))
             .render(text_area, buf);
 
         if let Some(mouse) = self.state.last_mouse_click {
@@ -554,19 +561,19 @@ impl<'a> SettingsWidget<'a> {
 
         let value_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(PRIMARY));
+            .border_style(Style::default().fg(self.theme.primary));
 
         let value_inner = value_block.inner(value_area);
         value_block.render(value_area, buf);
 
         Paragraph::new(value)
-            .style(Style::default().fg(PRIMARY))
+            .style(Style::default().fg(self.theme.primary))
             .alignment(Alignment::Center)
             .render(value_inner, buf);
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(KEY_HINT))
+            .style(Style::default().fg(self.theme.key_hint))
             .render(key_area, buf);
     }
 
@@ -582,12 +589,12 @@ impl<'a> SettingsWidget<'a> {
         mut on_adjust: impl FnMut(&mut ConfigState, bool),
     ) {
         let style = if selected {
-            Style::default().fg(CONTENT).underlined()
+            Style::default().fg(self.theme.content).underlined()
         } else {
-            Style::default().fg(CONTENT)
+            Style::default().fg(self.theme.content)
         };
 
-        let button_style = Style::default().fg(PRIMARY);
+        let button_style = Style::default().fg(self.theme.primary);
 
         let [header_area, buttons_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
@@ -603,7 +610,7 @@ impl<'a> SettingsWidget<'a> {
         Paragraph::new(label).style(style).render(text_area, buf);
 
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(KEY_HINT))
+            .style(Style::default().fg(self.theme.key_hint))
             .render(shortcut_area, buf);
 
         let [minus_area, value_area, plus_area] = Layout::horizontal([
@@ -636,7 +643,11 @@ impl<'a> SettingsWidget<'a> {
             .areas(value_area);
 
         Paragraph::new(value)
-            .style(Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(self.theme.primary)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
             .render(value_layout, buf);
 
@@ -666,12 +677,12 @@ impl<'a> SettingsWidget<'a> {
             Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(title_area);
 
         Paragraph::new("Dimensions:")
-            .style(Style::default().fg(CONTENT))
+            .style(Style::default().fg(self.theme.content))
             .render(label_area, buf);
 
         let current_dims = self.state.config.device_dimensions;
         Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
-            .style(Style::default().fg(PRIMARY))
+            .style(Style::default().fg(self.theme.primary))
             .render(current_dims_area, buf);
 
         const LEN: usize = 4;
@@ -698,9 +709,11 @@ impl<'a> SettingsWidget<'a> {
             }
 
             let button_style = if is_current {
-                Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(self.theme.secondary)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(PRIMARY)
+                Style::default().fg(self.theme.primary)
             };
 
             let button_block = Block::default()
@@ -738,9 +751,9 @@ impl<'a> Widget for SettingsWidget<'a> {
             .title("Settings")
             .borders(Borders::ALL)
             .style(Style::default().fg(if self.state.focus == Focus::Settings {
-                FOCUSED
+                self.theme.focused
             } else {
-                BORDER
+                self.theme.border
             }));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -845,11 +858,10 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        // Contrast adjustable setting
         self.render_adjustable_setting(
             "Contrast",
             &format!("{:3.1}", self.state.config.contrast),
-            "[t]",
+            "[k]",
             contrast_area,
             buf,
             self.state.selected_field == Some(SelectedField::Contrast),
@@ -871,7 +883,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        ButtonWidget::new()
+        ButtonWidget::new(self.theme)
             .text("Start ⏵".to_string())
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
@@ -912,11 +924,12 @@ fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
 
 struct PreviewWidget<'a> {
     state: &'a mut ConfigState,
+    theme: &'a Theme,
 }
 
 impl<'a> PreviewWidget<'a> {
-    fn new(state: &'a mut ConfigState) -> Self {
-        Self { state }
+    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
+        Self { state, theme }
     }
 }
 
@@ -925,7 +938,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         let block = Block::default()
             .title("Preview")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER))
+            .border_style(Style::default().fg(self.theme.border))
             .style(Style::default());
 
         let inner = block.inner(area);
@@ -962,7 +975,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
-        ButtonWidget::new()
+        ButtonWidget::new(self.theme)
             .text("Load Preview".to_string())
             .with_mouse_event(self.state.last_mouse_click)
             .enabled(config_changed || file_changed)
@@ -984,7 +997,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             );
 
             Paragraph::new(name)
-                .style(Style::default().fg(CONTENT))
+                .style(Style::default().fg(self.theme.content))
                 .alignment(Alignment::Center)
                 .render(title_area, buf);
 
@@ -1023,7 +1036,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
             let msg = Paragraph::new(instructions)
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(CONTENT));
+                .style(Style::default().fg(self.theme.content));
             msg.render(layout, buf);
         }
     }
@@ -1083,26 +1096,34 @@ pub struct ButtonWidget<'a> {
     pub enabled: bool,
     pub mouse_event: Option<MouseEvent>,
     pub on_click: Option<Box<dyn FnOnce() + 'a>>,
+    pub theme: &'a Theme,
 }
 
-impl ButtonWidget<'_> {
-    pub fn new() -> Self {
+impl<'a> ButtonWidget<'a> {
+    pub fn new(theme: &'a Theme) -> Self {
         Self {
             text: "".to_string(),
-            style: Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD),
+            style: Style::default()
+                .fg(theme.secondary)
+                .add_modifier(Modifier::BOLD),
             mouse_event: None,
             on_click: None,
             enabled: true,
+            theme,
         }
     }
 
-    pub fn on_click<'a>(self, on_click: impl FnOnce() + 'a) -> ButtonWidget<'a> {
+    pub fn on_click<'b>(self, on_click: impl FnOnce() + 'b) -> ButtonWidget<'b>
+    where
+        'a: 'b,
+    {
         ButtonWidget {
             text: self.text,
             style: self.style,
             enabled: self.enabled,
             mouse_event: self.mouse_event,
             on_click: Some(Box::new(on_click)),
+            theme: self.theme,
         }
     }
 

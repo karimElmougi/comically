@@ -1,10 +1,11 @@
 pub mod config;
 pub mod progress;
+pub mod theme;
 
 use ratatui::{
     backend::Backend,
     crossterm::event,
-    style::{palette, Color, Modifier, Style},
+    style::{palette, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
     Terminal,
@@ -18,13 +19,12 @@ use crate::{
 };
 use std::thread;
 
-pub const BORDER: Color = palette::tailwind::STONE.c300;
-pub const CONTENT: Color = palette::tailwind::STONE.c100;
-pub const BACKGROUND: Color = palette::tailwind::STONE.c950;
-pub const FOCUSED: Color = palette::tailwind::AMBER.c400;
-pub const PRIMARY: Color = palette::tailwind::CYAN.c400;
-pub const SECONDARY: Color = palette::tailwind::FUCHSIA.c500;
-pub const KEY_HINT: Color = palette::tailwind::YELLOW.c400;
+pub use theme::{Theme, ThemeMode};
+
+pub struct App {
+    pub state: AppState,
+    pub theme: Theme,
+}
 
 pub enum AppState {
     Config(config::ConfigState),
@@ -37,7 +37,10 @@ pub fn run(
     event_rx: mpsc::Receiver<Event>,
     picker: ratatui_image::picker::Picker,
 ) -> anyhow::Result<()> {
-    let mut state = AppState::Config(config::ConfigState::new(event_tx.clone(), picker)?);
+    let mut app = App {
+        state: AppState::Config(config::ConfigState::new(event_tx.clone(), picker)?),
+        theme: Theme::default(),
+    };
     let mut pending_events = Vec::new();
 
     'outer: loop {
@@ -49,7 +52,7 @@ pub fn run(
         let pending = !pending_events.is_empty();
 
         // Process events
-        if !process_events(terminal, &mut state, &mut pending_events, &event_tx)? {
+        if !process_events(terminal, &mut app, &mut pending_events, &event_tx)? {
             break 'outer;
         }
 
@@ -58,13 +61,13 @@ pub fn run(
             terminal.draw(|frame| {
                 let render_start = std::time::Instant::now();
 
-                match &mut state {
+                match &mut app.state {
                     AppState::Config(config_state) => {
-                        config::ConfigScreen::new(config_state)
+                        config::ConfigScreen::new(config_state, &app.theme)
                             .render(frame.area(), frame.buffer_mut());
                     }
                     AppState::Processing(processing_state) => {
-                        progress::ProgressScreen::new(processing_state)
+                        progress::ProgressScreen::new(processing_state, &app.theme)
                             .render(frame.area(), frame.buffer_mut());
                     }
                 }
@@ -89,13 +92,13 @@ pub fn run(
 
 fn process_events(
     terminal: &mut Terminal<impl Backend>,
-    state: &mut AppState,
+    app: &mut App,
     pending_events: &mut Vec<Event>,
     event_tx: &mpsc::Sender<Event>,
 ) -> anyhow::Result<bool> {
     for event in pending_events.drain(..) {
         match event {
-            Event::Mouse(mouse) => match state {
+            Event::Mouse(mouse) => match &mut app.state {
                 AppState::Config(c) => {
                     c.handle_mouse(mouse);
                 }
@@ -108,14 +111,19 @@ fn process_events(
                     return Ok(false);
                 }
 
-                match state {
+                if key.code == event::KeyCode::Char('t') {
+                    app.theme.toggle();
+                    continue;
+                }
+
+                match &mut app.state {
                     AppState::Config(c) => c.handle_key(key),
                     AppState::Processing(p) => p.handle_key(key),
                 }
             }
             Event::Resize(picker) => {
                 terminal.autoresize()?;
-                if let AppState::Config(c) = state {
+                if let AppState::Config(c) = &mut app.state {
                     if let Some(picker) = picker {
                         c.update_picker(picker);
                     }
@@ -123,12 +131,12 @@ fn process_events(
             }
             Event::Tick => {}
             Event::Progress(event) => {
-                if let AppState::Processing(processing_state) = state {
+                if let AppState::Processing(processing_state) = &mut app.state {
                     processing_state.handle_event(event);
                 }
             }
             Event::Config(event) => {
-                if let AppState::Config(config_state) = state {
+                if let AppState::Config(config_state) = &mut app.state {
                     config_state.handle_event(event);
                 }
             }
@@ -138,7 +146,7 @@ fn process_events(
                 prefix,
             } => {
                 // Transition to processing state
-                *state = AppState::Processing(progress::ProgressState::new());
+                app.state = AppState::Processing(progress::ProgressState::new());
 
                 // Create channels for processing
                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
@@ -164,65 +172,41 @@ fn process_events(
     Ok(true)
 }
 
-pub fn render_title() -> impl Widget {
+pub fn render_title(theme: &Theme) -> impl Widget {
     let modifier = Modifier::BOLD | Modifier::ITALIC;
+
+    let (c1, c2, c3, c4, c5) = match theme.mode {
+        ThemeMode::Dark => (
+            palette::tailwind::STONE.c100,
+            palette::tailwind::STONE.c200,
+            palette::tailwind::STONE.c300,
+            palette::tailwind::STONE.c400,
+            palette::tailwind::STONE.c500,
+        ),
+        ThemeMode::Light => (
+            palette::tailwind::STONE.c900,
+            palette::tailwind::STONE.c800,
+            palette::tailwind::STONE.c700,
+            palette::tailwind::STONE.c600,
+            palette::tailwind::STONE.c500,
+        ),
+    };
+
     let styled_title = Line::from(vec![
-        Span::styled(
-            "c",
-            Style::default()
-                .fg(palette::tailwind::STONE.c100)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "o",
-            Style::default()
-                .fg(palette::tailwind::STONE.c100)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "m",
-            Style::default()
-                .fg(palette::tailwind::STONE.c200)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "i",
-            Style::default()
-                .fg(palette::tailwind::STONE.c200)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "c",
-            Style::default()
-                .fg(palette::tailwind::STONE.c300)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "a",
-            Style::default()
-                .fg(palette::tailwind::STONE.c300)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "l",
-            Style::default()
-                .fg(palette::tailwind::STONE.c400)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "l",
-            Style::default()
-                .fg(palette::tailwind::STONE.c400)
-                .add_modifier(modifier),
-        ),
-        Span::styled(
-            "y",
-            Style::default()
-                .fg(palette::tailwind::STONE.c500)
-                .add_modifier(modifier),
-        ),
+        Span::styled("c", Style::default().fg(c1).add_modifier(modifier)),
+        Span::styled("o", Style::default().fg(c1).add_modifier(modifier)),
+        Span::styled("m", Style::default().fg(c2).add_modifier(modifier)),
+        Span::styled("i", Style::default().fg(c2).add_modifier(modifier)),
+        Span::styled("c", Style::default().fg(c3).add_modifier(modifier)),
+        Span::styled("a", Style::default().fg(c3).add_modifier(modifier)),
+        Span::styled("l", Style::default().fg(c4).add_modifier(modifier)),
+        Span::styled("l", Style::default().fg(c4).add_modifier(modifier)),
+        Span::styled("y", Style::default().fg(c5).add_modifier(modifier)),
     ]);
 
-    Paragraph::new(styled_title.centered())
-        .block(Block::new().borders(Borders::ALL).border_style(BORDER))
+    Paragraph::new(styled_title.centered()).block(
+        Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme.border),
+    )
 }
