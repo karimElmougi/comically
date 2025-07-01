@@ -3,7 +3,6 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
@@ -95,8 +94,11 @@ pub enum ConfigEvent {
 }
 
 impl ConfigState {
-    pub fn new(event_tx: mpsc::Sender<crate::Event>, picker: Picker) -> anyhow::Result<Self> {
-        let files = find_manga_files(".")?;
+    pub fn new(
+        event_tx: mpsc::Sender<crate::Event>,
+        picker: Picker,
+        files: Vec<MangaFile>,
+    ) -> anyhow::Result<Self> {
         let selected_files = vec![true; files.len()]; // Select all by default
 
         let mut list_state = ListState::default();
@@ -114,7 +116,7 @@ impl ConfigState {
             preview_worker(worker_rx, resize_rx, event_tx_clone);
         });
 
-        let state = Self {
+        let mut state = Self {
             files,
             selected_files,
             list_state,
@@ -140,6 +142,9 @@ impl ConfigState {
             event_tx,
             last_mouse_click: None,
         };
+
+        // Auto-load the first image
+        state.request_preview_for_selected();
 
         Ok(state)
     }
@@ -891,7 +896,7 @@ impl<'a> Widget for SettingsWidget<'a> {
     }
 }
 
-fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
+pub fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
     let mut files = Vec::new();
 
     for entry in std::fs::read_dir(dir)? {
@@ -1021,21 +1026,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                 }
             }
         } else {
-            // TODO: REMOVE
-            let instructions = vec![
-                Line::from(""),
-                Line::from("No preview loaded"),
-                Line::from(""),
-                Line::from("Click button below to load"),
-            ];
-            let [layout] = Layout::vertical([Constraint::Length(instructions.len() as u16)])
-                .flex(Flex::Center)
-                .areas(preview_area);
-
-            let msg = Paragraph::new(instructions)
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(self.theme.content));
-            msg.render(layout, buf);
+            // Preview is loading - show nothing while we wait
         }
     }
 }

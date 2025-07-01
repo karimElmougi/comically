@@ -27,6 +27,7 @@ pub struct App {
 }
 
 pub enum AppState {
+    NoFiles,
     Config(config::ConfigState),
     Processing(progress::ProgressState),
 }
@@ -38,8 +39,17 @@ pub fn run(
     picker: ratatui_image::picker::Picker,
     theme: Theme,
 ) -> anyhow::Result<()> {
+    // Check if there are any manga files first
+    let files = config::find_manga_files(".")?;
+
+    let initial_state = if files.is_empty() {
+        AppState::NoFiles
+    } else {
+        AppState::Config(config::ConfigState::new(event_tx.clone(), picker, files)?)
+    };
+
     let mut app = App {
-        state: AppState::Config(config::ConfigState::new(event_tx.clone(), picker)?),
+        state: initial_state,
         theme,
     };
     let mut pending_events = Vec::new();
@@ -63,6 +73,9 @@ pub fn run(
                 let render_start = std::time::Instant::now();
 
                 match &mut app.state {
+                    AppState::NoFiles => {
+                        render_no_files_screen(&app.theme, frame.area(), frame.buffer_mut());
+                    }
                     AppState::Config(config_state) => {
                         config::ConfigScreen::new(config_state, &app.theme)
                             .render(frame.area(), frame.buffer_mut());
@@ -100,6 +113,7 @@ fn process_events(
     for event in pending_events.drain(..) {
         match event {
             Event::Mouse(mouse) => match &mut app.state {
+                AppState::NoFiles => {}
                 AppState::Config(c) => {
                     c.handle_mouse(mouse);
                 }
@@ -118,16 +132,20 @@ fn process_events(
                 }
 
                 match &mut app.state {
+                    AppState::NoFiles => {}
                     AppState::Config(c) => c.handle_key(key),
                     AppState::Processing(p) => p.handle_key(key),
                 }
             }
             Event::Resize(picker) => {
                 terminal.autoresize()?;
-                if let AppState::Config(c) = &mut app.state {
-                    if let Some(picker) = picker {
-                        c.update_picker(picker);
+                match &mut app.state {
+                    AppState::Config(c) => {
+                        if let Some(picker) = picker {
+                            c.update_picker(picker);
+                        }
                     }
+                    _ => {}
                 }
             }
             Event::Tick => {}
@@ -185,11 +203,11 @@ pub fn render_title(theme: &Theme) -> impl Widget {
             palette::tailwind::CYAN.c400,
         ),
         ThemeMode::Light => (
-            Color::Rgb(131, 148, 150),  // Solarized base0
-            Color::Rgb(101, 123, 131),  // Solarized base00
-            Color::Rgb(88, 110, 117),   // Solarized base01
-            Color::Rgb(38, 139, 210),   // Solarized blue
-            Color::Rgb(42, 161, 152),   // Solarized cyan
+            Color::Rgb(131, 148, 150), // Solarized base0
+            Color::Rgb(101, 123, 131), // Solarized base00
+            Color::Rgb(88, 110, 117),  // Solarized base01
+            Color::Rgb(38, 139, 210),  // Solarized blue
+            Color::Rgb(42, 161, 152),  // Solarized cyan
         ),
     };
 
@@ -210,4 +228,77 @@ pub fn render_title(theme: &Theme) -> impl Widget {
             .borders(Borders::ALL)
             .border_style(theme.border),
     )
+}
+
+fn render_no_files_screen(
+    theme: &Theme,
+    area: ratatui::layout::Rect,
+    buf: &mut ratatui::buffer::Buffer,
+) {
+    use ratatui::layout::{Alignment, Constraint, Direction, Flex, Layout};
+
+    buf.set_style(area, Style::default().bg(theme.background));
+
+    let [header_area, main_area, footer_area] = Layout::vertical([
+        Constraint::Length(3), // Header
+        Constraint::Min(0),    // Main content
+        Constraint::Length(3), // Footer
+    ])
+    .areas(area);
+
+    render_title(theme).render(header_area, buf);
+
+    let message_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title("no files found")
+        .title_alignment(Alignment::Center);
+
+    let [centered_area] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(10)])
+        .flex(Flex::Center)
+        .areas(main_area);
+
+    let [centered_area] = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(60)])
+        .flex(Flex::Center)
+        .areas(centered_area);
+
+    let inner = message_block.inner(centered_area);
+    message_block.render(centered_area, buf);
+
+    let message_lines = vec![
+        Line::from(""),
+        Line::from("no comic/manga files found in the current directory").style(
+            Style::default()
+                .fg(theme.content)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+        Line::from("supported formats:").style(Style::default().fg(theme.content)),
+        Line::from(" .cbz .cbr .zip .rar").style(Style::default().fg(theme.primary)),
+        Line::from("").style(Style::default().fg(theme.content)),
+    ];
+
+    let [msg_area] = Layout::vertical([Constraint::Length(message_lines.len() as u16)])
+        .flex(Flex::Center)
+        .areas(inner);
+
+    let msg = Paragraph::new(message_lines)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(theme.content));
+    msg.render(msg_area, buf);
+
+    // Footer
+    let footer = Paragraph::new("t: toggle theme | q: quit")
+        .style(Style::default().fg(theme.content))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border),
+        );
+    footer.render(footer_area, buf);
 }
