@@ -67,6 +67,7 @@ pub struct LoadedPreviewImage {
     name: String,
     width: u32,
     height: u32,
+    config: ComicConfig,
 }
 
 enum PreviewRequest {
@@ -78,6 +79,7 @@ pub enum ConfigEvent {
         archive_path: PathBuf,
         image: image::DynamicImage,
         file: ArchiveFile,
+        config: ComicConfig,
     },
     ResizeComplete(Result<ResizeResponse, Errors>),
     Error(String),
@@ -291,6 +293,7 @@ impl ConfigState {
                 image,
                 archive_path,
                 file,
+                config,
             } => {
                 let name = format!(
                     "{} - {}",
@@ -302,6 +305,7 @@ impl ConfigState {
                     name,
                     width: image.width(),
                     height: image.height(),
+                    config,
                 });
                 // Create a new resize protocol for the image
                 let protocol = self.picker.new_resize_protocol(image);
@@ -890,6 +894,15 @@ impl<'a> Widget for PreviewWidget<'a> {
         ButtonWidget::new()
             .text(button_text.to_string())
             .with_mouse_event(self.state.last_mouse_click)
+            .enabled(
+                Some(&self.state.config)
+                    != self
+                        .state
+                        .preview_state
+                        .loaded_image
+                        .as_ref()
+                        .map(|i| &i.config),
+            )
             .on_click(|| {
                 self.state.request_preview();
             })
@@ -959,6 +972,7 @@ fn preview_worker(
                                         archive_path: path,
                                         image,
                                         file,
+                                        config,
                                     }));
                             }
                             Err(e) => {
@@ -992,6 +1006,7 @@ fn preview_worker(
 pub struct ButtonWidget<'a> {
     pub text: String,
     pub style: Style,
+    pub enabled: bool,
     pub mouse_event: Option<MouseEvent>,
     pub on_click: Option<Box<dyn FnOnce() + 'a>>,
 }
@@ -1003,6 +1018,7 @@ impl ButtonWidget<'_> {
             style: Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD),
             mouse_event: None,
             on_click: None,
+            enabled: true,
         }
     }
 
@@ -1010,6 +1026,7 @@ impl ButtonWidget<'_> {
         ButtonWidget {
             text: self.text,
             style: self.style,
+            enabled: self.enabled,
             mouse_event: self.mouse_event,
             on_click: Some(Box::new(on_click)),
         }
@@ -1017,6 +1034,11 @@ impl ButtonWidget<'_> {
 
     pub fn text(mut self, text: String) -> Self {
         self.text = text;
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
     }
 
@@ -1042,25 +1064,30 @@ impl<'a> Widget for ButtonWidget<'a> {
 
         let button_area = area.intersection(button_area);
 
+        let style = if self.enabled {
+            self.style
+        } else {
+            self.style.add_modifier(Modifier::DIM)
+        };
+
         if button_area.width > 0 && button_area.height > 0 {
-            let button_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(self.style);
+            let button_block = Block::default().borders(Borders::ALL).border_style(style);
 
             let button_inner = button_block.inner(button_area);
             button_block.render(button_area, buf);
 
-            // Check for click event during render (immediate-mode pattern)
-            if let Some(event) = self.mouse_event {
-                if button_area.contains(Position::new(event.column, event.row)) {
-                    if let Some(on_click) = self.on_click {
-                        on_click();
+            if self.enabled {
+                if let Some(event) = self.mouse_event {
+                    if button_area.contains(Position::new(event.column, event.row)) {
+                        if let Some(on_click) = self.on_click {
+                            on_click();
+                        }
                     }
                 }
             }
 
             Paragraph::new(button_text)
-                .style(self.style)
+                .style(style)
                 .alignment(Alignment::Center)
                 .render(button_inner, buf);
         }

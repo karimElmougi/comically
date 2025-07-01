@@ -33,7 +33,7 @@ struct Args {
     directory: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ComicConfig {
     pub device_dimensions: (u32, u32),
     pub right_to_left: bool,
