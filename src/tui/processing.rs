@@ -9,7 +9,7 @@ use ratatui::{
 use std::time::{Duration, Instant};
 
 use crate::{
-    tui::{render_title, BACKGROUND, BORDER, CONTENT},
+    tui::{render_title, BACKGROUND, BORDER, CONTENT, PRIMARY},
     ComicStage, ComicStatus, ProcessingEvent,
 };
 
@@ -208,7 +208,7 @@ fn draw_header(buf: &mut Buffer, state: &ProcessingState, header_area: Rect) {
         .unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
-        .gauge_style(Style::default().fg(palette::tailwind::SKY.c300))
+        .gauge_style(Style::default().fg(PRIMARY))
         .label(format!(
             "{}/{} ({:.1}s)",
             successful,
@@ -359,7 +359,7 @@ fn draw_scrollbar(
             ratatui::widgets::Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
                 .style(Style::default().fg(Color::White))
-                .thumb_style(Style::default().fg(palette::tailwind::STONE.c300)),
+                .thumb_style(Style::default().fg(PRIMARY)),
             area,
             buf,
             &mut scroll_state,
@@ -492,11 +492,7 @@ impl<'a> Widget for StageTimingBar<'a> {
         let total_label = format!("{:.1}s", total);
 
         Paragraph::new(total_label)
-            .style(
-                Style::default()
-                    .fg(palette::tailwind::GREEN.c100)
-                    .bg(palette::tailwind::GREEN.c700),
-            )
+            .style(Style::default().fg(Color::White).bg(PRIMARY))
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
     }

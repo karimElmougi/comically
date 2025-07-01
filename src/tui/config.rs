@@ -18,7 +18,7 @@ use std::thread;
 
 use crate::{
     comic_archive,
-    tui::{ACTION_BUTTON, BACKGROUND, BORDER, CONFIG_BUTTON, CONTENT, FOCUSED, KEY_HINT},
+    tui::{BACKGROUND, BORDER, CONTENT, FOCUSED, KEY_HINT, PRIMARY, SECONDARY},
     ComicConfig,
 };
 
@@ -492,13 +492,13 @@ impl<'a> SettingsWidget<'a> {
 
         let value_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(CONFIG_BUTTON));
+            .border_style(Style::default().fg(PRIMARY));
 
         let value_inner = value_block.inner(value_area);
         value_block.render(value_area, buf);
 
         Paragraph::new(value)
-            .style(Style::default().fg(CONFIG_BUTTON))
+            .style(Style::default().fg(PRIMARY))
             .alignment(Alignment::Center)
             .render(value_inner, buf);
 
@@ -525,7 +525,7 @@ impl<'a> SettingsWidget<'a> {
             Style::default().fg(CONTENT)
         };
 
-        let button_style = Style::default().fg(CONFIG_BUTTON);
+        let button_style = Style::default().fg(PRIMARY);
 
         let [header_area, buttons_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
@@ -574,11 +574,7 @@ impl<'a> SettingsWidget<'a> {
             .areas(value_area);
 
         Paragraph::new(value)
-            .style(
-                Style::default()
-                    .fg(CONFIG_BUTTON)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .style(Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD))
             .alignment(Alignment::Center)
             .render(value_layout, buf);
 
@@ -613,7 +609,7 @@ impl<'a> SettingsWidget<'a> {
 
         let current_dims = self.state.config.device_dimensions;
         Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
-            .style(Style::default().fg(CONFIG_BUTTON))
+            .style(Style::default().fg(PRIMARY))
             .render(current_dims_area, buf);
 
         const LEN: usize = 4;
@@ -640,11 +636,9 @@ impl<'a> SettingsWidget<'a> {
             }
 
             let button_style = if is_current {
-                Style::default()
-                    .fg(ACTION_BUTTON)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(CONFIG_BUTTON)
+                Style::default().fg(PRIMARY)
             };
 
             let button_block = Block::default()
@@ -1013,9 +1007,7 @@ impl ButtonWidget<'_> {
     pub fn new() -> Self {
         Self {
             text: "".to_string(),
-            style: Style::default()
-                .fg(ACTION_BUTTON)
-                .add_modifier(Modifier::BOLD),
+            style: Style::default().fg(SECONDARY).add_modifier(Modifier::BOLD),
             mouse_event: None,
             on_click: None,
         }
@@ -1032,11 +1024,6 @@ impl ButtonWidget<'_> {
 
     pub fn text(mut self, text: String) -> Self {
         self.text = text;
-        self
-    }
-
-    pub fn style(mut self, style: Style) -> Self {
-        self.style = style;
         self
     }
 
