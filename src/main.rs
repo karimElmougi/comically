@@ -58,11 +58,6 @@ fn main() -> anyhow::Result<()> {
         .with(tracing_error::ErrorLayer::default())
         .init();
 
-    // Change to the specified directory if provided
-    if let Some(dir) = &args.directory {
-        std::env::set_current_dir(dir)?;
-    }
-
     if cfg!(target_os = "macos") {
         let additional_paths = [
             "/Applications/Kindle Comic Creator/Kindle Comic Creator.app/Contents/MacOS",
@@ -101,7 +96,14 @@ fn main() -> anyhow::Result<()> {
         move || input_handling(event_tx, dimensions)
     });
 
-    let result = tui::run(&mut terminal, event_tx, event_rx, picker, theme);
+    let result = tui::run(
+        args.directory,
+        &mut terminal,
+        event_tx,
+        event_rx,
+        picker,
+        theme,
+    );
 
     ratatui::crossterm::execute!(
         std::io::stderr(),

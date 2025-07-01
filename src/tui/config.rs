@@ -896,35 +896,6 @@ impl<'a> Widget for SettingsWidget<'a> {
     }
 }
 
-pub fn find_manga_files(dir: &str) -> anyhow::Result<Vec<MangaFile>> {
-    let mut files = Vec::new();
-
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if let Some(ext) = path.extension() {
-            if matches!(
-                ext.to_str(),
-                Some("cbz") | Some("cbr") | Some("zip") | Some("rar")
-            ) {
-                let name = path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                files.push(MangaFile {
-                    archive_path: path,
-                    name,
-                });
-            }
-        }
-    }
-
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(files)
-}
-
 struct PreviewWidget<'a> {
     state: &'a mut ConfigState,
     theme: &'a Theme,

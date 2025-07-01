@@ -1,4 +1,5 @@
 pub mod config;
+pub mod error;
 pub mod progress;
 pub mod theme;
 
@@ -10,11 +11,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
     Terminal,
 };
-use std::sync::mpsc;
+use std::{path::PathBuf, sync::mpsc};
 
 use crate::{
     comic::Comic,
     pipeline::{poll_kindlegen, process_files},
+    tui::{config::MangaFile, error::ErrorInfo},
     Event, ProgressEvent,
 };
 use std::thread;
@@ -27,31 +29,37 @@ pub struct App {
 }
 
 pub enum AppState {
-    NoFiles,
+    Error(ErrorInfo),
     Config(config::ConfigState),
     Processing(progress::ProgressState),
 }
 
 pub fn run(
+    directory: Option<PathBuf>,
     terminal: &mut Terminal<impl Backend>,
     event_tx: mpsc::Sender<Event>,
     event_rx: mpsc::Receiver<Event>,
     picker: ratatui_image::picker::Picker,
     theme: Theme,
 ) -> anyhow::Result<()> {
-    // Check if there are any manga files first
-    let files = config::find_manga_files(".")?;
+    let dir =
+        directory.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let initial_state = if files.is_empty() {
-        AppState::NoFiles
-    } else {
-        AppState::Config(config::ConfigState::new(event_tx.clone(), picker, files)?)
+    let state = match find_manga_files(&dir) {
+        Ok(files) => {
+            if files.is_empty() {
+                AppState::Error(ErrorInfo::no_files(&dir))
+            } else {
+                match config::ConfigState::new(event_tx.clone(), picker, files) {
+                    Ok(config_state) => AppState::Config(config_state),
+                    Err(e) => AppState::Error(ErrorInfo::directory_error(&dir, &e.to_string())),
+                }
+            }
+        }
+        Err(e) => AppState::Error(ErrorInfo::directory_error(&dir, &e.to_string())),
     };
 
-    let mut app = App {
-        state: initial_state,
-        theme,
-    };
+    let mut app = App { state, theme };
     let mut pending_events = Vec::new();
 
     'outer: loop {
@@ -73,8 +81,13 @@ pub fn run(
                 let render_start = std::time::Instant::now();
 
                 match &mut app.state {
-                    AppState::NoFiles => {
-                        render_no_files_screen(&app.theme, frame.area(), frame.buffer_mut());
+                    AppState::Error(error_info) => {
+                        error::render_error_screen(
+                            &app.theme,
+                            error_info,
+                            frame.area(),
+                            frame.buffer_mut(),
+                        );
                     }
                     AppState::Config(config_state) => {
                         config::ConfigScreen::new(config_state, &app.theme)
@@ -113,7 +126,7 @@ fn process_events(
     for event in pending_events.drain(..) {
         match event {
             Event::Mouse(mouse) => match &mut app.state {
-                AppState::NoFiles => {}
+                AppState::Error(_) => {}
                 AppState::Config(c) => {
                     c.handle_mouse(mouse);
                 }
@@ -132,7 +145,7 @@ fn process_events(
                 }
 
                 match &mut app.state {
-                    AppState::NoFiles => {}
+                    AppState::Error(_) => {}
                     AppState::Config(c) => c.handle_key(key),
                     AppState::Processing(p) => p.handle_key(key),
                 }
@@ -191,6 +204,35 @@ fn process_events(
     Ok(true)
 }
 
+fn find_manga_files(dir: &std::path::Path) -> anyhow::Result<Vec<MangaFile>> {
+    let mut files = Vec::new();
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if let Some(ext) = path.extension() {
+            if matches!(
+                ext.to_str(),
+                Some("cbz") | Some("cbr") | Some("zip") | Some("rar")
+            ) {
+                let name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                files.push(MangaFile {
+                    archive_path: path,
+                    name,
+                });
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(files)
+}
+
 pub fn render_title(theme: &Theme) -> impl Widget {
     let modifier = Modifier::BOLD | Modifier::ITALIC;
 
@@ -228,77 +270,4 @@ pub fn render_title(theme: &Theme) -> impl Widget {
             .borders(Borders::ALL)
             .border_style(theme.border),
     )
-}
-
-fn render_no_files_screen(
-    theme: &Theme,
-    area: ratatui::layout::Rect,
-    buf: &mut ratatui::buffer::Buffer,
-) {
-    use ratatui::layout::{Alignment, Constraint, Direction, Flex, Layout};
-
-    buf.set_style(area, Style::default().bg(theme.background));
-
-    let [header_area, main_area, footer_area] = Layout::vertical([
-        Constraint::Length(3), // Header
-        Constraint::Min(0),    // Main content
-        Constraint::Length(3), // Footer
-    ])
-    .areas(area);
-
-    render_title(theme).render(header_area, buf);
-
-    let message_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border)
-        .title("no files found")
-        .title_alignment(Alignment::Center);
-
-    let [centered_area] = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10)])
-        .flex(Flex::Center)
-        .areas(main_area);
-
-    let [centered_area] = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(60)])
-        .flex(Flex::Center)
-        .areas(centered_area);
-
-    let inner = message_block.inner(centered_area);
-    message_block.render(centered_area, buf);
-
-    let message_lines = vec![
-        Line::from(""),
-        Line::from("no comic/manga files found in the current directory").style(
-            Style::default()
-                .fg(theme.content)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-        Line::from("supported formats:").style(Style::default().fg(theme.content)),
-        Line::from(" .cbz .cbr .zip .rar").style(Style::default().fg(theme.primary)),
-        Line::from("").style(Style::default().fg(theme.content)),
-    ];
-
-    let [msg_area] = Layout::vertical([Constraint::Length(message_lines.len() as u16)])
-        .flex(Flex::Center)
-        .areas(inner);
-
-    let msg = Paragraph::new(message_lines)
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(theme.content));
-    msg.render(msg_area, buf);
-
-    // Footer
-    let footer = Paragraph::new("t: toggle theme | q: quit")
-        .style(Style::default().fg(theme.content))
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border),
-        );
-    footer.render(footer_area, buf);
 }
