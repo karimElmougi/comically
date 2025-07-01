@@ -118,15 +118,16 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn input_handling(tx: mpsc::Sender<Event>) {
-    let tick_rate = Duration::from_millis(200);
+    const RESIZE_DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
+    const TICK_RATE: Duration = Duration::from_millis(200);
+
     let mut last_tick = Instant::now();
     let mut last_dimensions: Option<(u16, u16)> = None;
     let mut pending_resize: Option<(u16, u16, Instant)> = None;
-    let resize_debounce_duration = Duration::from_millis(100);
 
     loop {
         // poll for tick rate duration, if no events, send tick event.
-        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        let timeout = TICK_RATE.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).unwrap() {
             match event::read().unwrap() {
                 event::Event::Key(key) => {
@@ -148,7 +149,7 @@ fn input_handling(tx: mpsc::Sender<Event>) {
 
         // Check if we have a pending resize that's ready to be processed
         if let Some((width, height, timestamp)) = pending_resize {
-            if timestamp.elapsed() >= resize_debounce_duration {
+            if timestamp.elapsed() >= RESIZE_DEBOUNCE_DURATION {
                 let current_dimensions = (width, height);
 
                 // only re-create picker if zoom in or out
@@ -173,7 +174,7 @@ fn input_handling(tx: mpsc::Sender<Event>) {
             }
         }
 
-        if last_tick.elapsed() >= tick_rate {
+        if last_tick.elapsed() >= TICK_RATE {
             if tx.send(Event::Tick).is_err() {
                 break;
             }
