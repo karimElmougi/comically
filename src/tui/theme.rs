@@ -98,3 +98,21 @@ impl Default for Theme {
         Self::dark()
     }
 }
+
+impl Theme {
+    /// Detect terminal background and return appropriate theme using termbg
+    /// Falls back to dark theme if detection fails or times out
+    pub fn detect() -> Self {
+        use std::time::Duration;
+
+        // Try to detect terminal background with a 100ms timeout
+        match termbg::theme(Duration::from_millis(100)) {
+            Ok(termbg::Theme::Light) => Self::light(),
+            Ok(termbg::Theme::Dark) => Self::dark(),
+            Err(_) => {
+                // If detection fails, default to dark theme
+                Self::dark()
+            }
+        }
+    }
+}

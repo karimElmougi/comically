@@ -36,10 +36,11 @@ pub fn run(
     event_tx: mpsc::Sender<Event>,
     event_rx: mpsc::Receiver<Event>,
     picker: ratatui_image::picker::Picker,
+    theme: Theme,
 ) -> anyhow::Result<()> {
     let mut app = App {
         state: AppState::Config(config::ConfigState::new(event_tx.clone(), picker)?),
-        theme: Theme::default(),
+        theme,
     };
     let mut pending_events = Vec::new();
 

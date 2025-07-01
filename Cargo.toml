@@ -27,3 +27,4 @@ tracing-log = { version = "0.2.0" }
 unrar = "0.5.8"
 itertools = "0.14.0"
 ratatui-image = { version = "8.0.1", features = ["crossterm"] }
+termbg = "0.5"

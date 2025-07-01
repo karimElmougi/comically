@@ -77,6 +77,8 @@ fn main() -> anyhow::Result<()> {
         env::set_var("PATH", new_path);
     }
 
+    let theme = tui::Theme::detect();
+
     let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: Viewport::Fullscreen,
     });
@@ -99,7 +101,7 @@ fn main() -> anyhow::Result<()> {
         move || input_handling(event_tx, dimensions)
     });
 
-    let result = tui::run(&mut terminal, event_tx, event_rx, picker);
+    let result = tui::run(&mut terminal, event_tx, event_rx, picker, theme);
 
     ratatui::crossterm::execute!(
         std::io::stderr(),
