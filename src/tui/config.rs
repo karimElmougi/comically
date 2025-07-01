@@ -1014,47 +1014,39 @@ fn preview_worker(
                 PreviewRequest::LoadFile {
                     archive_path: path,
                     config,
-                } => rayon::spawn({
-                    let tx = tx.clone();
-                    move || {
-                        let result = load_and_process_preview(&path, &config);
+                } => {
+                    let result = load_and_process_preview(&path, &config);
 
-                        match result {
-                            Ok((image, file)) => {
-                                let _ =
-                                    tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded {
-                                        archive_path: path,
-                                        image,
-                                        file,
-                                        config,
-                                    }));
-                            }
-                            Err(e) => {
-                                let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::Error(
-                                    e.to_string(),
-                                )));
-                            }
+                    match result {
+                        Ok((image, file)) => {
+                            let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ImageLoaded {
+                                archive_path: path,
+                                image,
+                                file,
+                                config,
+                            }));
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(crate::Event::ConfigEvent(ConfigEvent::Error(e.to_string())));
                         }
                     }
-                }),
+                }
             }
         }
 
         if let Some(resize_request) = get_latest(&resize_rx) {
             log::debug!("Processing resize request");
-            rayon::spawn({
-                let tx = tx.clone();
-                move || match resize_request.resize_encode() {
-                    Ok(response) => {
-                        let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
-                            response,
-                        )));
-                    }
-                    Err(e) => {
-                        tracing::warn!("Resize error: {:?}", e);
-                    }
+            match resize_request.resize_encode() {
+                Ok(response) => {
+                    let _ = tx.send(crate::Event::ConfigEvent(ConfigEvent::ResizeComplete(
+                        response,
+                    )));
                 }
-            });
+                Err(e) => {
+                    tracing::warn!("Resize error: {:?}", e);
+                }
+            }
         }
 
         thread::sleep(std::time::Duration::from_millis(10));
