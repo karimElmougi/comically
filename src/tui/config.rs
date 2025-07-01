@@ -553,7 +553,7 @@ impl<'a> SettingsWidget<'a> {
             Constraint::Length(label.len() as u16 + 1),
             Constraint::Length(key.len() as u16 + 1),
         ])
-        .flex(Flex::SpaceBetween)
+        .flex(Flex::Start)
         .spacing(1)
         .areas(header_area);
 
@@ -760,7 +760,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         );
 
         let [quality_area, brightness_area, contrast_area] =
-            make_grid_layout::<3>(buttons_area, 2, Constraint::Length(4));
+            make_grid_layout::<3>(buttons_area, 3, Constraint::Length(4));
 
         self.render_adjustable_setting(
             "Quality",
