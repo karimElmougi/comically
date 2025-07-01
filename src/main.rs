@@ -131,7 +131,11 @@ fn input_handling(tx: mpsc::Sender<Event>) {
                     }
                 }
                 event::Event::Resize(_, _) => {
-                    if tx.send(Event::Resize).is_err() {
+                    let picker = ratatui_image::picker::Picker::from_query_stdio()
+                        .inspect_err(|e| log::error!("failed to create picker: {e}"))
+                        .ok();
+
+                    if tx.send(Event::Resize(picker)).is_err() {
                         break;
                     }
                 }
@@ -459,7 +463,7 @@ pub enum Event {
     Mouse(event::MouseEvent),
     Key(event::KeyEvent),
     Tick,
-    Resize,
+    Resize(Option<ratatui_image::picker::Picker>),
     ProcessingEvent(ProcessingEvent),
     ConfigEvent(ConfigEvent),
     StartProcessing {

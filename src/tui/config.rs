@@ -31,7 +31,7 @@ pub struct ConfigState {
     pub focus: Focus,
     pub selected_field: Option<SelectedField>,
     pub preview_state: PreviewState,
-    picker: Picker,
+    pub picker: Picker,
     event_tx: std::sync::mpsc::Sender<crate::Event>,
     last_mouse_click: Option<MouseEvent>,
 }
@@ -59,11 +59,12 @@ pub struct PreviewState {
     thread_protocol: ThreadProtocol,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
-    loaded_image: Option<LoadedPreviewImage>,
+    pub loaded_image: Option<LoadedPreviewImage>,
 }
 
 #[derive(Debug, Copy, Clone)]
-struct LoadedPreviewImage {
+#[allow(dead_code)]
+pub struct LoadedPreviewImage {
     width: u32,
     height: u32,
 }
@@ -216,7 +217,7 @@ impl ConfigState {
         }
     }
 
-    fn request_preview(&mut self) {
+    pub fn request_preview(&mut self) {
         if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
                 let _ = self
@@ -378,9 +379,9 @@ impl<'a> Widget for ConfigScreen<'a> {
         super::render_title().render(header_area, buf);
 
         let [file_list_area, settings_area, preview_area] = Layout::horizontal([
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
+            Constraint::Fill(1),
+            Constraint::Fill(2),
+            Constraint::Fill(1),
         ])
         .areas(main_area);
 
@@ -679,18 +680,15 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         // Create layout for all settings sections
         let constraints = [
-            Constraint::Length(8), // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Length(8), // Buttons (quality, brightness, contrast)
+            Constraint::Length(1),  // top spacer
+            Constraint::Length(8),  // Toggles ( reading direction, split double pages, auto crop)
+            Constraint::Length(8),  // Buttons (quality, brightness, contrast)
             Constraint::Length(12), // Dimensions (dynamic grid)
-            Constraint::Min(0),    // spacer
-            Constraint::Length(3), // Process button
+            Constraint::Min(3),     // bottom button
         ];
 
-        let [toggles_area, buttons_area, device_presets_area, _, process_button_area] =
-            Layout::vertical(constraints)
-                .spacing(1)
-                .vertical_margin(1)
-                .areas(inner);
+        let [_, toggles_area, buttons_area, device_presets_area, process_button_area] =
+            Layout::vertical(constraints).spacing(1).areas(inner);
 
         let [reading_direction_area, split_double_pages_area, auto_crop_area] =
             make_grid_layout::<3>(toggles_area, 2, Constraint::Length(4));
@@ -799,6 +797,12 @@ impl<'a> Widget for SettingsWidget<'a> {
         );
 
         self.render_dimension_presets(device_presets_area, buf);
+
+        let [process_button_area] = Layout::default()
+            .direction(Direction::Vertical)
+            .flex(Flex::End)
+            .constraints([Constraint::Length(3)])
+            .areas(process_button_area);
 
         ButtonWidget::new()
             .text("Start ⏵".to_string())
@@ -1036,35 +1040,41 @@ impl ButtonWidget<'_> {
 impl<'a> Widget for ButtonWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let button_text = format!(" {} ", self.text);
-        let button_width = button_text.len() as u16 + 10;
-        let button_height = 3;
+        let desired_button_width = button_text.len() as u16 + 10;
+        let desired_button_height = 3;
 
-        // Center the button in the given area
+        let button_width = desired_button_width.min(area.width);
+        let button_height = desired_button_height.min(area.height);
+
         let button_x = area.x + (area.width.saturating_sub(button_width)) / 2;
         let button_y = area.y + (area.height.saturating_sub(button_height)) / 2;
+
         let button_area = Rect::new(button_x, button_y, button_width, button_height);
 
-        // Draw the button
-        let button_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.style);
+        let button_area = area.intersection(button_area);
 
-        let button_inner = button_block.inner(button_area);
-        button_block.render(button_area, buf);
+        if button_area.width > 0 && button_area.height > 0 {
+            let button_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(self.style);
 
-        // Check for click event during render (immediate-mode pattern)
-        if let Some(event) = self.mouse_event {
-            if button_area.contains(Position::new(event.column, event.row)) {
-                if let Some(on_click) = self.on_click {
-                    on_click();
+            let button_inner = button_block.inner(button_area);
+            button_block.render(button_area, buf);
+
+            // Check for click event during render (immediate-mode pattern)
+            if let Some(event) = self.mouse_event {
+                if button_area.contains(Position::new(event.column, event.row)) {
+                    if let Some(on_click) = self.on_click {
+                        on_click();
+                    }
                 }
             }
-        }
 
-        Paragraph::new(button_text)
-            .style(self.style)
-            .alignment(Alignment::Center)
-            .render(button_inner, buf);
+            Paragraph::new(button_text)
+                .style(self.style)
+                .alignment(Alignment::Center)
+                .render(button_inner, buf);
+        }
     }
 }
 

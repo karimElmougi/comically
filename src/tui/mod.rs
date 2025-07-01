@@ -109,8 +109,16 @@ fn process_events(
                     AppState::Processing(p) => p.handle_key(key),
                 }
             }
-            Event::Resize => {
+            Event::Resize(picker) => {
                 terminal.autoresize()?;
+                if let AppState::Config(c) = state {
+                    if let Some(picker) = picker {
+                        c.picker = picker;
+                        if c.preview_state.loaded_image.is_some() {
+                            c.request_preview();
+                        }
+                    }
+                }
             }
             Event::Tick => {}
             Event::ProcessingEvent(event) => {
