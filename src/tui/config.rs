@@ -437,6 +437,13 @@ impl<'a> FileListWidget<'a> {
 
 impl<'a> Widget for FileListWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if let Some(mouse) = self.state.last_mouse_click {
+            if area.contains(Position::new(mouse.column, mouse.row)) {
+                self.state.selected_field = None;
+                self.state.focus = Focus::FileList;
+            }
+        }
+
         let items: Vec<ListItem> = self
             .state
             .files
@@ -681,6 +688,12 @@ impl<'a> SettingsWidget<'a> {
 
 impl<'a> Widget for SettingsWidget<'a> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
+        if let Some(mouse) = self.state.last_mouse_click {
+            if area.contains(Position::new(mouse.column, mouse.row)) {
+                self.state.focus = Focus::Settings;
+            }
+        }
+
         let block = Block::default()
             .title("Settings")
             .borders(Borders::ALL)
