@@ -116,14 +116,12 @@ where
 fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
     // Apply gamma correction if not 1.0
     if (gamma - 1.0).abs() > 0.01 {
-        // Gamma correction: out = in^gamma
-        // gamma < 1.0: brightens midtones (lifts shadows)
-        // gamma > 1.0: darkens midtones (increases contrast)
-        for pixel in img.pixels_mut() {
+        imageproc::map::map_colors_mut(&mut img, |pixel| {
             let normalized = pixel[0] as f32 / 255.0;
             let corrected = normalized.powf(gamma);
-            pixel[0] = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
-        }
+            let new_value = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
+            Luma([new_value])
+        });
     }
 
     // Apply autocontrast - find actual min/max and stretch to 0-255
