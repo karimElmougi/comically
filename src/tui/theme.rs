@@ -74,23 +74,23 @@ impl Theme {
             border: Color::Rgb(101, 123, 131), // Solarized base00 - darker for better contrast
             content: Color::Rgb(88, 110, 117), // Solarized base01 - better contrast
             background: Color::Rgb(253, 246, 227), // Warm paper color (Solarized base3)
-            focused: Color::Rgb(181, 137, 0),  // Solarized yellow
+            focused: palette::tailwind::AMBER.c500,
             primary: palette::tailwind::SKY.c500,
             primary_bg: palette::tailwind::SKY.c200,
             primary_pressed: palette::tailwind::SKY.c100,
             secondary: palette::tailwind::VIOLET.c500,
             secondary_bg: palette::tailwind::VIOLET.c200,
             secondary_pressed: palette::tailwind::VIOLET.c100,
-            key_hint: Color::Rgb(133, 153, 0), // Solarized green
+            key_hint: palette::tailwind::GREEN.c400,
             error_fg: palette::tailwind::RED.c800,
             error_bg: palette::tailwind::RED.c100,
-            scrollbar_thumb: Color::Rgb(147, 161, 161), // Solarized base1
-            gauge_label: Color::Rgb(7, 54, 66), // Solarized base02 - dark enough for both backgrounds
+            scrollbar_thumb: palette::tailwind::SLATE.c400,
+            gauge_label: palette::tailwind::SLATE.c700,
             stage_colors: StageColors {
-                extract: Color::Rgb(191, 211, 230), // Soft pastel blue
-                process: Color::Rgb(211, 191, 230), // Soft pastel lavender
-                mobi: Color::Rgb(230, 191, 211),    // Soft pastel pink
-                epub: Color::Rgb(191, 230, 211),    // Soft pastel mint
+                extract: palette::tailwind::BLUE.c300,
+                process: palette::tailwind::PURPLE.c300,
+                mobi: palette::tailwind::PINK.c300,
+                epub: palette::tailwind::EMERALD.c300,
             },
         }
     }
