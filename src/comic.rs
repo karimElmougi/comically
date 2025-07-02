@@ -68,10 +68,10 @@ impl Default for ComicConfig {
             right_to_left: true,
             split_double_page: true,
             auto_crop: true,
-            compression_quality: 75,
+            compression_quality: 85,
             brightness: -10,
-            contrast: 1.0,
-            sharpness: 0.0,
+            contrast: 0.0,
+            sharpness: -1.0,
         }
     }
 }

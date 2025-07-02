@@ -66,7 +66,12 @@ pub fn process_archive_images(
 
 /// Process a single image file with Kindle-optimized transformations
 pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
-    let img = img.into_luma8();
+    let img = transform(
+        img.into_luma8(),
+        config.brightness,
+        config.contrast,
+        config.sharpness,
+    );
 
     if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
@@ -87,50 +92,39 @@ where
     let processed_images = if c.split_double_page && width > height {
         let (left, right) = split_double_pages(img);
 
-        let (left_processed, right_processed) = rayon::join(
-            || apply_image_pipeline(&*left, c),
-            || apply_image_pipeline(&*right, c),
+        let (left_resized, right_resized) = rayon::join(
+            || resize_image(&*left, c.device_dimensions),
+            || resize_image(&*right, c.device_dimensions),
         );
 
         // Determine order based on right_to_left setting
         let (first, second) = if c.right_to_left {
-            (right_processed, left_processed)
+            (right_resized, left_resized)
         } else {
-            (left_processed, right_processed)
+            (left_resized, right_resized)
         };
 
         vec![first, second]
     } else {
-        let processed = apply_image_pipeline(img, c);
-        vec![processed]
+        let resized = resize_image(img, c.device_dimensions);
+        vec![resized]
     };
 
     processed_images
 }
 
-fn apply_image_pipeline<I>(img: &I, config: &ComicConfig) -> GrayImage
-where
-    I: GenericImageView<Pixel = image::Luma<u8>>,
-{
-    // Step 1: Resize
-    let mut processed = resize_image(img, config.device_dimensions);
-    
-    // Step 2: Sharpen (if enabled)
-    if config.sharpness > 0.0 {
-        processed = image::imageops::unsharpen(&processed, config.sharpness, 10);
+fn transform(mut img: GrayImage, brightness: i32, contrast: f32, sharpness: f32) -> GrayImage {
+    if brightness != 0 {
+        image::imageops::colorops::brighten_in_place(&mut img, brightness);
     }
-    
-    // Step 3: Brightness
-    if config.brightness != 0 {
-        image::imageops::colorops::brighten_in_place(&mut processed, config.brightness);
+    if contrast != 0.0 {
+        image::imageops::colorops::contrast_in_place(&mut img, contrast);
     }
-    
-    // Step 4: Contrast
-    if config.contrast != 1.0 {
-        image::imageops::colorops::contrast_in_place(&mut processed, config.contrast);
+    if sharpness != 0.0 {
+        image::imageops::unsharpen(&img, sharpness, 10)
+    } else {
+        img
     }
-    
-    processed
 }
 
 fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
