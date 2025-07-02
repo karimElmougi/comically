@@ -655,7 +655,7 @@ impl<'a> SettingsWidget<'a> {
         let [label_area, current_dims_area] =
             Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(title_area);
 
-        Paragraph::new("Dimensions:")
+        Paragraph::new("dimensions:")
             .style(Style::default().fg(self.theme.content))
             .render(label_area, buf);
 
@@ -840,7 +840,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         );
 
         self.render_adjustable_setting(
-            "Contrast",
+            "contrast",
             &format!("{:3.1}", self.state.config.contrast),
             "[k]",
             contrast_area,
@@ -864,7 +864,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        Button::new("Start ⏵", self.theme)
+        Button::new("start ⏵", self.theme)
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
                 self.state.send_start_processing();
@@ -926,7 +926,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
-        Button::new("Load Preview", self.theme)
+        Button::new("load preview", self.theme)
             .with_mouse_event(self.state.last_mouse_click)
             .enabled(config_changed || file_changed)
             .on_click(|| {
