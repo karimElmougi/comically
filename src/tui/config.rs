@@ -1153,10 +1153,11 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
 ) -> anyhow::Result<(image::DynamicImage, ArchiveFile)> {
-    let mut files = comic_archive::unarchive_comic_iter(path)?;
-    let archive_file = files
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No images in archive"))??;
+    let archive_file = comic_archive::unarchive_comic_iter(path)?
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .min_by(|a, b| a.file_stem().cmp(b.file_stem()))
+        .ok_or_else(|| anyhow::anyhow!("No images in archive"))?;
 
     let img = image::load_from_memory(&archive_file.data)?;
 
@@ -1167,7 +1168,6 @@ fn load_and_process_preview(
         .next()
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
 
-    // Compress the image to JPEG with the configured quality
     let mut compressed_buffer = Vec::new();
     crate::image_processor::compress_to_jpeg(
         &first_image,
