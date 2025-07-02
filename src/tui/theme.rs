@@ -19,7 +19,6 @@ pub struct Theme {
     pub key_hint: Color,
     pub error_fg: Color,
     pub error_bg: Color,
-    pub scrollbar: Color,
     pub scrollbar_thumb: Color,
     pub stage_colors: StageColors,
     // for text on progress bars
@@ -48,7 +47,6 @@ impl Theme {
             key_hint: palette::tailwind::YELLOW.c300,
             error_fg: palette::tailwind::RED.c400,
             error_bg: palette::tailwind::RED.c800,
-            scrollbar: palette::tailwind::SLATE.c700,
             scrollbar_thumb: palette::tailwind::CYAN.c500,
             gauge_label: palette::tailwind::SLATE.c200,
             stage_colors: StageColors {
@@ -74,7 +72,6 @@ impl Theme {
             key_hint: Color::Rgb(133, 153, 0), // Solarized green
             error_fg: palette::tailwind::RED.c800,
             error_bg: palette::tailwind::RED.c100,
-            scrollbar: Color::Rgb(238, 232, 213), // Solarized base2
             scrollbar_thumb: Color::Rgb(147, 161, 161), // Solarized base1
             gauge_label: Color::Rgb(7, 54, 66), // Solarized base02 - dark enough for both backgrounds
             stage_colors: StageColors {

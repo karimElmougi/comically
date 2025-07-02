@@ -363,7 +363,7 @@ fn draw_scrollbar(
         StatefulWidget::render(
             ratatui::widgets::Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
-                .style(Style::default().fg(theme.scrollbar))
+                .style(Style::default().fg(theme.border))
                 .thumb_style(Style::default().fg(theme.scrollbar_thumb)),
             area,
             buf,

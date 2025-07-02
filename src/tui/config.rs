@@ -3,7 +3,9 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
+    widgets::{
+        Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+    },
 };
 use ratatui_image::{
     picker::Picker,
@@ -723,7 +725,12 @@ impl<'a> SettingsWidget<'a> {
 
             let button_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(button_style);
+                .border_style(button_style)
+                .border_type(if is_current {
+                    BorderType::Thick
+                } else {
+                    BorderType::Plain
+                });
             let button_inner = button_block.inner(cell);
             button_block.render(cell, buf);
 
@@ -1126,7 +1133,14 @@ impl<'a> Widget for ButtonWidget<'a> {
         };
 
         if button_area.width > 0 && button_area.height > 0 {
-            let button_block = Block::default().borders(Borders::ALL).border_style(style);
+            let button_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(style)
+                .border_type(if self.enabled {
+                    BorderType::Thick
+                } else {
+                    BorderType::Plain
+                });
 
             let button_inner = button_block.inner(button_area);
             button_block.render(button_area, buf);
