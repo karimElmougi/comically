@@ -8,7 +8,7 @@ use ratatui::{
 use ratatui_image::{
     picker::Picker,
     thread::{ResizeRequest, ResizeResponse, ThreadProtocol},
-    Resize, ResizeEncodeRender, StatefulImage,
+    FilterType, Resize, ResizeEncodeRender, StatefulImage,
 };
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -72,6 +72,7 @@ pub struct PreviewState {
 
 #[derive(Debug, Clone)]
 pub struct LoadedPreviewImage {
+    idx: usize,
     archive_path: PathBuf,
     image_file: ArchiveFile,
     width: u32,
@@ -89,6 +90,7 @@ enum PreviewRequest {
 
 pub enum ConfigEvent {
     ImageLoaded {
+        idx: usize,
         archive_path: PathBuf,
         image: image::DynamicImage,
         file: ArchiveFile,
@@ -143,7 +145,7 @@ impl ConfigState {
         };
 
         // Auto-load the first image
-        state.request_preview_for_selected();
+        state.reload_preview();
 
         Ok(state)
     }
@@ -234,11 +236,19 @@ impl ConfigState {
     }
 
     // request a preview for the selected file
-    fn request_preview_for_selected(&mut self) {
+    fn reload_preview(&mut self) {
         if let Some(file_idx) = self.list_state.selected() {
             if let Some(file) = self.files.get(file_idx) {
                 // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
+
+                // if we have a loaded image, use the same index
+                let idx = self
+                    .preview_state
+                    .loaded_image
+                    .as_ref()
+                    .map(|i| i.idx)
+                    .unwrap_or(0);
 
                 let _ = self
                     .preview_state
@@ -246,7 +256,7 @@ impl ConfigState {
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
                         config: self.config,
-                        page_index: Some(0),
+                        page_index: Some(idx),
                     });
             }
         }
@@ -286,7 +296,7 @@ impl ConfigState {
                     .send(PreviewRequest::LoadFile {
                         archive_path: loaded_image.archive_path.clone(),
                         config: self.config,
-                        page_index: None,
+                        page_index: Some(loaded_image.idx),
                     });
             }
         }
@@ -340,12 +350,12 @@ impl ConfigState {
                 };
             }
             SelectedField::Sharpness => {
-                let step = if is_fine { 0.1 } else { 0.5 };
+                let step = if is_fine { 0.1 } else { 0.2 };
                 let current = self.config.sharpness;
                 self.config.sharpness = if increase {
                     (current + step).min(10.0)
                 } else {
-                    (current - step).max(0.0)
+                    (current - step).max(-10.0)
                 };
             }
         };
@@ -354,12 +364,14 @@ impl ConfigState {
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded {
+                idx,
                 image,
                 archive_path,
                 file,
                 config,
             } => {
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
+                    idx,
                     archive_path,
                     image_file: file,
                     width: image.width(),
@@ -977,7 +989,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             self.theme,
             self.state.last_mouse_click,
             || {
-                self.state.request_preview_for_selected();
+                self.state.reload_preview();
             },
         )
         .enabled(config_changed || file_changed)
@@ -994,7 +1006,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         .render(random_button_area, buf);
 
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
-            let image = StatefulImage::new().resize(Resize::Scale(None));
+            let image = StatefulImage::new().resize(Resize::Scale(Some(FilterType::Lanczos3)));
 
             let [title_area, image_area] =
                 Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(preview_area);
@@ -1054,8 +1066,9 @@ fn preview_worker(
                     let result = load_and_process_preview(&path, &config, page_index);
 
                     match result {
-                        Ok((image, file)) => {
+                        Ok((image, file, idx)) => {
                             let _ = tx.send(crate::Event::Config(ConfigEvent::ImageLoaded {
+                                idx,
                                 archive_path: path,
                                 image,
                                 file,
@@ -1090,7 +1103,7 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
     page_index: Option<usize>,
-) -> anyhow::Result<(image::DynamicImage, ArchiveFile)> {
+) -> anyhow::Result<(image::DynamicImage, ArchiveFile, usize)> {
     let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
         .into_iter()
         .filter_map(|r| r.ok())
@@ -1103,22 +1116,16 @@ fn load_and_process_preview(
         return Err(anyhow::anyhow!("No images in archive"));
     }
 
-    let archive_file = match page_index {
+    let idx = match page_index {
         None => {
             use rand::Rng;
             let random_idx = rand::thread_rng().gen_range(0..archive_files.len());
-            archive_files.into_iter().nth(random_idx).unwrap()
+            random_idx
         }
-        Some(idx) => {
-            // Specific page index
-            let len = archive_files.len();
-            if idx < len {
-                archive_files.into_iter().nth(idx).unwrap()
-            } else {
-                archive_files.into_iter().next().unwrap()
-            }
-        }
+        Some(idx) => idx.clamp(0, archive_files.len() - 1),
     };
+
+    let archive_file = archive_files.into_iter().nth(idx).unwrap();
 
     let img = image::load_from_memory(&archive_file.data)?;
 
@@ -1138,7 +1145,7 @@ fn load_and_process_preview(
 
     let compressed_img = image::load_from_memory(&compressed_buffer)?;
 
-    Ok((compressed_img, archive_file))
+    Ok((compressed_img, archive_file, idx))
 }
 
 fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
