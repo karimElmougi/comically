@@ -3,9 +3,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-    },
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
     picker::Picker,
@@ -19,7 +17,10 @@ use std::thread;
 use crate::{
     comic::ComicConfig,
     comic_archive::{self, ArchiveFile},
-    tui::Theme,
+    tui::{
+        button::{Button, ButtonVariant},
+        Theme,
+    },
 };
 
 pub struct ConfigState {
@@ -191,7 +192,7 @@ impl ConfigState {
 
     pub fn handle_mouse(&mut self, mouse: ratatui::crossterm::event::MouseEvent) {
         match mouse.kind {
-            MouseEventKind::Up(MouseButton::Left) => {
+            MouseEventKind::Up(MouseButton::Left) | MouseEventKind::Down(MouseButton::Left) => {
                 self.last_mouse_click = Some(mouse);
             }
             MouseEventKind::ScrollUp => {
@@ -560,23 +561,12 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.theme.content))
             .render(text_area, buf);
 
-        if let Some(mouse) = self.state.last_mouse_click {
-            if value_area.contains(Position::new(mouse.column, mouse.row)) {
+        Button::new(value, self.theme)
+            .with_mouse_event(self.state.last_mouse_click)
+            .on_click(|| {
                 on_click(self.state);
-            }
-        }
-
-        let value_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.primary));
-
-        let value_inner = value_block.inner(value_area);
-        value_block.render(value_area, buf);
-
-        Paragraph::new(value)
-            .style(Style::default().fg(self.theme.primary))
-            .alignment(Alignment::Center)
-            .render(value_inner, buf);
+            })
+            .render(value_area, buf);
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
@@ -600,8 +590,6 @@ impl<'a> SettingsWidget<'a> {
         } else {
             Style::default().fg(self.theme.content)
         };
-
-        let button_style = Style::default().fg(self.theme.primary);
 
         let [header_area, buttons_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
@@ -628,22 +616,14 @@ impl<'a> SettingsWidget<'a> {
         .spacing(1)
         .areas(buttons_area);
 
-        // Render [-] button with border
-        if let Some(mouse) = self.state.last_mouse_click {
-            if minus_area.contains(Position::new(mouse.column, mouse.row)) {
+        // Render [-] button
+        Button::new("-", self.theme)
+            .with_mouse_event(self.state.last_mouse_click)
+            .on_click(|| {
                 on_select(self.state);
                 on_adjust(self.state, false);
-            }
-        }
-        let minus_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(button_style);
-        let minus_inner = minus_block.inner(minus_area);
-        minus_block.render(minus_area, buf);
-        Paragraph::new("-")
-            .style(button_style)
-            .alignment(Alignment::Center)
-            .render(minus_inner, buf);
+            })
+            .render(minus_area, buf);
 
         let [value_layout] = Layout::vertical([Constraint::Length(1)])
             .flex(Flex::Center)
@@ -658,22 +638,14 @@ impl<'a> SettingsWidget<'a> {
             .alignment(Alignment::Center)
             .render(value_layout, buf);
 
-        // Render [+] button with border
-        if let Some(mouse) = self.state.last_mouse_click {
-            if plus_area.contains(Position::new(mouse.column, mouse.row)) {
+        // Render [+] button
+        Button::new("+", self.theme)
+            .with_mouse_event(self.state.last_mouse_click)
+            .on_click(|| {
                 on_select(self.state);
                 on_adjust(self.state, true);
-            }
-        }
-        let plus_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(button_style);
-        let plus_inner = plus_block.inner(plus_area);
-        plus_block.render(plus_area, buf);
-        Paragraph::new("+")
-            .style(button_style)
-            .alignment(Alignment::Center)
-            .render(plus_inner, buf);
+            })
+            .render(plus_area, buf);
     }
 
     fn render_dimension_presets(&mut self, area: Rect, buf: &mut Buffer) {
@@ -703,50 +675,33 @@ impl<'a> SettingsWidget<'a> {
 
         let current_dims = self.state.config.device_dimensions;
 
-        let cells = make_grid_layout::<LEN>(values_area, 2, Constraint::Length(3));
+        let cells = make_grid_layout::<LEN>(
+            values_area,
+            GridLayout {
+                row_length: 2,
+                height: Some(Constraint::Length(3)),
+                width: None,
+                spacing_x: None,
+                spacing_y: None,
+            },
+        );
 
         for (cell, (name, dims)) in cells.into_iter().zip(presets.iter()) {
             let is_current = *dims == current_dims;
 
-            // Handle mouse clicks
-            if let Some(mouse) = self.state.last_mouse_click {
-                if cell.contains(Position::new(mouse.column, mouse.row)) {
-                    self.state.config.device_dimensions = *dims;
-                }
-            }
+            let button_text = format!("{}\n{}x{}", name, dims.0, dims.1);
 
-            let button_style = if is_current {
-                Style::default()
-                    .fg(self.theme.secondary)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(self.theme.primary)
-            };
-
-            let button_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(button_style)
-                .border_type(if is_current {
-                    BorderType::Thick
+            Button::new(button_text, self.theme)
+                .variant(if is_current {
+                    ButtonVariant::Secondary
                 } else {
-                    BorderType::Plain
-                });
-            let button_inner = button_block.inner(cell);
-            button_block.render(cell, buf);
-
-            let [name_area, dims_area] =
-                Layout::vertical([Constraint::Length(1), Constraint::Length(1)])
-                    .areas(button_inner);
-
-            Paragraph::new(*name)
-                .style(button_style)
-                .alignment(Alignment::Center)
-                .render(name_area, buf);
-
-            Paragraph::new(format!("{}x{}", dims.0, dims.1))
-                .style(button_style)
-                .alignment(Alignment::Center)
-                .render(dims_area, buf);
+                    ButtonVariant::Primary
+                })
+                .with_mouse_event(self.state.last_mouse_click)
+                .on_click(|| {
+                    self.state.config.device_dimensions = *dims;
+                })
+                .render(cell, buf);
         }
     }
 }
@@ -772,18 +727,26 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         // Create layout for all settings sections
         let constraints = [
-            Constraint::Length(1),  // top spacer
-            Constraint::Length(8),  // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Length(8),  // Buttons (quality, brightness, contrast)
-            Constraint::Length(12), // Dimensions (dynamic grid)
-            Constraint::Min(3),     // bottom button
+            Constraint::Length(1), // top spacer
+            Constraint::Min(9),    // Toggles ( reading direction, split double pages, auto crop)
+            Constraint::Min(4),    // Buttons (quality, brightness, contrast)
+            Constraint::Min(12),   // Dimensions (dynamic grid)
+            Constraint::Min(3),    // bottom button
         ];
 
         let [_, toggles_area, buttons_area, device_presets_area, process_button_area] =
             Layout::vertical(constraints).spacing(1).areas(inner);
 
-        let [reading_direction_area, split_double_pages_area, auto_crop_area] =
-            make_grid_layout::<3>(toggles_area, 2, Constraint::Length(4));
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] = make_grid_layout::<3>(
+            toggles_area,
+            GridLayout {
+                row_length: 2,
+                height: Some(Constraint::Length(4)),
+                width: None,
+                spacing_x: None,
+                spacing_y: None,
+            },
+        );
 
         self.render_toggle_button(
             "reading direction",
@@ -831,8 +794,16 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let [quality_area, brightness_area, contrast_area] =
-            make_grid_layout::<3>(buttons_area, 3, Constraint::Length(4));
+        let [quality_area, brightness_area, contrast_area] = make_grid_layout::<3>(
+            buttons_area,
+            GridLayout {
+                row_length: 3,
+                height: Some(Constraint::Length(4)),
+                width: None,
+                spacing_x: None,
+                spacing_y: None,
+            },
+        );
 
         self.render_adjustable_setting(
             "quality",
@@ -893,8 +864,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        ButtonWidget::new(self.theme)
-            .text("Start ⏵".to_string())
+        Button::new("Start ⏵", self.theme)
             .with_mouse_event(self.state.last_mouse_click)
             .on_click(|| {
                 self.state.send_start_processing();
@@ -956,8 +926,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
-        ButtonWidget::new(self.theme)
-            .text("Load Preview".to_string())
+        Button::new("Load Preview", self.theme)
             .with_mouse_event(self.state.last_mouse_click)
             .enabled(config_changed || file_changed)
             .on_click(|| {
@@ -1057,112 +1026,6 @@ fn preview_worker(
     }
 }
 
-pub struct ButtonWidget<'a> {
-    pub text: String,
-    pub style: Style,
-    pub enabled: bool,
-    pub mouse_event: Option<MouseEvent>,
-    pub on_click: Option<Box<dyn FnOnce() + 'a>>,
-    pub theme: &'a Theme,
-}
-
-impl<'a> ButtonWidget<'a> {
-    pub fn new(theme: &'a Theme) -> Self {
-        Self {
-            text: "".to_string(),
-            style: Style::default()
-                .fg(theme.secondary)
-                .add_modifier(Modifier::BOLD),
-            mouse_event: None,
-            on_click: None,
-            enabled: true,
-            theme,
-        }
-    }
-
-    pub fn on_click<'b>(self, on_click: impl FnOnce() + 'b) -> ButtonWidget<'b>
-    where
-        'a: 'b,
-    {
-        ButtonWidget {
-            text: self.text,
-            style: self.style,
-            enabled: self.enabled,
-            mouse_event: self.mouse_event,
-            on_click: Some(Box::new(on_click)),
-            theme: self.theme,
-        }
-    }
-
-    pub fn text(mut self, text: String) -> Self {
-        self.text = text;
-        self
-    }
-
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
-    }
-
-    pub fn with_mouse_event(mut self, mouse_event: Option<MouseEvent>) -> Self {
-        self.mouse_event = mouse_event;
-        self
-    }
-}
-
-impl<'a> Widget for ButtonWidget<'a> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let button_text = format!(" {} ", self.text);
-        let desired_button_width = button_text.len() as u16 + 10;
-        let desired_button_height = 3;
-
-        let button_width = desired_button_width.min(area.width);
-        let button_height = desired_button_height.min(area.height);
-
-        let button_x = area.x + (area.width.saturating_sub(button_width)) / 2;
-        let button_y = area.y + (area.height.saturating_sub(button_height)) / 2;
-
-        let button_area = Rect::new(button_x, button_y, button_width, button_height);
-
-        let button_area = area.intersection(button_area);
-
-        let style = if self.enabled {
-            self.style
-        } else {
-            self.style.add_modifier(Modifier::DIM)
-        };
-
-        if button_area.width > 0 && button_area.height > 0 {
-            let button_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(style)
-                .border_type(if self.enabled {
-                    BorderType::Thick
-                } else {
-                    BorderType::Plain
-                });
-
-            let button_inner = button_block.inner(button_area);
-            button_block.render(button_area, buf);
-
-            if self.enabled {
-                if let Some(event) = self.mouse_event {
-                    if button_area.contains(Position::new(event.column, event.row)) {
-                        if let Some(on_click) = self.on_click {
-                            on_click();
-                        }
-                    }
-                }
-            }
-
-            Paragraph::new(button_text)
-                .style(style)
-                .alignment(Alignment::Center)
-                .render(button_inner, buf);
-        }
-    }
-}
-
 fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
@@ -1245,16 +1108,32 @@ fn calculate_centered_image_area(
     final_area
 }
 
-fn make_grid_layout<const N: usize>(
-    area: Rect,
-    items_per_row: u16,
-    height: Constraint,
-) -> [Rect; N] {
-    let col_constraints = (0..items_per_row).map(|_| Constraint::Min(0));
+struct GridLayout<const N: usize> {
+    row_length: u16,
+    height: Option<Constraint>,
+    width: Option<Constraint>,
+    spacing_x: Option<u16>,
+    spacing_y: Option<u16>,
+}
+
+fn make_grid_layout<const N: usize>(area: Rect, layout: GridLayout<N>) -> [Rect; N] {
+    let GridLayout {
+        row_length,
+        height,
+        width,
+        spacing_x,
+        spacing_y,
+    } = layout;
+    let width = width.unwrap_or(Constraint::Min(0));
+    let height = height.unwrap_or(Constraint::Min(0));
+    let spacing_x = spacing_x.unwrap_or(1);
+    let spacing_y = spacing_y.unwrap_or(1);
+
+    let col_constraints = (0..row_length).map(|_| width);
     let row_constraints =
-        (0..((N + items_per_row as usize - 1) / items_per_row as usize)).map(|_| height);
-    let horizontal = Layout::horizontal(col_constraints).spacing(1);
-    let vertical = Layout::vertical(row_constraints);
+        (0..((N + row_length as usize - 1) / row_length as usize)).map(|_| height);
+    let horizontal = Layout::horizontal(col_constraints).spacing(spacing_x);
+    let vertical = Layout::vertical(row_constraints).spacing(spacing_y);
 
     let rows = vertical.split(area);
     rows.iter()

@@ -13,9 +13,15 @@ pub struct Theme {
     pub content: Color,
     pub background: Color,
     pub focused: Color,
+
     pub primary: Color,
     pub primary_bg: Color,
+    pub primary_pressed: Color,
+
     pub secondary: Color,
+    pub secondary_bg: Color,
+    pub secondary_pressed: Color,
+
     pub key_hint: Color,
     pub error_fg: Color,
     pub error_bg: Color,
@@ -41,9 +47,12 @@ impl Theme {
             content: palette::tailwind::SLATE.c200,
             background: palette::tailwind::SLATE.c950,
             focused: palette::tailwind::AMBER.c400,
-            primary: palette::tailwind::CYAN.c500,
+            primary: palette::tailwind::CYAN.c200,
             primary_bg: palette::tailwind::CYAN.c600,
-            secondary: palette::tailwind::FUCHSIA.c400,
+            primary_pressed: palette::tailwind::CYAN.c500,
+            secondary: palette::tailwind::FUCHSIA.c300,
+            secondary_bg: palette::tailwind::FUCHSIA.c600,
+            secondary_pressed: palette::tailwind::FUCHSIA.c500,
             key_hint: palette::tailwind::YELLOW.c300,
             error_fg: palette::tailwind::RED.c400,
             error_bg: palette::tailwind::RED.c800,
@@ -66,9 +75,12 @@ impl Theme {
             content: Color::Rgb(88, 110, 117), // Solarized base01 - better contrast
             background: Color::Rgb(253, 246, 227), // Warm paper color (Solarized base3)
             focused: Color::Rgb(181, 137, 0),  // Solarized yellow
-            primary: palette::tailwind::SKY.c500, // Solarized blue
-            primary_bg: palette::tailwind::SKY.c200, // Soft pastel blue
-            secondary: Color::Rgb(108, 113, 196), // Solarized violet
+            primary: palette::tailwind::SKY.c500,
+            primary_bg: palette::tailwind::SKY.c200,
+            primary_pressed: palette::tailwind::SKY.c100,
+            secondary: palette::tailwind::VIOLET.c500,
+            secondary_bg: palette::tailwind::VIOLET.c200,
+            secondary_pressed: palette::tailwind::VIOLET.c100,
             key_hint: Color::Rgb(133, 153, 0), // Solarized green
             error_fg: palette::tailwind::RED.c800,
             error_bg: palette::tailwind::RED.c100,
