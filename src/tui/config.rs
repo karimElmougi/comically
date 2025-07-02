@@ -76,6 +76,7 @@ pub struct PreviewState {
 #[derive(Debug, Clone)]
 pub struct LoadedPreviewImage {
     idx: usize,
+    total_pages: usize,
     archive_path: PathBuf,
     image_file: ArchiveFile,
     width: u32,
@@ -94,6 +95,7 @@ enum PreviewRequest {
 pub enum ConfigEvent {
     ImageLoaded {
         idx: usize,
+        total_pages: usize,
         archive_path: PathBuf,
         image: DynamicImage,
         file: ArchiveFile,
@@ -291,6 +293,64 @@ impl ConfigState {
         }
     }
 
+    // navigate to next page in preview
+    fn next_preview_page(&mut self) {
+        if let Some(file_idx) = self.list_state.selected() {
+            if let Some(file) = self.files.get(file_idx) {
+                // Reset protocol state when loading a new image
+                self.preview_state.protocol_state = PreviewProtocolState::None;
+
+                // Get current index and increment
+                let current_idx = self
+                    .preview_state
+                    .loaded_image
+                    .as_ref()
+                    .map(|i| i.idx)
+                    .unwrap_or(0);
+                
+                let next_idx = current_idx + 1;
+
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile {
+                        archive_path: file.archive_path.clone(),
+                        config: self.config,
+                        page_index: Some(next_idx),
+                    });
+            }
+        }
+    }
+
+    // navigate to previous page in preview
+    fn previous_preview_page(&mut self) {
+        if let Some(file_idx) = self.list_state.selected() {
+            if let Some(file) = self.files.get(file_idx) {
+                // Reset protocol state when loading a new image
+                self.preview_state.protocol_state = PreviewProtocolState::None;
+
+                // Get current index and decrement
+                let current_idx = self
+                    .preview_state
+                    .loaded_image
+                    .as_ref()
+                    .map(|i| i.idx)
+                    .unwrap_or(0);
+                
+                let prev_idx = current_idx.saturating_sub(1);
+
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile {
+                        archive_path: file.archive_path.clone(),
+                        config: self.config,
+                        page_index: Some(prev_idx),
+                    });
+            }
+        }
+    }
+
     pub fn update_picker(&mut self, new_picker: Picker) {
         self.picker = new_picker;
         self.preview_state.protocol_state = PreviewProtocolState::None;
@@ -366,6 +426,7 @@ impl ConfigState {
         match event {
             ConfigEvent::ImageLoaded {
                 idx,
+                total_pages,
                 image,
                 archive_path,
                 file,
@@ -373,6 +434,7 @@ impl ConfigState {
             } => {
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
                     idx,
+                    total_pages,
                     archive_path,
                     image_file: file,
                     width: image.width(),
@@ -934,7 +996,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),    // Preview area
-                Constraint::Length(7), // Buttons area (2 buttons + spacing)
+                Constraint::Length(8), // Buttons area (increased for 4 buttons)
             ])
             .areas(inner);
 
@@ -960,16 +1022,17 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
-        // Split buttons area into two buttons
-        let [load_button_area, random_button_area] = Layout::default()
+        // Split buttons area: 1 button on top, 3 buttons below
+        let [top_button_area, bottom_buttons_area] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Load preview button
-                Constraint::Length(3), // Random button
+                Constraint::Length(3), // Navigation buttons
             ])
             .spacing(1)
             .areas(buttons_area);
 
+        // Load preview button (full width)
         Button::new(
             "load preview",
             self.theme,
@@ -979,10 +1042,33 @@ impl<'a> Widget for PreviewWidget<'a> {
             },
         )
         .enabled(config_changed || file_changed)
-        .render(load_button_area, buf);
+        .render(top_button_area, buf);
 
+        // Split bottom area into 3 buttons
+        let [prev_button_area, random_button_area, next_button_area] = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(33),
+                Constraint::Percentage(34),
+                Constraint::Percentage(33),
+            ])
+            .spacing(1)
+            .areas(bottom_buttons_area);
+
+        // Previous button
         Button::new(
-            "random page",
+            "◀ prev",
+            self.theme,
+            self.state.last_mouse_click,
+            || {
+                self.state.previous_preview_page();
+            },
+        )
+        .render(prev_button_area, buf);
+
+        // Random button
+        Button::new(
+            "random",
             self.theme,
             self.state.last_mouse_click,
             || {
@@ -991,6 +1077,17 @@ impl<'a> Widget for PreviewWidget<'a> {
         )
         .render(random_button_area, buf);
 
+        // Next button
+        Button::new(
+            "next ▶",
+            self.theme,
+            self.state.last_mouse_click,
+            || {
+                self.state.next_preview_page();
+            },
+        )
+        .render(next_button_area, buf);
+
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(Some(FilterType::Lanczos3)));
 
@@ -998,9 +1095,11 @@ impl<'a> Widget for PreviewWidget<'a> {
                 Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(preview_area);
 
             let name = format!(
-                "{} - {}",
+                "{} - {} (page {} of {})",
                 loaded_image.archive_path.file_stem().unwrap().display(),
-                loaded_image.image_file.file_stem().display()
+                loaded_image.image_file.file_stem().display(),
+                loaded_image.idx + 1,
+                loaded_image.total_pages
             );
 
             Paragraph::new(name)
@@ -1052,9 +1151,10 @@ fn preview_worker(
                     let result = load_and_process_preview(&path, &config, page_index);
 
                     match result {
-                        Ok((image, file, idx)) => {
+                        Ok((image, file, idx, total_pages)) => {
                             let _ = tx.send(crate::Event::Config(ConfigEvent::ImageLoaded {
                                 idx,
+                                total_pages,
                                 archive_path: path,
                                 image,
                                 file,
@@ -1089,7 +1189,7 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
     page_index: Option<usize>,
-) -> anyhow::Result<(DynamicImage, ArchiveFile, usize)> {
+) -> anyhow::Result<(DynamicImage, ArchiveFile, usize, usize)> {
     let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
         .into_iter()
         .filter_map(|r| r.ok())
@@ -1101,6 +1201,8 @@ fn load_and_process_preview(
     if archive_files.is_empty() {
         return Err(anyhow::anyhow!("No images in archive"));
     }
+
+    let total_pages = archive_files.len();
 
     let idx = match page_index {
         None => {
@@ -1131,7 +1233,7 @@ fn load_and_process_preview(
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 
-    Ok((compressed_img, archive_file, idx))
+    Ok((compressed_img, archive_file, idx, total_pages))
 }
 
 fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
