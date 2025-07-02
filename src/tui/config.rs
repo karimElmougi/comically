@@ -4,7 +4,9 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+    },
 };
 use ratatui_image::{
     picker::Picker,
@@ -36,6 +38,7 @@ pub struct ConfigState {
     pub picker: Picker,
     event_tx: std::sync::mpsc::Sender<crate::Event>,
     last_mouse_click: Option<MouseEvent>,
+    show_help: bool,
 }
 
 #[derive(Debug)]
@@ -142,6 +145,7 @@ impl ConfigState {
             picker,
             event_tx,
             last_mouse_click: None,
+            show_help: false,
         };
 
         // Auto-load the first image
@@ -152,6 +156,12 @@ impl ConfigState {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Char('h') => {
+                self.show_help = !self.show_help;
+            }
+            KeyCode::Esc if self.show_help => {
+                self.show_help = false;
+            }
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::FileList => Focus::Settings,
@@ -485,12 +495,12 @@ impl<'a> Widget for ConfigScreen<'a> {
 
         let footer_text = match (self.state.focus, self.state.selected_field) {
             (Focus::FileList, _) => {
-                "↑/↓: navigate | space: toggle | a: toggle all | tab: switch panel | t: theme | q: quit"
+                "↑/↓: navigate | space: toggle | a: toggle all | tab: switch panel | h: help | t: theme | q: quit"
             }
             (Focus::Settings, Some(_)) => {
-                "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | t: theme | q: quit"
+                "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | h: help | t: theme | q: quit"
             }
-            (Focus::Settings, None) => "enter: start | tab: switch | t: theme| q: quit",
+            (Focus::Settings, None) => "enter: start | tab: switch | h: help | t: theme | q: quit",
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(self.theme.content))
@@ -501,6 +511,11 @@ impl<'a> Widget for ConfigScreen<'a> {
                     .border_style(self.theme.border),
             );
         footer.render(footer_area, buf);
+
+        // Render help popup if shown
+        if self.state.show_help {
+            render_help_popup(area, buf, self.theme);
+        }
 
         // clear the mouse click state
         self.state.last_mouse_click = None;
@@ -1224,4 +1239,65 @@ fn render_image_placeholder(area: Rect, buf: &mut Buffer, theme: &Theme) {
     Paragraph::new(loading_text)
         .style(Style::default().fg(theme.content))
         .render(Rect::new(text_x, text_y, text_width, 1), buf);
+}
+
+fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
+    let popup_width = (area.width * 4 / 5).min(80);
+    let popup_height = (area.height * 9 / 10).min(40);
+
+    let popup_x = area.left() + (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = area.top() + (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    Clear.render(popup_area, buf);
+
+    let help_text = vec![
+        "",
+        "processing settings",
+        "",
+        "reading direction (default: right to left):",
+        "  • left to right: standard western comic/book reading order",
+        "  • right to left: manga reading order - pages flow from right to left",
+        "",
+        "split double pages (default: yes):",
+        "  when enabled, detects and splits two-page spreads into individual pages.",
+        "",
+        "auto crop (default: yes):",
+        "  automatically removes white borders and margins from pages, making the page fit the screen better.",
+        "",
+        "quality (default: 85, range: 0-100):",
+        "  jpeg compression quality for the output images.",
+        "  • higher values = better quality but larger file sizes",
+        "  • lower values = smaller files but more compression artifacts",
+        "",
+        "brightness (default: -10, range: -100 to 100):",
+        "  adjusts the overall lightness/darkness of pages.",
+        "  • positive values make pages brighter",
+        "  • negative values make pages darker",
+        "  • 0 = no adjustment",
+        "",
+        "contrast/gamma (default: 1.8, range: 0.1 to 3.0):",
+        "  controls the contrast and tone curve of the images.",
+        "  • values < 1.0 = lower contrast, lifted shadows",
+        "  • values > 1.0 = higher contrast, deeper shadows",
+        "  • 1.0 = no adjustment",
+        "",
+        "device dimensions (default: 1236x1648 - kindle paperwhite 11):",
+        "  target resolution for the output. images will be scaled to fit",
+        "  within these dimensions while preserving aspect ratio.",
+    ];
+
+    let help_paragraph = Paragraph::new(help_text.join("\n"))
+        .style(Style::default().fg(theme.content))
+        .block(
+            Block::default()
+                .title(" settings help (press 'h' or esc to close) ")
+                .borders(Borders::ALL)
+                .border_style(theme.focused)
+                .style(Style::default().bg(theme.background)),
+        )
+        .alignment(Alignment::Left);
+
+    help_paragraph.render(popup_area, buf);
 }
