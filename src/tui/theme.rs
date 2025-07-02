@@ -29,6 +29,7 @@ pub struct Theme {
     pub stage_colors: StageColors,
     // for text on progress bars
     pub gauge_label: Color,
+    pub muted: Color,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +59,7 @@ impl Theme {
             error_bg: palette::tailwind::RED.c800,
             scrollbar_thumb: palette::tailwind::CYAN.c500,
             gauge_label: palette::tailwind::SLATE.c200,
+            muted: palette::tailwind::SLATE.c600,
             stage_colors: StageColors {
                 extract: palette::tailwind::BLUE.c700,
                 process: palette::tailwind::PURPLE.c700,
@@ -86,6 +88,7 @@ impl Theme {
             error_bg: palette::tailwind::RED.c100,
             scrollbar_thumb: palette::tailwind::SLATE.c400,
             gauge_label: palette::tailwind::SLATE.c700,
+            muted: palette::tailwind::SLATE.c300,
             stage_colors: StageColors {
                 extract: palette::tailwind::BLUE.c300,
                 process: palette::tailwind::PURPLE.c300,

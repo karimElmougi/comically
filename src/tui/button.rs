@@ -97,7 +97,7 @@ impl<'text> Button<'text> {
         if !self.enabled {
             return (
                 self.theme.content,
-                self.theme.background,
+                self.theme.muted,
                 self.theme.border,
                 self.theme.border,
             );

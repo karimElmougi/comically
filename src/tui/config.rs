@@ -959,7 +959,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
             match &mut self.state.preview_state.protocol_state {
                 PreviewProtocolState::None => {
-                    // Don't render anything, waiting for image to load
+                    render_image_placeholder(image_area, buf, self.theme);
                 }
                 PreviewProtocolState::PendingResize { thread_protocol } => {
                     if let Some(rect) =
@@ -967,13 +967,13 @@ impl<'a> Widget for PreviewWidget<'a> {
                     {
                         thread_protocol.resize_encode(&Resize::Scale(None), rect);
                     }
+                    render_image_placeholder(image_area, buf, self.theme);
                 }
                 PreviewProtocolState::Ready { thread_protocol } => {
                     StatefulWidget::render(image, image_area, buf, thread_protocol);
                 }
             }
         } else {
-            // Preview is loading - show nothing while we wait
         }
     }
 }
@@ -1142,4 +1142,24 @@ fn make_grid_layout<const N: usize>(area: Rect, layout: GridLayout<N>) -> [Rect;
         .collect::<Vec<_>>()
         .try_into()
         .unwrap()
+}
+
+fn render_image_placeholder(area: Rect, buf: &mut Buffer, theme: &Theme) {
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if let Some(cell) = buf.cell_mut(Position::new(x, y)) {
+                cell.set_style(Style::default().bg(theme.muted));
+                cell.set_symbol(" ");
+            }
+        }
+    }
+
+    let loading_text = "loading...";
+    let text_width = loading_text.len() as u16;
+    let text_x = area.left() + (area.width.saturating_sub(text_width)) / 2;
+    let text_y = area.top() + area.height / 2;
+
+    Paragraph::new(loading_text)
+        .style(Style::default().fg(theme.content))
+        .render(Rect::new(text_x, text_y, text_width, 1), buf);
 }
