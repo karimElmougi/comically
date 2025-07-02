@@ -9,13 +9,13 @@ use ratatui::{
 
 use crate::tui::Theme;
 
-pub struct Button<'text> {
-    text: Text<'text>,
-    theme: &'text Theme,
+pub struct Button<'a, F> {
+    text: Text<'a>,
+    theme: &'a Theme,
     state: State,
     enabled: bool,
     variant: ButtonVariant,
-    on_click: Option<Box<dyn FnOnce() + 'text>>,
+    on_click: Option<F>,
     mouse_event: Option<MouseEvent>,
 }
 
@@ -33,16 +33,21 @@ pub enum ButtonVariant {
     Secondary,
 }
 
-impl<'text> Button<'text> {
-    pub fn new<T: Into<Text<'text>>>(text: T, theme: &'text Theme) -> Self {
+impl<'a, F: FnOnce() + 'a> Button<'a, F> {
+    pub fn new<T: Into<Text<'a>>>(
+        text: T,
+        theme: &'a Theme,
+        mouse_event: Option<MouseEvent>,
+        on_click: F,
+    ) -> Self {
         Self {
             text: text.into(),
             theme,
             state: State::default(),
             enabled: true,
             variant: ButtonVariant::default(),
-            on_click: None,
-            mouse_event: None,
+            on_click: Some(on_click),
+            mouse_event,
         }
     }
 
@@ -53,19 +58,6 @@ impl<'text> Button<'text> {
 
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
-        self
-    }
-
-    pub fn with_mouse_event(mut self, mouse_event: Option<MouseEvent>) -> Self {
-        self.mouse_event = mouse_event;
-        self
-    }
-
-    pub fn on_click<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce() + 'text,
-    {
-        self.on_click = Some(Box::new(f));
         self
     }
 
@@ -131,7 +123,7 @@ impl<'text> Button<'text> {
     }
 }
 
-impl<'text> Widget for Button<'text> {
+impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
         self.handle_mouse(area);
 

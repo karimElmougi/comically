@@ -561,12 +561,10 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.theme.content))
             .render(text_area, buf);
 
-        Button::new(value, self.theme)
-            .with_mouse_event(self.state.last_mouse_click)
-            .on_click(|| {
-                on_click(self.state);
-            })
-            .render(value_area, buf);
+        Button::new(value, self.theme, self.state.last_mouse_click, || {
+            on_click(self.state);
+        })
+        .render(value_area, buf);
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
@@ -617,13 +615,11 @@ impl<'a> SettingsWidget<'a> {
         .areas(buttons_area);
 
         // Render [-] button
-        Button::new("-", self.theme)
-            .with_mouse_event(self.state.last_mouse_click)
-            .on_click(|| {
-                on_select(self.state);
-                on_adjust(self.state, false);
-            })
-            .render(minus_area, buf);
+        Button::new("-", self.theme, self.state.last_mouse_click, || {
+            on_select(self.state);
+            on_adjust(self.state, false);
+        })
+        .render(minus_area, buf);
 
         let [value_layout] = Layout::vertical([Constraint::Length(1)])
             .flex(Flex::Center)
@@ -639,13 +635,11 @@ impl<'a> SettingsWidget<'a> {
             .render(value_layout, buf);
 
         // Render [+] button
-        Button::new("+", self.theme)
-            .with_mouse_event(self.state.last_mouse_click)
-            .on_click(|| {
-                on_select(self.state);
-                on_adjust(self.state, true);
-            })
-            .render(plus_area, buf);
+        Button::new("+", self.theme, self.state.last_mouse_click, || {
+            on_select(self.state);
+            on_adjust(self.state, true);
+        })
+        .render(plus_area, buf);
     }
 
     fn render_dimension_presets(&mut self, area: Rect, buf: &mut Buffer) {
@@ -691,17 +685,15 @@ impl<'a> SettingsWidget<'a> {
 
             let button_text = format!("{}\n{}x{}", name, dims.0, dims.1);
 
-            Button::new(button_text, self.theme)
-                .variant(if is_current {
-                    ButtonVariant::Secondary
-                } else {
-                    ButtonVariant::Primary
-                })
-                .with_mouse_event(self.state.last_mouse_click)
-                .on_click(|| {
-                    self.state.config.device_dimensions = *dims;
-                })
-                .render(cell, buf);
+            Button::new(button_text, self.theme, self.state.last_mouse_click, || {
+                self.state.config.device_dimensions = *dims;
+            })
+            .variant(if is_current {
+                ButtonVariant::Secondary
+            } else {
+                ButtonVariant::Primary
+            })
+            .render(cell, buf);
         }
     }
 }
@@ -864,12 +856,10 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        Button::new("start ⏵", self.theme)
-            .with_mouse_event(self.state.last_mouse_click)
-            .on_click(|| {
-                self.state.send_start_processing();
-            })
-            .render(process_button_area, buf);
+        Button::new("start ⏵", self.theme, self.state.last_mouse_click, || {
+            self.state.send_start_processing();
+        })
+        .render(process_button_area, buf);
     }
 }
 
@@ -926,13 +916,16 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
-        Button::new("load preview", self.theme)
-            .with_mouse_event(self.state.last_mouse_click)
-            .enabled(config_changed || file_changed)
-            .on_click(|| {
+        Button::new(
+            "load preview",
+            self.theme,
+            self.state.last_mouse_click,
+            || {
                 self.state.request_preview_for_selected();
-            })
-            .render(button_area, buf);
+            },
+        )
+        .enabled(config_changed || file_changed)
+        .render(button_area, buf);
 
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(None));
