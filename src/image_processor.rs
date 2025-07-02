@@ -4,6 +4,7 @@ use imageproc::image::{
     load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
     PixelWithColorType, SubImage,
 };
+use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 
@@ -72,7 +73,7 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> 
     let img = transform(
         img.into_luma8(),
         config.brightness,
-        config.auto_contrast,
+        config.gamma,
         config.sharpness,
     );
 
@@ -116,14 +117,37 @@ where
     processed_images
 }
 
-fn transform(
-    mut img: GrayImage,
-    brightness: i32,
-    auto_contrast: bool,
-    sharpness: f32,
-) -> GrayImage {
-    if auto_contrast {
-        imageproc::contrast::equalize_histogram_mut(&mut img);
+/// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
+fn transform(mut img: GrayImage, brightness: i32, gamma: f32, sharpness: f32) -> GrayImage {
+    // Apply gamma correction if not 1.0
+    if (gamma - 1.0).abs() > 0.01 {
+        // Gamma correction: out = in^gamma
+        // gamma < 1.0: brightens midtones (lifts shadows)
+        // gamma > 1.0: darkens midtones (increases contrast)
+        for pixel in img.pixels_mut() {
+            let normalized = pixel[0] as f32 / 255.0;
+            let corrected = normalized.powf(gamma);
+            pixel[0] = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    // Apply autocontrast - find actual min/max and stretch to 0-255
+    let hist = histogram(&img);
+
+    let channel_hist = &hist.channels[0];
+
+    let min = channel_hist
+        .iter()
+        .position(|&count| count > 0)
+        .unwrap_or(0) as u8;
+    let max = channel_hist
+        .iter()
+        .rposition(|&count| count > 0)
+        .unwrap_or(255) as u8;
+
+    // Only stretch if there's a range to work with
+    if max > min {
+        img = imageproc::contrast::stretch_contrast(&img, min, max, 0, 255);
     }
 
     // Only apply manual adjustments if explicitly set
@@ -131,7 +155,7 @@ fn transform(
         imageops::colorops::brighten_in_place(&mut img, brightness);
     }
 
-    if sharpness != 0.0 {
+    if sharpness.abs() > 0.01 {
         imageops::unsharpen(&img, sharpness, 10)
     } else {
         img

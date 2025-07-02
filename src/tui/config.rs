@@ -54,6 +54,7 @@ pub enum Focus {
 pub enum SelectedField {
     Quality,
     Brightness,
+    Contrast,
     Sharpness,
 }
 
@@ -340,7 +341,15 @@ impl ConfigState {
                     (current - step).max(-100)
                 };
             }
-
+            SelectedField::Contrast => {
+                let step = if is_fine { 0.05 } else { 0.1 };
+                let current = self.config.gamma;
+                self.config.gamma = if increase {
+                    (current + step).min(3.0)
+                } else {
+                    (current - step).max(0.1)
+                };
+            }
             SelectedField::Sharpness => {
                 let step = if is_fine { 0.1 } else { 0.2 };
                 let current = self.config.sharpness;
@@ -411,11 +420,8 @@ impl ConfigState {
             KeyCode::Char('s') => {
                 self.config.split_double_page = !self.config.split_double_page;
             }
-            KeyCode::Char('c') => {
+            KeyCode::Char('r') => {
                 self.config.auto_crop = !self.config.auto_crop;
-            }
-            KeyCode::Char('a') => {
-                self.config.auto_contrast = !self.config.auto_contrast;
             }
             KeyCode::Char('u') => {
                 self.selected_field = Some(SelectedField::Quality);
@@ -423,7 +429,9 @@ impl ConfigState {
             KeyCode::Char('b') => {
                 self.selected_field = Some(SelectedField::Brightness);
             }
-
+            KeyCode::Char('c') => {
+                self.selected_field = Some(SelectedField::Contrast);
+            }
             KeyCode::Char('h') => {
                 self.selected_field = Some(SelectedField::Sharpness);
             }
@@ -763,17 +771,16 @@ impl<'a> Widget for SettingsWidget<'a> {
         let [_, toggles_area, buttons_area, device_presets_area, process_button_area] =
             Layout::vertical(constraints).spacing(1).areas(inner);
 
-        let [reading_direction_area, split_double_pages_area, auto_crop_area, auto_contrast_area] =
-            make_grid_layout::<4>(
-                toggles_area,
-                GridLayout {
-                    row_length: 2,
-                    height: Some(Constraint::Length(4)),
-                    width: None,
-                    spacing_x: None,
-                    spacing_y: None,
-                },
-            );
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] = make_grid_layout::<3>(
+            toggles_area,
+            GridLayout {
+                row_length: 2,
+                height: Some(Constraint::Length(4)),
+                width: None,
+                spacing_x: None,
+                spacing_y: None,
+            },
+        );
 
         self.render_toggle_button(
             "reading direction",
@@ -821,22 +828,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        self.render_toggle_button(
-            "auto contrast",
-            if self.state.config.auto_contrast {
-                "yes"
-            } else {
-                "no"
-            },
-            "[a]",
-            auto_contrast_area,
-            buf,
-            |state| {
-                state.config.auto_contrast = !state.config.auto_contrast;
-            },
-        );
-
-        let [quality_area, brightness_area, sharpness_area] = make_grid_layout::<3>(
+        let [quality_area, brightness_area, contrast_area, sharpness_area] = make_grid_layout::<4>(
             buttons_area,
             GridLayout {
                 row_length: 2,
@@ -860,6 +852,23 @@ impl<'a> Widget for SettingsWidget<'a> {
             |state, increase| {
                 if let Some(SelectedField::Quality) = state.selected_field {
                     state.adjust_setting(SelectedField::Quality, increase, false);
+                }
+            },
+        );
+
+        self.render_adjustable_setting(
+            "contrast",
+            &format!("{:3.2}", self.state.config.gamma),
+            "[r]",
+            contrast_area,
+            buf,
+            self.state.selected_field == Some(SelectedField::Contrast),
+            |state| {
+                state.selected_field = Some(SelectedField::Contrast);
+            },
+            |state, increase| {
+                if let Some(SelectedField::Contrast) = state.selected_field {
+                    state.adjust_setting(SelectedField::Contrast, increase, false);
                 }
             },
         );
