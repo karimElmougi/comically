@@ -57,7 +57,7 @@ pub struct ComicConfig {
     pub auto_crop: bool,
     pub compression_quality: u8,
     pub brightness: i32,
-    pub contrast: f32,
+    pub auto_contrast: bool,
     pub sharpness: f32,
 }
 
@@ -70,7 +70,7 @@ impl Default for ComicConfig {
             auto_crop: true,
             compression_quality: 85,
             brightness: -10,
-            contrast: 0.0,
+            auto_contrast: true,
             sharpness: -1.0,
         }
     }

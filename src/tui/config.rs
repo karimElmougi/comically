@@ -1,3 +1,4 @@
+use imageproc::image::DynamicImage;
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
@@ -53,7 +54,6 @@ pub enum Focus {
 pub enum SelectedField {
     Quality,
     Brightness,
-    Contrast,
     Sharpness,
 }
 
@@ -92,7 +92,7 @@ pub enum ConfigEvent {
     ImageLoaded {
         idx: usize,
         archive_path: PathBuf,
-        image: image::DynamicImage,
+        image: DynamicImage,
         file: ArchiveFile,
         config: ComicConfig,
     },
@@ -340,15 +340,7 @@ impl ConfigState {
                     (current - step).max(-100)
                 };
             }
-            SelectedField::Contrast => {
-                let step = if is_fine { 0.05 } else { 0.1 };
-                let current = self.config.contrast;
-                self.config.contrast = if increase {
-                    (current + step).min(2.0)
-                } else {
-                    (current - step).max(0.0)
-                };
-            }
+
             SelectedField::Sharpness => {
                 let step = if is_fine { 0.1 } else { 0.2 };
                 let current = self.config.sharpness;
@@ -356,7 +348,7 @@ impl ConfigState {
                     (current + step).min(10.0)
                 } else {
                     (current - step).max(-10.0)
-                };
+                }
             }
         };
     }
@@ -422,15 +414,16 @@ impl ConfigState {
             KeyCode::Char('c') => {
                 self.config.auto_crop = !self.config.auto_crop;
             }
+            KeyCode::Char('a') => {
+                self.config.auto_contrast = !self.config.auto_contrast;
+            }
             KeyCode::Char('u') => {
                 self.selected_field = Some(SelectedField::Quality);
             }
             KeyCode::Char('b') => {
                 self.selected_field = Some(SelectedField::Brightness);
             }
-            KeyCode::Char('k') => {
-                self.selected_field = Some(SelectedField::Contrast);
-            }
+
             KeyCode::Char('h') => {
                 self.selected_field = Some(SelectedField::Sharpness);
             }
@@ -770,16 +763,17 @@ impl<'a> Widget for SettingsWidget<'a> {
         let [_, toggles_area, buttons_area, device_presets_area, process_button_area] =
             Layout::vertical(constraints).spacing(1).areas(inner);
 
-        let [reading_direction_area, split_double_pages_area, auto_crop_area] = make_grid_layout::<3>(
-            toggles_area,
-            GridLayout {
-                row_length: 2,
-                height: Some(Constraint::Length(4)),
-                width: None,
-                spacing_x: None,
-                spacing_y: None,
-            },
-        );
+        let [reading_direction_area, split_double_pages_area, auto_crop_area, auto_contrast_area] =
+            make_grid_layout::<4>(
+                toggles_area,
+                GridLayout {
+                    row_length: 2,
+                    height: Some(Constraint::Length(4)),
+                    width: None,
+                    spacing_x: None,
+                    spacing_y: None,
+                },
+            );
 
         self.render_toggle_button(
             "reading direction",
@@ -827,7 +821,22 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let [quality_area, brightness_area, contrast_area, sharpness_area] = make_grid_layout::<4>(
+        self.render_toggle_button(
+            "auto contrast",
+            if self.state.config.auto_contrast {
+                "yes"
+            } else {
+                "no"
+            },
+            "[a]",
+            auto_contrast_area,
+            buf,
+            |state| {
+                state.config.auto_contrast = !state.config.auto_contrast;
+            },
+        );
+
+        let [quality_area, brightness_area, sharpness_area] = make_grid_layout::<3>(
             buttons_area,
             GridLayout {
                 row_length: 2,
@@ -868,23 +877,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             |state, increase| {
                 if let Some(SelectedField::Brightness) = state.selected_field {
                     state.adjust_setting(SelectedField::Brightness, increase, false);
-                }
-            },
-        );
-
-        self.render_adjustable_setting(
-            "contrast",
-            &format!("{:3.1}", self.state.config.contrast),
-            "[k]",
-            contrast_area,
-            buf,
-            self.state.selected_field == Some(SelectedField::Contrast),
-            |state| {
-                state.selected_field = Some(SelectedField::Contrast);
-            },
-            |state, increase| {
-                if let Some(SelectedField::Contrast) = state.selected_field {
-                    state.adjust_setting(SelectedField::Contrast, increase, false);
                 }
             },
         );
@@ -1103,7 +1095,7 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
     page_index: Option<usize>,
-) -> anyhow::Result<(image::DynamicImage, ArchiveFile, usize)> {
+) -> anyhow::Result<(DynamicImage, ArchiveFile, usize)> {
     let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
         .into_iter()
         .filter_map(|r| r.ok())
@@ -1127,7 +1119,7 @@ fn load_and_process_preview(
 
     let archive_file = archive_files.into_iter().nth(idx).unwrap();
 
-    let img = image::load_from_memory(&archive_file.data)?;
+    let img = imageproc::image::load_from_memory(&archive_file.data)?;
 
     let processed_images = crate::image_processor::process_image(img, config);
 
@@ -1143,7 +1135,7 @@ fn load_and_process_preview(
         config.compression_quality,
     )?;
 
-    let compressed_img = image::load_from_memory(&compressed_buffer)?;
+    let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 
     Ok((compressed_img, archive_file, idx))
 }

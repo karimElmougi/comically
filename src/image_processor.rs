@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
+use imageproc::image::{
+    imageops::{self, FilterType},
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+    PixelWithColorType, SubImage,
+};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 
@@ -22,7 +25,7 @@ pub fn process_archive_images(
             load.ok()
         })
         .filter_map(|archive_file| {
-            let Ok(img) = image::load_from_memory(&archive_file.data) else {
+            let Ok(img) = load_from_memory(&archive_file.data) else {
                 log::warn!("Failed to load image: {}", archive_file.file_name.display());
                 return None;
             };
@@ -69,7 +72,7 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> 
     let img = transform(
         img.into_luma8(),
         config.brightness,
-        config.contrast,
+        config.auto_contrast,
         config.sharpness,
     );
 
@@ -86,7 +89,7 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> 
 
 fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
 where
-    I: GenericImageView<Pixel = image::Luma<u8>> + Send + Sync,
+    I: GenericImageView<Pixel = Luma<u8>> + Send + Sync,
 {
     let (width, height) = img.dimensions();
     let processed_images = if c.split_double_page && width > height {
@@ -113,25 +116,33 @@ where
     processed_images
 }
 
-fn transform(mut img: GrayImage, brightness: i32, contrast: f32, sharpness: f32) -> GrayImage {
+fn transform(
+    mut img: GrayImage,
+    brightness: i32,
+    auto_contrast: bool,
+    sharpness: f32,
+) -> GrayImage {
+    if auto_contrast {
+        imageproc::contrast::equalize_histogram_mut(&mut img);
+    }
+
+    // Only apply manual adjustments if explicitly set
     if brightness != 0 {
-        image::imageops::colorops::brighten_in_place(&mut img, brightness);
+        imageops::colorops::brighten_in_place(&mut img, brightness);
     }
-    if contrast != 0.0 {
-        image::imageops::colorops::contrast_in_place(&mut img, contrast);
-    }
+
     if sharpness != 0.0 {
-        image::imageops::unsharpen(&img, sharpness, 10)
+        imageops::unsharpen(&img, sharpness, 10)
     } else {
         img
     }
 }
 
-fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
+fn split_double_pages<I: GenericImageView>(img: &I) -> (SubImage<&I>, SubImage<&I>) {
     let (width, height) = img.dimensions();
 
-    let left = image::imageops::crop_imm(img, 0, 0, width / 2, height);
-    let right = image::imageops::crop_imm(img, width / 2, 0, width / 2, height);
+    let left = imageops::crop_imm(img, 0, 0, width / 2, height);
+    let right = imageops::crop_imm(img, width / 2, 0, width / 2, height);
 
     (left, right)
 }
@@ -144,7 +155,7 @@ const MIN_MARGIN_WIDTH: u32 = 10;
 const SAFETY_MARGIN: u32 = 2;
 
 /// Auto-crop white margins from all sides of the image
-fn auto_crop<'a>(img: &'a GrayImage) -> Option<image::SubImage<&'a GrayImage>> {
+fn auto_crop<'a>(img: &'a GrayImage) -> Option<SubImage<&'a GrayImage>> {
     let (width, height) = img.dimensions();
 
     // Left margin: scan from left to right
@@ -221,7 +232,7 @@ fn auto_crop<'a>(img: &'a GrayImage) -> Option<image::SubImage<&'a GrayImage>> {
         && crop_height < height;
 
     if should_crop_horizontal || should_crop_vertical {
-        return Some(image::imageops::crop_imm(
+        return Some(imageops::crop_imm(
             img,
             left_margin,
             top_margin,
@@ -274,7 +285,7 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
 fn resize_image<I>(
     img: &I,
     device_dimensions: (u32, u32),
-) -> image::ImageBuffer<I::Pixel, Vec<<I::Pixel as image::Pixel>::Subpixel>>
+) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
 where
     I: GenericImageView,
     <I as GenericImageView>::Pixel: 'static,
@@ -298,7 +309,7 @@ where
     let new_width = (width as f32 * ratio) as u32;
     let new_height = (height as f32 * ratio) as u32;
 
-    image::imageops::resize(img, new_width, new_height, filter)
+    imageops::resize(img, new_width, new_height, filter)
 }
 
 /// Compress an image to JPEG format with the specified quality
@@ -308,7 +319,8 @@ where
     <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
     W: std::io::Write,
 {
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+    let mut encoder =
+        imageproc::image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
 
     encoder
         .encode_image(img)
@@ -341,7 +353,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{GrayImage, Luma};
+    use imageproc::image::{GrayImage, Luma};
 
     #[test]
     fn test_basic_cropping() {
