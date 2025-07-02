@@ -119,19 +119,21 @@ impl ConfigState {
             preview_worker(worker_rx, resize_rx, event_tx_clone);
         });
 
+        let config = ComicConfig::load().unwrap_or(ComicConfig {
+            device_dimensions: (1236, 1648),
+            right_to_left: true,
+            split_double_page: true,
+            auto_crop: true,
+            compression_quality: 75,
+            brightness: -10,
+            contrast: 1.0,
+        });
+
         let mut state = Self {
             files,
             selected_files,
             list_state,
-            config: ComicConfig {
-                device_dimensions: (1236, 1648),
-                right_to_left: true,
-                split_double_page: true,
-                auto_crop: true,
-                compression_quality: 75,
-                brightness: -10,
-                contrast: 1.0,
-            },
+            config,
             prefix: None,
             focus: Focus::FileList,
             selected_field: None,

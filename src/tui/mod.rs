@@ -178,20 +178,17 @@ fn process_events(
                 config,
                 prefix,
             } => {
-                // Transition to processing state
+                let _ = config.save();
                 app.state = AppState::Processing(progress::ProgressState::new());
 
-                // Create channels for processing
                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
 
-                // Start processing thread
                 let event_tx_clone = event_tx.clone();
                 let kindlegen_tx_clone = kindlegen_tx.clone();
                 thread::spawn(move || {
                     process_files(files, config, prefix, event_tx_clone, kindlegen_tx_clone);
                 });
 
-                // Start kindlegen polling thread
                 let event_tx_clone = event_tx.clone();
                 thread::spawn(move || {
                     poll_kindlegen(kindlegen_rx);

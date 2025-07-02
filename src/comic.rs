@@ -1,5 +1,6 @@
 use crate::Event;
 use std::{
+    fs,
     path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
@@ -48,7 +49,7 @@ pub enum ProgressEvent {
     ProcessingComplete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComicConfig {
     pub device_dimensions: (u32, u32),
     pub right_to_left: bool,
@@ -57,6 +58,26 @@ pub struct ComicConfig {
     pub compression_quality: u8,
     pub brightness: i32,
     pub contrast: f32,
+}
+
+impl ComicConfig {
+    const CONFIG_PATH: &str = ".comically.config";
+
+    pub fn load() -> Option<Self> {
+        let config_path = std::env::home_dir()?.join(Self::CONFIG_PATH);
+
+        fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+    }
+
+    pub fn save(&self) -> Option<()> {
+        let config_path = std::env::home_dir()?.join(Self::CONFIG_PATH);
+
+        serde_json::to_string_pretty(self)
+            .ok()
+            .and_then(|json| fs::write(&config_path, json).ok())
+    }
 }
 
 #[derive(Debug, Clone)]
