@@ -58,6 +58,22 @@ pub struct ComicConfig {
     pub compression_quality: u8,
     pub brightness: i32,
     pub contrast: f32,
+    pub sharpness: f32,
+}
+
+impl Default for ComicConfig {
+    fn default() -> Self {
+        Self {
+            device_dimensions: (1236, 1648),
+            right_to_left: true,
+            split_double_page: true,
+            auto_crop: true,
+            compression_quality: 75,
+            brightness: -10,
+            contrast: 1.0,
+            sharpness: 0.0,
+        }
+    }
 }
 
 impl ComicConfig {

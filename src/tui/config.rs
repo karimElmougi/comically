@@ -54,6 +54,7 @@ pub enum SelectedField {
     Quality,
     Brightness,
     Contrast,
+    Sharpness,
 }
 
 enum PreviewProtocolState {
@@ -119,15 +120,7 @@ impl ConfigState {
             preview_worker(worker_rx, resize_rx, event_tx_clone);
         });
 
-        let config = ComicConfig::load().unwrap_or(ComicConfig {
-            device_dimensions: (1236, 1648),
-            right_to_left: true,
-            split_double_page: true,
-            auto_crop: true,
-            compression_quality: 75,
-            brightness: -10,
-            contrast: 1.0,
-        });
+        let config = ComicConfig::load().unwrap_or_default();
 
         let mut state = Self {
             files,
@@ -324,6 +317,15 @@ impl ConfigState {
                     (current - step).max(0.0)
                 };
             }
+            SelectedField::Sharpness => {
+                let step = if is_fine { 0.1 } else { 0.5 };
+                let current = self.config.sharpness;
+                self.config.sharpness = if increase {
+                    (current + step).min(10.0)
+                } else {
+                    (current - step).max(0.0)
+                };
+            }
         };
     }
 
@@ -394,6 +396,9 @@ impl ConfigState {
             }
             KeyCode::Char('k') => {
                 self.selected_field = Some(SelectedField::Contrast);
+            }
+            KeyCode::Char('h') => {
+                self.selected_field = Some(SelectedField::Sharpness);
             }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
@@ -723,7 +728,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         let constraints = [
             Constraint::Length(1), // top spacer
             Constraint::Min(9),    // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Min(4),    // Buttons (quality, brightness, contrast)
+            Constraint::Min(10),   // Buttons (quality, brightness, contrast)
             Constraint::Min(12),   // Dimensions (dynamic grid)
             Constraint::Min(3),    // bottom button
         ];
@@ -788,10 +793,10 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let [quality_area, brightness_area, contrast_area] = make_grid_layout::<3>(
+        let [quality_area, brightness_area, contrast_area, sharpness_area] = make_grid_layout::<4>(
             buttons_area,
             GridLayout {
-                row_length: 3,
+                row_length: 2,
                 height: Some(Constraint::Length(4)),
                 width: None,
                 spacing_x: None,
@@ -846,6 +851,23 @@ impl<'a> Widget for SettingsWidget<'a> {
             |state, increase| {
                 if let Some(SelectedField::Contrast) = state.selected_field {
                     state.adjust_setting(SelectedField::Contrast, increase, false);
+                }
+            },
+        );
+
+        self.render_adjustable_setting(
+            "sharpness",
+            &format!("{:3.1}", self.state.config.sharpness),
+            "[h]",
+            sharpness_area,
+            buf,
+            self.state.selected_field == Some(SelectedField::Sharpness),
+            |state| {
+                state.selected_field = Some(SelectedField::Sharpness);
+            },
+            |state, increase| {
+                if let Some(SelectedField::Sharpness) = state.selected_field {
+                    state.adjust_setting(SelectedField::Sharpness, increase, false);
                 }
             },
         );
