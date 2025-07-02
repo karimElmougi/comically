@@ -70,12 +70,7 @@ pub fn process_archive_images(
 
 /// Process a single image file with Kindle-optimized transformations
 pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
-    let img = transform(
-        img.into_luma8(),
-        config.brightness,
-        config.gamma,
-        config.sharpness,
-    );
+    let img = transform(img.into_luma8(), config.brightness, config.gamma);
 
     if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
@@ -118,7 +113,7 @@ where
 }
 
 /// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
-fn transform(mut img: GrayImage, brightness: i32, gamma: f32, sharpness: f32) -> GrayImage {
+fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
     // Apply gamma correction if not 1.0
     if (gamma - 1.0).abs() > 0.01 {
         // Gamma correction: out = in^gamma
@@ -155,11 +150,7 @@ fn transform(mut img: GrayImage, brightness: i32, gamma: f32, sharpness: f32) ->
         imageops::colorops::brighten_in_place(&mut img, brightness);
     }
 
-    if sharpness.abs() > 0.01 {
-        imageops::unsharpen(&img, sharpness, 10)
-    } else {
-        img
-    }
+    img
 }
 
 fn split_double_pages<I: GenericImageView>(img: &I) -> (SubImage<&I>, SubImage<&I>) {

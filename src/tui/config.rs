@@ -54,8 +54,7 @@ pub enum Focus {
 pub enum SelectedField {
     Quality,
     Brightness,
-    Contrast,
-    Sharpness,
+    Gamma,
 }
 
 enum PreviewProtocolState {
@@ -341,7 +340,7 @@ impl ConfigState {
                     (current - step).max(-100)
                 };
             }
-            SelectedField::Contrast => {
+            SelectedField::Gamma => {
                 let step = if is_fine { 0.05 } else { 0.1 };
                 let current = self.config.gamma;
                 self.config.gamma = if increase {
@@ -349,15 +348,6 @@ impl ConfigState {
                 } else {
                     (current - step).max(0.1)
                 };
-            }
-            SelectedField::Sharpness => {
-                let step = if is_fine { 0.1 } else { 0.2 };
-                let current = self.config.sharpness;
-                self.config.sharpness = if increase {
-                    (current + step).min(10.0)
-                } else {
-                    (current - step).max(-10.0)
-                }
             }
         };
     }
@@ -430,10 +420,7 @@ impl ConfigState {
                 self.selected_field = Some(SelectedField::Brightness);
             }
             KeyCode::Char('c') => {
-                self.selected_field = Some(SelectedField::Contrast);
-            }
-            KeyCode::Char('h') => {
-                self.selected_field = Some(SelectedField::Sharpness);
+                self.selected_field = Some(SelectedField::Gamma);
             }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
@@ -828,7 +815,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let [quality_area, brightness_area, contrast_area, sharpness_area] = make_grid_layout::<4>(
+        let [quality_area, brightness_area, contrast_area] = make_grid_layout::<3>(
             buttons_area,
             GridLayout {
                 row_length: 2,
@@ -862,13 +849,13 @@ impl<'a> Widget for SettingsWidget<'a> {
             "[r]",
             contrast_area,
             buf,
-            self.state.selected_field == Some(SelectedField::Contrast),
+            self.state.selected_field == Some(SelectedField::Gamma),
             |state| {
-                state.selected_field = Some(SelectedField::Contrast);
+                state.selected_field = Some(SelectedField::Gamma);
             },
             |state, increase| {
-                if let Some(SelectedField::Contrast) = state.selected_field {
-                    state.adjust_setting(SelectedField::Contrast, increase, false);
+                if let Some(SelectedField::Gamma) = state.selected_field {
+                    state.adjust_setting(SelectedField::Gamma, increase, false);
                 }
             },
         );
@@ -886,23 +873,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             |state, increase| {
                 if let Some(SelectedField::Brightness) = state.selected_field {
                     state.adjust_setting(SelectedField::Brightness, increase, false);
-                }
-            },
-        );
-
-        self.render_adjustable_setting(
-            "sharpness",
-            &format!("{:3.1}", self.state.config.sharpness),
-            "[h]",
-            sharpness_area,
-            buf,
-            self.state.selected_field == Some(SelectedField::Sharpness),
-            |state| {
-                state.selected_field = Some(SelectedField::Sharpness);
-            },
-            |state, increase| {
-                if let Some(SelectedField::Sharpness) = state.selected_field {
-                    state.adjust_setting(SelectedField::Sharpness, increase, false);
                 }
             },
         );

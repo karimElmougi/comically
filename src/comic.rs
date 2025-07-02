@@ -59,7 +59,6 @@ pub struct ComicConfig {
     pub brightness: i32,
     // Gamma correction: 0.1-3.0
     pub gamma: f32,
-    pub sharpness: f32,
 }
 
 impl Default for ComicConfig {
@@ -72,7 +71,6 @@ impl Default for ComicConfig {
             compression_quality: 85,
             brightness: -10,
             gamma: 1.8,
-            sharpness: -1.0,
         }
     }
 }
