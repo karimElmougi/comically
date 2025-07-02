@@ -207,12 +207,10 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
     let elapsed = state.complete.unwrap_or_else(|| state.start.elapsed());
 
     Gauge::default()
-        .gauge_style(Style::default().fg(theme.primary))
-        .label(format!(
-            "{}/{} ({:.1}s)",
-            successful,
-            total,
-            elapsed.as_secs_f64()
+        .gauge_style(Style::default().fg(theme.primary_bg))
+        .label(Span::styled(
+            format!("{}/{} ({:.1}s)", successful, total, elapsed.as_secs_f64()),
+            Style::default().fg(theme.gauge_label),
         ))
         .ratio(progress_ratio)
         .block(
@@ -336,10 +334,10 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
         }
         ComicStatus::Failed { error, .. } => {
             let error_text = error.to_string();
-            let label = Span::styled(error_text, Style::default().fg(theme.content));
+            let label = Span::styled(error_text, Style::default().fg(theme.error_fg));
 
             let gauge = Gauge::default()
-                .gauge_style(theme.error)
+                .gauge_style(theme.error_bg)
                 .ratio(1.0)
                 .label(label);
 
@@ -507,8 +505,8 @@ impl<'a> Widget for StageTimingBar<'a> {
         Paragraph::new(total_label)
             .style(
                 Style::default()
-                    .fg(self.theme.background)
-                    .bg(self.theme.primary)
+                    .fg(self.theme.gauge_label)
+                    .bg(self.theme.primary_bg)
                     .bold(),
             )
             .alignment(ratatui::layout::Alignment::Center)

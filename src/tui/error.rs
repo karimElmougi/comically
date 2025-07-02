@@ -67,7 +67,8 @@ pub fn render_error_screen(
     // Create a centered box for the error message
     let message_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme.border)
+        .border_style(theme.error_fg)
+        .bg(theme.error_bg)
         .title(error_info.title.as_str())
         .title_alignment(Alignment::Center);
 

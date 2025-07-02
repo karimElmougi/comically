@@ -14,15 +14,16 @@ pub struct Theme {
     pub background: Color,
     pub focused: Color,
     pub primary: Color,
+    pub primary_bg: Color,
     pub secondary: Color,
     pub key_hint: Color,
-    pub error: Color,
-    pub success: Color,
-    pub warning: Color,
+    pub error_fg: Color,
+    pub error_bg: Color,
     pub scrollbar: Color,
     pub scrollbar_thumb: Color,
     pub stage_colors: StageColors,
-    pub gauge_label: Color, // Color for text on progress bars
+    // for text on progress bars
+    pub gauge_label: Color,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -37,42 +38,42 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             mode: ThemeMode::Dark,
-            border: palette::tailwind::SLATE.c600,
-            content: palette::tailwind::SLATE.c200, // Lighter for better contrast
-            background: Color::Rgb(15, 15, 23),     // Very dark blue-black
+            border: palette::tailwind::SLATE.c400,
+            content: palette::tailwind::SLATE.c200,
+            background: palette::tailwind::SLATE.c950,
             focused: palette::tailwind::AMBER.c400,
-            primary: palette::tailwind::CYAN.c400,
+            primary: palette::tailwind::CYAN.c500,
+            primary_bg: palette::tailwind::CYAN.c600,
             secondary: palette::tailwind::FUCHSIA.c400,
             key_hint: palette::tailwind::YELLOW.c300,
-            error: palette::tailwind::RED.c400,
-            success: palette::tailwind::EMERALD.c400,
-            warning: palette::tailwind::ORANGE.c400,
+            error_fg: palette::tailwind::RED.c400,
+            error_bg: palette::tailwind::RED.c800,
             scrollbar: palette::tailwind::SLATE.c700,
             scrollbar_thumb: palette::tailwind::CYAN.c500,
-            gauge_label: palette::tailwind::SLATE.c200, // Same as content for dark mode
+            gauge_label: palette::tailwind::SLATE.c200,
             stage_colors: StageColors {
-                extract: palette::tailwind::BLUE.c700,   // Darker, more subtle
-                process: palette::tailwind::PURPLE.c700, // Darker, more subtle
-                mobi: palette::tailwind::PINK.c700,      // Darker, more subtle
-                epub: palette::tailwind::EMERALD.c700,   // Darker, more subtle
+                extract: palette::tailwind::BLUE.c700,
+                process: palette::tailwind::PURPLE.c700,
+                mobi: palette::tailwind::PINK.c700,
+                epub: palette::tailwind::EMERALD.c700,
             },
         }
     }
 
     pub fn light() -> Self {
-        // Paper-like theme inspired by Solarized Light and old books
+        // paper-like theme inspired by solarized light and old books
         Self {
             mode: ThemeMode::Light,
-            border: Color::Rgb(147, 161, 161), // Solarized base1
+            border: Color::Rgb(101, 123, 131), // Solarized base00 - darker for better contrast
             content: Color::Rgb(88, 110, 117), // Solarized base01 - better contrast
             background: Color::Rgb(253, 246, 227), // Warm paper color (Solarized base3)
             focused: Color::Rgb(181, 137, 0),  // Solarized yellow
-            primary: Color::Rgb(38, 139, 210), // Solarized blue
+            primary: palette::tailwind::SKY.c500, // Solarized blue
+            primary_bg: palette::tailwind::SKY.c200, // Soft pastel blue
             secondary: Color::Rgb(108, 113, 196), // Solarized violet
             key_hint: Color::Rgb(133, 153, 0), // Solarized green
-            error: Color::Rgb(220, 50, 47),    // Solarized red
-            success: Color::Rgb(133, 153, 0),  // Solarized green
-            warning: Color::Rgb(203, 75, 22),  // Solarized orange
+            error_fg: palette::tailwind::RED.c800,
+            error_bg: palette::tailwind::RED.c100,
             scrollbar: Color::Rgb(238, 232, 213), // Solarized base2
             scrollbar_thumb: Color::Rgb(147, 161, 161), // Solarized base1
             gauge_label: Color::Rgb(7, 54, 66), // Solarized base02 - dark enough for both backgrounds
