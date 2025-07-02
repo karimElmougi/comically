@@ -83,6 +83,7 @@ enum PreviewRequest {
     LoadFile {
         archive_path: PathBuf,
         config: ComicConfig,
+        page_index: Option<usize>,
     },
 }
 
@@ -245,6 +246,26 @@ impl ConfigState {
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
                         config: self.config,
+                        page_index: Some(0),
+                    });
+            }
+        }
+    }
+
+    // request a random page preview for the selected file
+    fn request_random_preview_for_selected(&mut self) {
+        if let Some(file_idx) = self.list_state.selected() {
+            if let Some(file) = self.files.get(file_idx) {
+                // Reset protocol state when loading a new image
+                self.preview_state.protocol_state = PreviewProtocolState::None;
+
+                let _ = self
+                    .preview_state
+                    .preview_tx
+                    .send(PreviewRequest::LoadFile {
+                        archive_path: file.archive_path.clone(),
+                        config: self.config,
+                        page_index: None,
                     });
             }
         }
@@ -265,6 +286,7 @@ impl ConfigState {
                     .send(PreviewRequest::LoadFile {
                         archive_path: loaded_image.archive_path.clone(),
                         config: self.config,
+                        page_index: None,
                     });
             }
         }
@@ -909,12 +931,12 @@ impl<'a> Widget for PreviewWidget<'a> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        // Split the area to have a button at the bottom
-        let [preview_area, button_area] = Layout::default()
+        // Split the area to have buttons at the bottom
+        let [preview_area, buttons_area] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),    // Preview area
-                Constraint::Length(3), // Button area
+                Constraint::Length(7), // Buttons area (2 buttons + spacing)
             ])
             .areas(inner);
 
@@ -940,6 +962,16 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
+        // Split buttons area into two buttons
+        let [load_button_area, random_button_area] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Load preview button
+                Constraint::Length(3), // Random button
+            ])
+            .spacing(1)
+            .areas(buttons_area);
+
         Button::new(
             "load preview",
             self.theme,
@@ -949,7 +981,17 @@ impl<'a> Widget for PreviewWidget<'a> {
             },
         )
         .enabled(config_changed || file_changed)
-        .render(button_area, buf);
+        .render(load_button_area, buf);
+
+        Button::new(
+            "random page",
+            self.theme,
+            self.state.last_mouse_click,
+            || {
+                self.state.request_random_preview_for_selected();
+            },
+        )
+        .render(random_button_area, buf);
 
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(None));
@@ -1007,8 +1049,9 @@ fn preview_worker(
                 PreviewRequest::LoadFile {
                     archive_path: path,
                     config,
+                    page_index,
                 } => {
-                    let result = load_and_process_preview(&path, &config);
+                    let result = load_and_process_preview(&path, &config, page_index);
 
                     match result {
                         Ok((image, file)) => {
@@ -1046,12 +1089,36 @@ fn preview_worker(
 fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
+    page_index: Option<usize>,
 ) -> anyhow::Result<(image::DynamicImage, ArchiveFile)> {
-    let archive_file = comic_archive::unarchive_comic_iter(path)?
+    let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
         .into_iter()
         .filter_map(|r| r.ok())
-        .min_by(|a, b| a.file_stem().cmp(b.file_stem()))
-        .ok_or_else(|| anyhow::anyhow!("No images in archive"))?;
+        .collect();
+
+    // Sort by filename to ensure consistent ordering
+    archive_files.sort_by(|a, b| a.file_stem().cmp(b.file_stem()));
+
+    if archive_files.is_empty() {
+        return Err(anyhow::anyhow!("No images in archive"));
+    }
+
+    let archive_file = match page_index {
+        None => {
+            use rand::Rng;
+            let random_idx = rand::thread_rng().gen_range(0..archive_files.len());
+            archive_files.into_iter().nth(random_idx).unwrap()
+        }
+        Some(idx) => {
+            // Specific page index
+            let len = archive_files.len();
+            if idx < len {
+                archive_files.into_iter().nth(idx).unwrap()
+            } else {
+                archive_files.into_iter().next().unwrap()
+            }
+        }
+    };
 
     let img = image::load_from_memory(&archive_file.data)?;
 
