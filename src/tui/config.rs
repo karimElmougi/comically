@@ -40,6 +40,7 @@ pub struct ConfigState {
     event_tx: std::sync::mpsc::Sender<crate::Event>,
     last_mouse_click: Option<MouseEvent>,
     show_help: bool,
+    device_selector: DeviceSelectorState,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,137 @@ pub enum SelectedField {
     Brightness,
     Gamma,
 }
+
+pub struct DevicePreset {
+    pub name: &'static str,
+    pub dimensions: (u32, u32),
+}
+
+pub struct DeviceSelectorState {
+    pub show: bool,
+    pub list_state: ListState,
+    pub selected_index: Option<usize>,
+}
+
+impl DeviceSelectorState {
+    pub fn new(current_dimensions: (u32, u32)) -> Self {
+        let selected_index = DEVICE_PRESETS
+            .iter()
+            .position(|preset| preset.dimensions == current_dimensions);
+
+        let mut list_state = ListState::default();
+        if let Some(idx) = selected_index {
+            list_state.select(Some(idx));
+        }
+
+        Self {
+            show: false,
+            list_state,
+            selected_index,
+        }
+    }
+
+    pub fn open(&mut self) {
+        self.show = true;
+        // Update the list state to current selection
+        if let Some(idx) = self.selected_index {
+            self.list_state.select(Some(idx));
+        }
+    }
+
+    pub fn close(&mut self) {
+        self.show = false;
+    }
+
+    pub fn confirm_selection(&mut self) -> Option<(u32, u32)> {
+        if let Some(selected) = self.list_state.selected() {
+            self.selected_index = Some(selected);
+            self.show = false;
+            Some(DEVICE_PRESETS[selected].dimensions)
+        } else {
+            None
+        }
+    }
+}
+
+const DEVICE_PRESETS: &[DevicePreset] = &[
+    DevicePreset {
+        name: "Kindle PW 11",
+        dimensions: (1236, 1648),
+    },
+    DevicePreset {
+        name: "Kindle PW 12",
+        dimensions: (1264, 1680),
+    },
+    DevicePreset {
+        name: "Kindle Oasis",
+        dimensions: (1264, 1680),
+    },
+    DevicePreset {
+        name: "Kindle Scribe",
+        dimensions: (1860, 2480),
+    },
+    DevicePreset {
+        name: "Kindle Basic",
+        dimensions: (800, 600),
+    },
+    DevicePreset {
+        name: "Kindle 11",
+        dimensions: (1072, 1448),
+    },
+    DevicePreset {
+        name: "Kobo Clara HD",
+        dimensions: (1072, 1448),
+    },
+    DevicePreset {
+        name: "Kobo Clara 2E",
+        dimensions: (1072, 1448),
+    },
+    DevicePreset {
+        name: "Kobo Libra 2",
+        dimensions: (1264, 1680),
+    },
+    DevicePreset {
+        name: "Kobo Sage",
+        dimensions: (1440, 1920),
+    },
+    DevicePreset {
+        name: "Kobo Elipsa",
+        dimensions: (1404, 1872),
+    },
+    DevicePreset {
+        name: "reMarkable 2",
+        dimensions: (1404, 1872),
+    },
+    DevicePreset {
+        name: "iPad Mini",
+        dimensions: (1488, 2266),
+    },
+    DevicePreset {
+        name: "iPad 10.9",
+        dimensions: (1640, 2360),
+    },
+    DevicePreset {
+        name: "iPad Pro 11",
+        dimensions: (1668, 2388),
+    },
+    DevicePreset {
+        name: "Onyx Boox Nova",
+        dimensions: (1200, 1600),
+    },
+    DevicePreset {
+        name: "Onyx Boox Note",
+        dimensions: (1404, 1872),
+    },
+    DevicePreset {
+        name: "PocketBook Era",
+        dimensions: (1200, 1600),
+    },
+    DevicePreset {
+        name: "Custom",
+        dimensions: (1236, 1648),
+    },
+];
 
 enum PreviewProtocolState {
     None,
@@ -147,6 +279,7 @@ impl ConfigState {
             event_tx,
             last_mouse_click: None,
             show_help: false,
+            device_selector: DeviceSelectorState::new(config.device_dimensions),
         };
 
         // Auto-load the first image
@@ -155,7 +288,16 @@ impl ConfigState {
         Ok(state)
     }
 
+    pub fn is_modal_open(&self) -> bool {
+        self.show_help || self.device_selector.show
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if self.device_selector.show {
+            self.handle_device_selector_keys(key);
+            return;
+        }
+
         match key.code {
             KeyCode::Char('h') => {
                 self.show_help = !self.show_help;
@@ -205,10 +347,28 @@ impl ConfigState {
                 self.last_mouse_click = Some(mouse);
             }
             MouseEventKind::ScrollUp => {
-                self.select_previous();
+                if self.device_selector.show {
+                    if let Some(selected) = self.device_selector.list_state.selected() {
+                        if selected > 0 {
+                            self.device_selector.list_state.select(Some(selected - 1));
+                        }
+                    }
+                } else {
+                    self.select_previous();
+                }
             }
             MouseEventKind::ScrollDown => {
-                self.select_next();
+                if self.device_selector.show {
+                    if let Some(selected) = self.device_selector.list_state.selected() {
+                        if selected < DEVICE_PRESETS.len() - 1 {
+                            self.device_selector.list_state.select(Some(selected + 1));
+                        }
+                    } else {
+                        self.device_selector.list_state.select(Some(0));
+                    }
+                } else {
+                    self.select_next();
+                }
             }
             _ => {}
         }
@@ -497,6 +657,9 @@ impl ConfigState {
             KeyCode::Char('c') => {
                 self.selected_field = Some(SelectedField::Gamma);
             }
+            KeyCode::Char('d') => {
+                self.device_selector.open();
+            }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
                     let is_fine = key
@@ -515,6 +678,36 @@ impl ConfigState {
             }
             KeyCode::Esc => {
                 self.selected_field = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_device_selector_keys(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.device_selector.close();
+            }
+            KeyCode::Enter => {
+                if let Some(dimensions) = self.device_selector.confirm_selection() {
+                    self.config.device_dimensions = dimensions;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(selected) = self.device_selector.list_state.selected() {
+                    if selected > 0 {
+                        self.device_selector.list_state.select(Some(selected - 1));
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(selected) = self.device_selector.list_state.selected() {
+                    if selected < DEVICE_PRESETS.len() - 1 {
+                        self.device_selector.list_state.select(Some(selected + 1));
+                    }
+                } else {
+                    self.device_selector.list_state.select(Some(0));
+                }
             }
             _ => {}
         }
@@ -577,12 +770,14 @@ impl<'a> Widget for ConfigScreen<'a> {
             );
         footer.render(footer_area, buf);
 
-        // Render help popup if shown
         if self.state.show_help {
             render_help_popup(area, buf, self.theme);
         }
 
-        // clear the mouse click state
+        if self.state.device_selector.show {
+            render_device_selector_popup(area, buf, self.state, self.theme);
+        }
+
         self.state.last_mouse_click = None;
     }
 }
@@ -670,10 +865,9 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.theme.content))
             .render(text_area, buf);
 
-        Button::new(value, self.theme, self.state.last_mouse_click, || {
-            on_click(self.state);
-        })
-        .render(value_area, buf);
+        base_button(value, self.theme, self.state)
+            .on_click(|| on_click(self.state))
+            .render(value_area, buf);
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
@@ -724,11 +918,12 @@ impl<'a> SettingsWidget<'a> {
         .areas(buttons_area);
 
         // Render [-] button
-        Button::new("-", self.theme, self.state.last_mouse_click, || {
-            on_select(self.state);
-            on_adjust(self.state, false);
-        })
-        .render(minus_area, buf);
+        base_button("-", self.theme, self.state)
+            .on_click(|| {
+                on_select(self.state);
+                on_adjust(self.state, false);
+            })
+            .render(minus_area, buf);
 
         let [value_layout] = Layout::vertical([Constraint::Length(1)])
             .flex(Flex::Center)
@@ -744,66 +939,45 @@ impl<'a> SettingsWidget<'a> {
             .render(value_layout, buf);
 
         // Render [+] button
-        Button::new("+", self.theme, self.state.last_mouse_click, || {
-            on_select(self.state);
-            on_adjust(self.state, true);
-        })
-        .render(plus_area, buf);
+        base_button("+", self.theme, self.state)
+            .on_click(|| {
+                on_select(self.state);
+                on_adjust(self.state, true);
+            })
+            .render(plus_area, buf);
     }
 
-    fn render_dimension_presets(&mut self, area: Rect, buf: &mut Buffer) {
-        let [title_area, values_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    fn render_device_selector_button(&mut self, area: Rect, buf: &mut Buffer) {
+        let [label_area, button_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
 
-        let [label_area, current_dims_area] =
-            Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(title_area);
+        let [text_area, key_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(4)]).areas(label_area);
 
-        Paragraph::new("dimensions:")
+        Paragraph::new("dimensions")
             .style(Style::default().fg(self.theme.content))
-            .render(label_area, buf);
+            .render(text_area, buf);
+
+        Paragraph::new(" [d]")
+            .style(Style::default().fg(self.theme.key_hint))
+            .render(key_area, buf);
 
         let current_dims = self.state.config.device_dimensions;
-        Paragraph::new(format!("{}x{}", current_dims.0, current_dims.1))
-            .style(Style::default().fg(self.theme.primary))
-            .render(current_dims_area, buf);
+        let device_name = DEVICE_PRESETS
+            .iter()
+            .find(|preset| preset.dimensions == current_dims)
+            .map(|preset| preset.name)
+            .unwrap_or("Custom");
 
-        const LEN: usize = 4;
+        let button_text = format!("{} ({}x{})", device_name, current_dims.0, current_dims.1);
 
-        let presets: [_; LEN] = [
-            ("Kindle PW 11", (1236, 1648)),
-            ("Kindle PW 12", (1264, 1680)),
-            ("Kindle 12", (1072, 1448)),
-            ("Kindle Basic", (800, 600)),
-        ];
-
-        let current_dims = self.state.config.device_dimensions;
-
-        let cells = make_grid_layout::<LEN>(
-            values_area,
-            GridLayout {
-                row_length: 2,
-                height: Some(Constraint::Length(3)),
-                width: None,
-                spacing_x: None,
-                spacing_y: None,
-            },
-        );
-
-        for (cell, (name, dims)) in cells.into_iter().zip(presets.iter()) {
-            let is_current = *dims == current_dims;
-
-            let button_text = format!("{}\n{}x{}", name, dims.0, dims.1);
-
-            Button::new(button_text, self.theme, self.state.last_mouse_click, || {
-                self.state.config.device_dimensions = *dims;
+        base_button(button_text, self.theme, self.state)
+            .on_click(|| {
+                // make sure the mouse click is not used in the popup layer
+                self.state.last_mouse_click = None;
+                self.state.device_selector.open();
             })
-            .variant(if is_current {
-                ButtonVariant::Secondary
-            } else {
-                ButtonVariant::Primary
-            })
-            .render(cell, buf);
-        }
+            .render(button_area, buf);
     }
 }
 
@@ -831,23 +1005,27 @@ impl<'a> Widget for SettingsWidget<'a> {
             Constraint::Length(1), // top spacer
             Constraint::Min(9),    // Toggles ( reading direction, split double pages, auto crop)
             Constraint::Min(5),    // Buttons (quality, brightness, contrast)
-            Constraint::Min(12),   // Dimensions (dynamic grid)
+            Constraint::Length(4), // Device selector button
             Constraint::Min(3),    // bottom button
         ];
 
-        let [_, toggles_area, buttons_area, device_presets_area, process_button_area] =
+        let [_, toggles_area, buttons_area, device_selector_area, process_button_area] =
             Layout::vertical(constraints).spacing(1).areas(inner);
 
-        let [reading_direction_area, split_double_pages_area, auto_crop_area] = make_grid_layout::<3>(
-            toggles_area,
-            GridLayout {
-                row_length: 2,
-                height: Some(Constraint::Length(4)),
-                width: None,
-                spacing_x: None,
-                spacing_y: None,
-            },
-        );
+        // Create a 2x2 grid manually for toggles
+        let [row1, row2] = Layout::vertical([Constraint::Length(4), Constraint::Length(4)])
+            .spacing(1)
+            .areas(toggles_area);
+
+        let [reading_direction_area, split_double_pages_area] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .spacing(1)
+                .areas(row1);
+
+        let [auto_crop_area, _] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .spacing(1)
+                .areas(row2);
 
         self.render_toggle_button(
             "reading direction",
@@ -900,16 +1078,14 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        let [quality_area, brightness_area, contrast_area] = make_grid_layout::<3>(
-            buttons_area,
-            GridLayout {
-                row_length: 3,
-                height: Some(Constraint::Length(4)),
-                width: None,
-                spacing_x: None,
-                spacing_y: None,
-            },
-        );
+        // Create a horizontal layout for the three adjustable settings
+        let [quality_area, brightness_area, contrast_area] = Layout::horizontal([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
+        .spacing(1)
+        .areas(buttons_area);
 
         self.render_adjustable_setting(
             "quality",
@@ -962,7 +1138,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        self.render_dimension_presets(device_presets_area, buf);
+        self.render_device_selector_button(device_selector_area, buf);
 
         let [process_button_area] = Layout::default()
             .direction(Direction::Vertical)
@@ -970,10 +1146,11 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        Button::new("start ⏵", self.theme, self.state.last_mouse_click, || {
-            self.state.send_start_processing();
-        })
-        .render(process_button_area, buf);
+        base_button("start ⏵", self.theme, self.state)
+            .on_click(|| {
+                self.state.send_start_processing();
+            })
+            .render(process_button_area, buf);
     }
 }
 
@@ -1030,6 +1207,8 @@ impl<'a> Widget for PreviewWidget<'a> {
             })
             .unwrap_or(true);
 
+        let modal_open = self.state.is_modal_open();
+
         // Split buttons area: 1 button on top, 3 buttons below
         let [top_button_area, bottom_buttons_area] = Layout::default()
             .direction(Direction::Vertical)
@@ -1042,16 +1221,12 @@ impl<'a> Widget for PreviewWidget<'a> {
             .areas(buttons_area);
 
         // Load preview button (full width)
-        Button::new(
-            "load preview",
-            self.theme,
-            self.state.last_mouse_click,
-            || {
+        base_button("load preview", self.theme, self.state)
+            .on_click(|| {
                 self.state.reload_preview();
-            },
-        )
-        .enabled(config_changed || file_changed)
-        .render(top_button_area, buf);
+            })
+            .enabled((config_changed || file_changed) && !modal_open)
+            .render(top_button_area, buf);
 
         // Split bottom area into 3 buttons
         let [prev_button_area, random_button_area, next_button_area] = Layout::default()
@@ -1064,23 +1239,23 @@ impl<'a> Widget for PreviewWidget<'a> {
             .spacing(1)
             .areas(bottom_buttons_area);
 
-        // Previous button
-        Button::new("◀ prev", self.theme, self.state.last_mouse_click, || {
-            self.state.previous_preview_page();
-        })
-        .render(prev_button_area, buf);
+        base_button("◀ prev", self.theme, self.state)
+            .on_click(|| {
+                self.state.previous_preview_page();
+            })
+            .render(prev_button_area, buf);
 
-        // Random button
-        Button::new("random", self.theme, self.state.last_mouse_click, || {
-            self.state.request_random_preview_for_selected();
-        })
-        .render(random_button_area, buf);
+        base_button("random", self.theme, self.state)
+            .on_click(|| {
+                self.state.request_random_preview_for_selected();
+            })
+            .render(random_button_area, buf);
 
-        // Next button
-        Button::new("next ▶", self.theme, self.state.last_mouse_click, || {
-            self.state.next_preview_page();
-        })
-        .render(next_button_area, buf);
+        base_button("next ▶", self.theme, self.state)
+            .on_click(|| {
+                self.state.next_preview_page();
+            })
+            .render(next_button_area, buf);
 
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(Some(FilterType::Lanczos3)));
@@ -1187,6 +1362,18 @@ fn preview_worker(
     }
 }
 
+// - default enabled = !modal_open
+// - default mouse_event = last_mouse_click
+fn base_button<'input, 'state>(
+    text: impl Into<ratatui::text::Text<'input>>,
+    theme: &'input Theme,
+    config: &'state ConfigState,
+) -> Button<'input> {
+    Button::new(text, theme)
+        .enabled(!config.is_modal_open())
+        .mouse_event(config.last_mouse_click)
+}
+
 fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
@@ -1289,42 +1476,6 @@ fn calculate_centered_image_area(
     final_area
 }
 
-struct GridLayout<const N: usize> {
-    row_length: u16,
-    height: Option<Constraint>,
-    width: Option<Constraint>,
-    spacing_x: Option<u16>,
-    spacing_y: Option<u16>,
-}
-
-fn make_grid_layout<const N: usize>(area: Rect, layout: GridLayout<N>) -> [Rect; N] {
-    let GridLayout {
-        row_length,
-        height,
-        width,
-        spacing_x,
-        spacing_y,
-    } = layout;
-    let width = width.unwrap_or(Constraint::Min(0));
-    let height = height.unwrap_or(Constraint::Min(0));
-    let spacing_x = spacing_x.unwrap_or(1);
-    let spacing_y = spacing_y.unwrap_or(1);
-
-    let col_constraints = (0..row_length).map(|_| width);
-    let row_constraints =
-        (0..((N + row_length as usize - 1) / row_length as usize)).map(|_| height);
-    let horizontal = Layout::horizontal(col_constraints).spacing(spacing_x);
-    let vertical = Layout::vertical(row_constraints).spacing(spacing_y);
-
-    let rows = vertical.split(area);
-    rows.iter()
-        .flat_map(move |&row| horizontal.split(row).to_vec())
-        .take(N)
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
-}
-
 fn render_image_placeholder(area: Rect, buf: &mut Buffer, theme: &Theme) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
@@ -1407,4 +1558,97 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         .alignment(Alignment::Left);
 
     help_paragraph.render(popup_area, buf);
+}
+
+fn render_device_selector_popup(
+    area: Rect,
+    buf: &mut Buffer,
+    state: &mut ConfigState,
+    theme: &Theme,
+) {
+    let popup_width = 50.min(area.width * 3 / 4);
+    let popup_height = 20.min(area.height * 3 / 4);
+
+    let popup_x = area.left() + (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = area.top() + (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    Clear.render(popup_area, buf);
+
+    let block = Block::default()
+        .title(" select device ")
+        .borders(Borders::ALL)
+        .border_style(theme.focused)
+        .style(Style::default().bg(theme.background));
+
+    let inner = block.inner(popup_area);
+    block.render(popup_area, buf);
+
+    // Split into list area and button area
+    let [list_area, button_area, help_area] = Layout::vertical([
+        Constraint::Min(0),    // List
+        Constraint::Length(3), // Buttons
+        Constraint::Length(1), // Help text
+    ])
+    .spacing(1)
+    .areas(inner);
+
+    // Render device list
+    let current_dims = state.config.device_dimensions;
+    let items: Vec<ListItem> = DEVICE_PRESETS
+        .iter()
+        .map(|preset| {
+            let checkmark = if preset.dimensions == current_dims {
+                " ✓"
+            } else {
+                "  "
+            };
+            let content = format!(
+                "{:<20} {:>4}x{:<4}{}",
+                preset.name, preset.dimensions.0, preset.dimensions.1, checkmark
+            );
+            ListItem::new(content).style(theme.content)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+
+    StatefulWidget::render(list, list_area, buf, &mut state.device_selector.list_state);
+
+    // Render buttons
+    let [confirm_area, cancel_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .spacing(2)
+            .areas(button_area);
+
+    Button::new("confirm", theme)
+        .on_click(|| {
+            if let Some(dimensions) = state.device_selector.confirm_selection() {
+                state.config.device_dimensions = dimensions;
+            }
+        })
+        .mouse_event(state.last_mouse_click)
+        .render(confirm_area, buf);
+
+    Button::new("cancel", theme)
+        .on_click(|| {
+            state.device_selector.close();
+        })
+        .mouse_event(state.last_mouse_click)
+        .variant(ButtonVariant::Secondary)
+        .render(cancel_area, buf);
+
+    // Render help text
+    let help_text = "[↑/↓ navigate, enter to select, esc to cancel]";
+    Paragraph::new(help_text)
+        .style(
+            Style::default()
+                .fg(theme.content)
+                .add_modifier(Modifier::DIM),
+        )
+        .alignment(Alignment::Center)
+        .render(help_area, buf);
 }

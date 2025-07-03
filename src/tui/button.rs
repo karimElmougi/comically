@@ -9,14 +9,31 @@ use ratatui::{
 
 use crate::tui::Theme;
 
-pub struct Button<'a, F> {
+pub trait CallOnce {
+    fn call_once(self);
+}
+
+impl<F: FnOnce()> CallOnce for F {
+    fn call_once(self) {
+        self();
+    }
+}
+
+pub struct DoNothing;
+
+impl CallOnce for DoNothing {
+    fn call_once(self) {}
+}
+
+pub struct Button<'a, F = DoNothing> {
     text: Text<'a>,
     theme: &'a Theme,
     state: State,
     enabled: bool,
     variant: ButtonVariant,
-    on_click: Option<F>,
     mouse_event: Option<MouseEvent>,
+
+    on_click: Option<F>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -33,22 +50,42 @@ pub enum ButtonVariant {
     Secondary,
 }
 
-impl<'a, F: FnOnce() + 'a> Button<'a, F> {
-    pub fn new<T: Into<Text<'a>>>(
-        text: T,
-        theme: &'a Theme,
-        mouse_event: Option<MouseEvent>,
-        on_click: F,
-    ) -> Self {
-        Self {
+impl<'a> Button<'a> {
+    pub fn new(text: impl Into<Text<'a>>, theme: &'a Theme) -> Button<'a> {
+        Button {
             text: text.into(),
             theme,
             state: State::default(),
             enabled: true,
             variant: ButtonVariant::default(),
-            on_click: Some(on_click),
-            mouse_event,
+            mouse_event: None,
+            on_click: None,
         }
+    }
+}
+
+impl<'a, F> Button<'a, F>
+where
+    F: CallOnce,
+{
+    pub fn on_click<F2>(self, on_click: F2) -> Button<'a, F2>
+    where
+        F2: FnOnce(),
+    {
+        Button {
+            text: self.text,
+            theme: self.theme,
+            state: self.state,
+            enabled: self.enabled,
+            variant: self.variant,
+            mouse_event: self.mouse_event,
+            on_click: Some(on_click),
+        }
+    }
+
+    pub fn mouse_event(mut self, mouse_event: Option<MouseEvent>) -> Self {
+        self.mouse_event = mouse_event;
+        self
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -73,7 +110,7 @@ impl<'a, F: FnOnce() + 'a> Button<'a, F> {
                     MouseEventKind::Up(MouseButton::Left) => {
                         if self.enabled {
                             if let Some(on_click) = self.on_click.take() {
-                                on_click();
+                                on_click.call_once();
                             }
                             self.state = State::Normal;
                         }
