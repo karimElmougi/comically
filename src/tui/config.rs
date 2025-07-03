@@ -4,6 +4,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
+    text::Line,
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
     },
@@ -307,7 +308,7 @@ impl ConfigState {
                     .as_ref()
                     .map(|i| i.idx)
                     .unwrap_or(0);
-                
+
                 let next_idx = current_idx + 1;
 
                 let _ = self
@@ -336,7 +337,7 @@ impl ConfigState {
                     .as_ref()
                     .map(|i| i.idx)
                     .unwrap_or(0);
-                
+
                 let prev_idx = current_idx.saturating_sub(1);
 
                 let _ = self
@@ -1056,53 +1057,47 @@ impl<'a> Widget for PreviewWidget<'a> {
             .areas(bottom_buttons_area);
 
         // Previous button
-        Button::new(
-            "◀ prev",
-            self.theme,
-            self.state.last_mouse_click,
-            || {
-                self.state.previous_preview_page();
-            },
-        )
+        Button::new("◀ prev", self.theme, self.state.last_mouse_click, || {
+            self.state.previous_preview_page();
+        })
         .render(prev_button_area, buf);
 
         // Random button
-        Button::new(
-            "random",
-            self.theme,
-            self.state.last_mouse_click,
-            || {
-                self.state.request_random_preview_for_selected();
-            },
-        )
+        Button::new("random", self.theme, self.state.last_mouse_click, || {
+            self.state.request_random_preview_for_selected();
+        })
         .render(random_button_area, buf);
 
         // Next button
-        Button::new(
-            "next ▶",
-            self.theme,
-            self.state.last_mouse_click,
-            || {
-                self.state.next_preview_page();
-            },
-        )
+        Button::new("next ▶", self.theme, self.state.last_mouse_click, || {
+            self.state.next_preview_page();
+        })
         .render(next_button_area, buf);
 
         if let Some(loaded_image) = &self.state.preview_state.loaded_image {
             let image = StatefulImage::new().resize(Resize::Scale(Some(FilterType::Lanczos3)));
 
             let [title_area, image_area] =
-                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(preview_area);
+                Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(preview_area);
 
-            let name = format!(
-                "{} - {} (page {} of {})",
-                loaded_image.archive_path.file_stem().unwrap().display(),
-                loaded_image.image_file.file_stem().display(),
+            let file_name = loaded_image
+                .archive_path
+                .file_stem()
+                .unwrap()
+                .to_string_lossy();
+
+            let page_info = format!(
+                "page {} of {}",
                 loaded_image.idx + 1,
                 loaded_image.total_pages
             );
 
-            Paragraph::new(name)
+            let text = vec![
+                Line::from(file_name),
+                Line::from(page_info).style(Style::default().fg(self.theme.border)),
+            ];
+
+            Paragraph::new(text)
                 .style(Style::default().fg(self.theme.content))
                 .alignment(Alignment::Center)
                 .render(title_area, buf);
