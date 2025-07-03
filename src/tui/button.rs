@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{MouseButton, MouseEvent, MouseEventKind},
-    layout::{Alignment, Position, Rect},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::Text,
     widgets::{Block, Borders, Paragraph, Widget},
@@ -32,6 +32,8 @@ pub struct Button<'a, F = DoNothing> {
     enabled: bool,
     variant: ButtonVariant,
     mouse_event: Option<MouseEvent>,
+    hint: Option<&'a str>,
+    label: Option<&'a str>,
 
     on_click: Option<F>,
 }
@@ -59,6 +61,8 @@ impl<'a> Button<'a> {
             enabled: true,
             variant: ButtonVariant::default(),
             mouse_event: None,
+            hint: None,
+            label: None,
             on_click: None,
         }
     }
@@ -79,6 +83,8 @@ where
             enabled: self.enabled,
             variant: self.variant,
             mouse_event: self.mouse_event,
+            hint: self.hint,
+            label: self.label,
             on_click: Some(on_click),
         }
     }
@@ -95,6 +101,16 @@ where
 
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
+        self
+    }
+
+    pub fn hint(mut self, hint: &'a str) -> Self {
+        self.hint = Some(hint);
+        self
+    }
+
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
         self
     }
 
@@ -162,13 +178,61 @@ where
 
 impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
-        self.handle_mouse(area);
-
         let (fg, bg, top, bottom) = self.get_colors();
 
-        buf.set_style(area, Style::default().fg(fg).bg(bg));
+        let (header_area, button_area) = if (self.label.is_some() || self.hint.is_some())
+            && area.height > 3
+        {
+            let [a, b] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
 
-        let rows = area.rows().collect::<Vec<_>>();
+            (Some(a), b)
+        } else {
+            (None, area)
+        };
+
+        self.handle_mouse(button_area);
+
+        if let Some(header_area) = header_area {
+            match (self.label, self.hint) {
+                (Some(label), Some(hint)) => {
+                    // Both label and hint - use horizontal layout with space between
+                    let [label_area, hint_area] = Layout::horizontal([
+                        Constraint::Min(0),
+                        Constraint::Length(hint.len() as u16),
+                    ])
+                    .areas(header_area);
+
+                    Paragraph::new(label)
+                        .style(Style::default().fg(self.theme.content))
+                        .alignment(Alignment::Left)
+                        .render(label_area, buf);
+
+                    Paragraph::new(hint)
+                        .style(Style::default().fg(self.theme.accent))
+                        .alignment(Alignment::Right)
+                        .render(hint_area, buf);
+                }
+                (Some(label), None) => {
+                    // Only label
+                    Paragraph::new(label)
+                        .style(Style::default().fg(self.theme.content))
+                        .alignment(Alignment::Left)
+                        .render(header_area, buf);
+                }
+                (None, Some(hint)) => {
+                    // Only hint
+                    Paragraph::new(hint)
+                        .style(Style::default().fg(self.theme.accent))
+                        .alignment(Alignment::Right)
+                        .render(header_area, buf);
+                }
+                (None, None) => {}
+            }
+        }
+
+        buf.set_style(button_area, Style::default().fg(fg).bg(bg));
+
+        let rows = button_area.rows().collect::<Vec<_>>();
         let last_index = rows.len().saturating_sub(1);
         let (first, middle, last) = match rows.len() {
             0 | 1 => (None, &rows[..], None),
@@ -178,7 +242,7 @@ impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
 
         if let Some(first) = first {
             "▔"
-                .repeat(area.width as usize)
+                .repeat(button_area.width as usize)
                 .fg(top)
                 .bg(bg)
                 .render(first, buf);
@@ -186,7 +250,7 @@ impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
 
         if let Some(last) = last {
             "▁"
-                .repeat(area.width as usize)
+                .repeat(button_area.width as usize)
                 .fg(bottom)
                 .bg(bg)
                 .render(last, buf);

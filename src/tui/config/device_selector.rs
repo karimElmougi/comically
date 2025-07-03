@@ -1,10 +1,10 @@
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent},
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+        Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget,
     },
 };
 
@@ -177,13 +177,9 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
     block.render(popup_area, buf);
 
     // Split into list area and button area
-    let [list_area, button_area, help_area] = Layout::vertical([
-        Constraint::Min(0),    // List
-        Constraint::Length(3), // Buttons
-        Constraint::Length(1), // Help text
-    ])
-    .spacing(1)
-    .areas(inner);
+    let [list_area, button_area] = Layout::vertical([Constraint::Min(0), Constraint::Length(4)])
+        .spacing(1)
+        .areas(inner);
 
     // Render device list
     let current_dims = state.config.device_dimensions;
@@ -218,6 +214,7 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
             .areas(button_area);
 
     Button::new("confirm", state.theme)
+        .hint("[enter]")
         .on_click(|| {
             if let ModalState::DeviceSelector(selector_state) = &mut state.modal_state {
                 if let Some(dimensions) = selector_state.confirm_selection() {
@@ -230,21 +227,11 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
         .render(confirm_area, buf);
 
     Button::new("cancel", state.theme)
+        .hint("[esc]")
         .on_click(|| {
             state.modal_state = ModalState::None;
         })
         .mouse_event(state.last_mouse_click)
         .variant(ButtonVariant::Secondary)
         .render(cancel_area, buf);
-
-    // Render help text
-    let help_text = "[↑/↓ navigate, enter to select, esc to cancel]";
-    Paragraph::new(help_text)
-        .style(
-            Style::default()
-                .fg(state.theme.content)
-                .add_modifier(Modifier::DIM),
-        )
-        .alignment(Alignment::Center)
-        .render(help_area, buf);
 }

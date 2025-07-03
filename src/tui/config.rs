@@ -246,6 +246,9 @@ impl ConfigState {
                     self.config.device_dimensions,
                 ));
             }
+            KeyCode::Char('p') => {
+                self.reload_preview();
+            }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
                     let is_fine = key
@@ -574,9 +577,9 @@ impl<'a> Widget for ConfigScreen<'a> {
         PreviewWidget::new(self.state).render(preview_area, buf);
 
         let footer_text = if self.state.selected_field.is_some() {
-            "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | h: help | t: theme | q: quit"
+            "←/→: adjust | shift+←/→: fine adjust | esc: cancel | h: help | t: theme | q: quit"
         } else {
-            "↑/↓/j/k: navigate | space: toggle | a: all | m/s/c: toggles | u/b/g/d: settings | enter: start | h: help | q: quit"
+            "↑/↓/j/k: navigate | space: toggle | a: all | h: help | t: theme | q: quit"
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(self.state.theme.content))
@@ -666,36 +669,6 @@ struct SettingsWidget<'a> {
 impl<'a> SettingsWidget<'a> {
     fn new(state: &'a mut ConfigState) -> Self {
         Self { state }
-    }
-
-    fn render_toggle_button(
-        &mut self,
-        label: &str,
-        value: &str,
-        key: &str,
-        area: Rect,
-        buf: &mut Buffer,
-        mut on_click: impl FnMut(&mut ConfigState),
-    ) {
-        let [label_area, value_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-
-        let [text_area, key_area] =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(key.len() as u16 + 1)])
-                .areas(label_area);
-
-        Paragraph::new(label)
-            .style(Style::default().fg(self.state.theme.content))
-            .render(text_area, buf);
-
-        base_button(value, self.state)
-            .on_click(|| on_click(self.state))
-            .render(value_area, buf);
-
-        // Render the key hint
-        Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(self.state.theme.accent))
-            .render(key_area, buf);
     }
 
     fn render_adjustable_setting(
@@ -842,56 +815,56 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(1)
                 .areas(row2);
 
-        self.render_toggle_button(
-            "reading direction",
+        base_button(
             if self.state.config.right_to_left {
                 "right to left (manga)"
             } else {
                 "left to right"
             },
-            "[m]",
-            reading_direction_area,
-            buf,
-            |state| {
-                state.config.right_to_left = !state.config.right_to_left;
-            },
-        );
+            self.state,
+        )
+        .label("reading direction")
+        .hint("[m]")
+        .on_click(|| {
+            self.state.config.right_to_left = !self.state.config.right_to_left;
+        })
+        .render(reading_direction_area, buf);
 
-        self.render_toggle_button(
-            "double page handling",
+        base_button(
             match self.state.config.split {
                 SplitStrategy::None => "none",
                 SplitStrategy::Split => "split",
                 SplitStrategy::Rotate => "rotate",
                 SplitStrategy::RotateAndSplit => "split & rotate",
             },
-            "[s]",
-            split_double_pages_area,
-            buf,
-            |state| {
-                state.config.split = match state.config.split {
-                    SplitStrategy::None => SplitStrategy::Split,
-                    SplitStrategy::Split => SplitStrategy::Rotate,
-                    SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
-                    SplitStrategy::RotateAndSplit => SplitStrategy::None,
-                };
-            },
-        );
+            self.state,
+        )
+        .label("spread splitter")
+        .hint("[s]")
+        .on_click(|| {
+            self.state.config.split = match self.state.config.split {
+                SplitStrategy::None => SplitStrategy::Split,
+                SplitStrategy::Split => SplitStrategy::Rotate,
+                SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
+                SplitStrategy::RotateAndSplit => SplitStrategy::None,
+            };
+        })
+        .render(split_double_pages_area, buf);
 
-        self.render_toggle_button(
-            "auto crop",
+        base_button(
             if self.state.config.auto_crop {
                 "yes"
             } else {
                 "no"
             },
-            "[c]",
-            auto_crop_area,
-            buf,
-            |state| {
-                state.config.auto_crop = !state.config.auto_crop;
-            },
-        );
+            self.state,
+        )
+        .label("auto crop")
+        .hint("[c]")
+        .on_click(|| {
+            self.state.config.auto_crop = !self.state.config.auto_crop;
+        })
+        .render(auto_crop_area, buf);
 
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] = Layout::horizontal([
@@ -958,10 +931,11 @@ impl<'a> Widget for SettingsWidget<'a> {
         let [process_button_area] = Layout::default()
             .direction(Direction::Vertical)
             .flex(Flex::End)
-            .constraints([Constraint::Length(3)])
+            .constraints([Constraint::Length(4)])
             .areas(process_button_area);
 
         base_button("start ⏵", self.state)
+            .hint("[enter]")
             .on_click(|| {
                 self.state.send_start_processing();
             })
@@ -995,10 +969,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         // Split the area to have buttons at the bottom
         let [preview_area, buttons_area] = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // Preview area
-                Constraint::Length(8), // Buttons area (increased for 4 buttons)
-            ])
+            .constraints([Constraint::Min(0), Constraint::Length(8)])
             .areas(inner);
 
         let config_changed = self
@@ -1029,7 +1000,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         let [top_button_area, bottom_buttons_area] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Load preview button
+                Constraint::Length(4), // Load preview button
                 Constraint::Length(3), // Navigation buttons
             ])
             .spacing(1)
@@ -1038,6 +1009,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
         // Load preview button (full width)
         base_button("load preview", self.state)
+            .hint("[p]")
             .on_click(|| {
                 self.state.reload_preview();
             })
@@ -1330,25 +1302,22 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  • left to right: standard western comic/book reading order",
         "  • right to left: manga reading order - pages flow from right to left",
         "",
-        "double page handling (default: rotate & split):",
-        "  • none: keep double page spreads as-is",
+        "spread splitter (default: rotate & split):",
+        "  • none: do nothing",
         "  • split: cut double page spreads into two separate pages",
         "  • rotate: rotate double page spreads 90 degrees for better viewing",
         "  • rotate & split: show pages twice - first rotated, then split",
         "",
         "auto crop (default: yes):",
-        "  automatically removes white borders and margins from pages, making the page fit the screen better.",
+        "  automatically removes blank space from pages for better fit",
         "",
         "quality (default: 85, range: 0-100):",
-        "  jpeg compression quality for the output images.",
-        "  • higher values = better quality but larger file sizes",
-        "  • lower values = smaller files but more compression artifacts",
+        "  jpeg compression quality for the output images",
         "",
         "brightness (default: -10, range: -100 to 100):",
         "  adjusts the overall lightness/darkness of pages.",
         "  • positive values make pages brighter",
         "  • negative values make pages darker",
-        "  • 0 = no adjustment",
         "",
         "gamma (default: 1.8, range: 0.1 to 3.0):",
         "  controls the contrast and tone curve of the images.",
