@@ -27,6 +27,7 @@ pub struct Theme {
     pub error_bg: Color,
     pub scrollbar_thumb: Color,
     pub stage_colors: StageColors,
+
     // for text on progress bars
     pub gauge_label: Color,
     pub muted: Color,

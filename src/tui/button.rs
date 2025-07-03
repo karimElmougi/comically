@@ -27,7 +27,7 @@ impl CallOnce for DoNothing {
 
 pub struct Button<'a, F = DoNothing> {
     text: Text<'a>,
-    theme: &'a Theme,
+    theme: Theme,
     state: State,
     enabled: bool,
     variant: ButtonVariant,
@@ -51,7 +51,7 @@ pub enum ButtonVariant {
 }
 
 impl<'a> Button<'a> {
-    pub fn new(text: impl Into<Text<'a>>, theme: &'a Theme) -> Button<'a> {
+    pub fn new(text: impl Into<Text<'a>>, theme: Theme) -> Button<'a> {
         Button {
             text: text.into(),
             theme,

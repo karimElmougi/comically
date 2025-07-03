@@ -51,7 +51,7 @@ pub fn run(
             if files.is_empty() {
                 AppState::Error(ErrorInfo::no_files(&dir))
             } else {
-                match config::ConfigState::new(event_tx.clone(), picker, files) {
+                match config::ConfigState::new(event_tx.clone(), picker, files, theme) {
                     Ok(config_state) => AppState::Config(config_state),
                     Err(e) => AppState::Error(ErrorInfo::directory_error(&dir, &e.to_string())),
                 }
@@ -91,11 +91,11 @@ pub fn run(
                         );
                     }
                     AppState::Config(config_state) => {
-                        config::ConfigScreen::new(config_state, &app.theme)
+                        config::ConfigScreen::new(config_state)
                             .render(frame.area(), frame.buffer_mut());
                     }
                     AppState::Processing(processing_state) => {
-                        progress::ProgressScreen::new(processing_state, &app.theme)
+                        progress::ProgressScreen::new(processing_state)
                             .render(frame.area(), frame.buffer_mut());
                     }
                 }
@@ -142,6 +142,15 @@ fn process_events(
 
                 if key.code == event::KeyCode::Char('t') {
                     app.theme.toggle();
+                    match &mut app.state {
+                        AppState::Config(config_state) => {
+                            config_state.theme = app.theme;
+                        }
+                        AppState::Processing(processing_state) => {
+                            processing_state.theme = app.theme;
+                        }
+                        AppState::Error(_) => {}
+                    }
                     continue;
                 }
 
@@ -179,7 +188,7 @@ fn process_events(
                 prefix,
             } => {
                 let _ = config.save();
-                app.state = AppState::Processing(progress::ProgressState::new());
+                app.state = AppState::Processing(progress::ProgressState::new(app.theme));
 
                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
 

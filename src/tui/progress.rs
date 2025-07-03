@@ -18,6 +18,7 @@ pub struct ProgressState {
     comics: Vec<ComicState>,
     complete: Option<Duration>,
     scroll_offset: usize,
+    pub theme: Theme,
 }
 
 #[derive(Debug)]
@@ -72,12 +73,13 @@ impl ComicState {
 }
 
 impl ProgressState {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         Self {
             start: Instant::now(),
             comics: Vec::new(),
             complete: None,
             scroll_offset: 0,
+            theme,
         }
     }
 
@@ -175,18 +177,17 @@ impl ProgressState {
 
 pub struct ProgressScreen<'a> {
     state: &'a mut ProgressState,
-    theme: &'a Theme,
 }
 
 impl<'a> ProgressScreen<'a> {
-    pub fn new(state: &'a mut ProgressState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    pub fn new(state: &'a mut ProgressState) -> Self {
+        Self { state }
     }
 }
 
 impl<'a> Widget for ProgressScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(self.theme.background));
+        buf.set_style(area, Style::default().bg(self.state.theme.background));
 
         let vertical = Layout::vertical([
             Constraint::Length(3),
@@ -197,9 +198,10 @@ impl<'a> Widget for ProgressScreen<'a> {
 
         let [header_area, main_area, footer_area] = vertical.areas(area);
 
-        draw_header(buf, self.state, header_area, self.theme);
-        draw_main_content(buf, self.state, main_area, self.theme);
-        draw_footer(buf, self.state, footer_area, self.theme);
+        let theme = self.state.theme;
+        draw_header(buf, self.state, header_area, &theme);
+        draw_main_content(buf, self.state, main_area, &theme);
+        draw_footer(buf, self.state, footer_area, &theme);
     }
 }
 

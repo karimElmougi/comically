@@ -37,6 +37,7 @@ pub struct ConfigState {
     pub selected_field: Option<SelectedField>,
     pub preview_state: PreviewState,
     pub picker: Picker,
+    pub theme: Theme,
     event_tx: std::sync::mpsc::Sender<crate::Event>,
     last_mouse_click: Option<MouseEvent>,
     show_help: bool,
@@ -241,6 +242,7 @@ impl ConfigState {
         event_tx: mpsc::Sender<crate::Event>,
         picker: Picker,
         files: Vec<MangaFile>,
+        theme: Theme,
     ) -> anyhow::Result<Self> {
         let selected_files = vec![true; files.len()]; // Select all by default
 
@@ -276,6 +278,7 @@ impl ConfigState {
                 loaded_image: None,
             },
             picker,
+            theme,
             event_tx,
             last_mouse_click: None,
             show_help: false,
@@ -716,18 +719,17 @@ impl ConfigState {
 
 pub struct ConfigScreen<'a> {
     state: &'a mut ConfigState,
-    theme: &'a Theme,
 }
 
 impl<'a> ConfigScreen<'a> {
-    pub fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    pub fn new(state: &'a mut ConfigState) -> Self {
+        Self { state }
     }
 }
 
 impl<'a> Widget for ConfigScreen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(self.theme.background));
+        buf.set_style(area, Style::default().bg(self.state.theme.background));
 
         let [header_area, main_area, footer_area] = Layout::vertical([
             Constraint::Length(3), // Header
@@ -736,7 +738,7 @@ impl<'a> Widget for ConfigScreen<'a> {
         ])
         .areas(area);
 
-        super::render_title(self.theme).render(header_area, buf);
+        super::render_title(&self.state.theme).render(header_area, buf);
 
         let [file_list_area, settings_area, preview_area] = Layout::horizontal([
             Constraint::Fill(1),
@@ -745,11 +747,11 @@ impl<'a> Widget for ConfigScreen<'a> {
         ])
         .areas(main_area);
 
-        FileListWidget::new(self.state, self.theme).render(file_list_area, buf);
+        FileListWidget::new(self.state).render(file_list_area, buf);
 
-        SettingsWidget::new(self.state, self.theme).render(settings_area, buf);
+        SettingsWidget::new(self.state).render(settings_area, buf);
 
-        PreviewWidget::new(self.state, self.theme).render(preview_area, buf);
+        PreviewWidget::new(self.state).render(preview_area, buf);
 
         let footer_text = match (self.state.focus, self.state.selected_field) {
             (Focus::FileList, _) => {
@@ -761,21 +763,21 @@ impl<'a> Widget for ConfigScreen<'a> {
             (Focus::Settings, None) => "enter: start | tab: switch | h: help | t: theme | q: quit",
         };
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(self.theme.content))
+            .style(Style::default().fg(self.state.theme.content))
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(self.theme.border),
+                    .border_style(self.state.theme.border),
             );
         footer.render(footer_area, buf);
 
         if self.state.show_help {
-            render_help_popup(area, buf, self.theme);
+            render_help_popup(area, buf, &self.state.theme);
         }
 
         if self.state.device_selector.show {
-            render_device_selector_popup(area, buf, self.state, self.theme);
+            render_device_selector_popup(area, buf, self.state);
         }
 
         self.state.last_mouse_click = None;
@@ -784,12 +786,11 @@ impl<'a> Widget for ConfigScreen<'a> {
 
 struct FileListWidget<'a> {
     state: &'a mut ConfigState,
-    theme: &'a Theme,
 }
 
 impl<'a> FileListWidget<'a> {
-    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    fn new(state: &'a mut ConfigState) -> Self {
+        Self { state }
     }
 }
 
@@ -810,7 +811,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .map(|(file, selected)| {
                 let checkbox = if *selected { "[✓]" } else { "[ ]" };
                 let content = format!("{} {}", checkbox, file.name);
-                ListItem::new(content).style(self.theme.content)
+                ListItem::new(content).style(self.state.theme.content)
             })
             .collect();
 
@@ -823,9 +824,9 @@ impl<'a> Widget for FileListWidget<'a> {
                     ))
                     .borders(Borders::ALL)
                     .border_style(if self.state.focus == Focus::FileList {
-                        self.theme.focused
+                        self.state.theme.focused
                     } else {
-                        self.theme.border
+                        self.state.theme.border
                     }),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -837,12 +838,11 @@ impl<'a> Widget for FileListWidget<'a> {
 
 struct SettingsWidget<'a> {
     state: &'a mut ConfigState,
-    theme: &'a Theme,
 }
 
 impl<'a> SettingsWidget<'a> {
-    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    fn new(state: &'a mut ConfigState) -> Self {
+        Self { state }
     }
 
     fn render_toggle_button(
@@ -862,16 +862,16 @@ impl<'a> SettingsWidget<'a> {
                 .areas(label_area);
 
         Paragraph::new(label)
-            .style(Style::default().fg(self.theme.content))
+            .style(Style::default().fg(self.state.theme.content))
             .render(text_area, buf);
 
-        base_button(value, self.theme, self.state)
+        base_button(value, self.state)
             .on_click(|| on_click(self.state))
             .render(value_area, buf);
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(self.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.key_hint))
             .render(key_area, buf);
     }
 
@@ -887,9 +887,9 @@ impl<'a> SettingsWidget<'a> {
         mut on_adjust: impl FnMut(&mut ConfigState, bool),
     ) {
         let style = if selected {
-            Style::default().fg(self.theme.content).underlined()
+            Style::default().fg(self.state.theme.content).underlined()
         } else {
-            Style::default().fg(self.theme.content)
+            Style::default().fg(self.state.theme.content)
         };
 
         let [header_area, buttons_area] =
@@ -906,7 +906,7 @@ impl<'a> SettingsWidget<'a> {
         Paragraph::new(label).style(style).render(text_area, buf);
 
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(self.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.key_hint))
             .render(shortcut_area, buf);
 
         let [minus_area, value_area, plus_area] = Layout::horizontal([
@@ -918,7 +918,7 @@ impl<'a> SettingsWidget<'a> {
         .areas(buttons_area);
 
         // Render [-] button
-        base_button("-", self.theme, self.state)
+        base_button("-", self.state)
             .on_click(|| {
                 on_select(self.state);
                 on_adjust(self.state, false);
@@ -932,14 +932,14 @@ impl<'a> SettingsWidget<'a> {
         Paragraph::new(value)
             .style(
                 Style::default()
-                    .fg(self.theme.primary)
+                    .fg(self.state.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )
             .alignment(Alignment::Center)
             .render(value_layout, buf);
 
         // Render [+] button
-        base_button("+", self.theme, self.state)
+        base_button("+", self.state)
             .on_click(|| {
                 on_select(self.state);
                 on_adjust(self.state, true);
@@ -955,11 +955,11 @@ impl<'a> SettingsWidget<'a> {
             Layout::horizontal([Constraint::Min(0), Constraint::Length(4)]).areas(label_area);
 
         Paragraph::new("dimensions")
-            .style(Style::default().fg(self.theme.content))
+            .style(Style::default().fg(self.state.theme.content))
             .render(text_area, buf);
 
         Paragraph::new(" [d]")
-            .style(Style::default().fg(self.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.key_hint))
             .render(key_area, buf);
 
         let current_dims = self.state.config.device_dimensions;
@@ -971,7 +971,7 @@ impl<'a> SettingsWidget<'a> {
 
         let button_text = format!("{} ({}x{})", device_name, current_dims.0, current_dims.1);
 
-        base_button(button_text, self.theme, self.state)
+        base_button(button_text, self.state)
             .on_click(|| {
                 // make sure the mouse click is not used in the popup layer
                 self.state.last_mouse_click = None;
@@ -993,9 +993,9 @@ impl<'a> Widget for SettingsWidget<'a> {
             .title("settings")
             .borders(Borders::ALL)
             .style(Style::default().fg(if self.state.focus == Focus::Settings {
-                self.theme.focused
+                self.state.theme.focused
             } else {
-                self.theme.border
+                self.state.theme.border
             }));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1146,22 +1146,22 @@ impl<'a> Widget for SettingsWidget<'a> {
             .constraints([Constraint::Length(3)])
             .areas(process_button_area);
 
-        base_button("start ⏵", self.theme, self.state)
+        base_button("start ⏵", self.state)
             .on_click(|| {
                 self.state.send_start_processing();
             })
+            .variant(ButtonVariant::Secondary)
             .render(process_button_area, buf);
     }
 }
 
 struct PreviewWidget<'a> {
     state: &'a mut ConfigState,
-    theme: &'a Theme,
 }
 
 impl<'a> PreviewWidget<'a> {
-    fn new(state: &'a mut ConfigState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    fn new(state: &'a mut ConfigState) -> Self {
+        Self { state }
     }
 }
 
@@ -1170,7 +1170,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         let block = Block::default()
             .title("preview")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.border))
+            .border_style(Style::default().fg(self.state.theme.border))
             .style(Style::default());
 
         let inner = block.inner(area);
@@ -1221,7 +1221,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .areas(buttons_area);
 
         // Load preview button (full width)
-        base_button("load preview", self.theme, self.state)
+        base_button("load preview", self.state)
             .on_click(|| {
                 self.state.reload_preview();
             })
@@ -1239,19 +1239,19 @@ impl<'a> Widget for PreviewWidget<'a> {
             .spacing(1)
             .areas(bottom_buttons_area);
 
-        base_button("◀ prev", self.theme, self.state)
+        base_button("◀ prev", self.state)
             .on_click(|| {
                 self.state.previous_preview_page();
             })
             .render(prev_button_area, buf);
 
-        base_button("random", self.theme, self.state)
+        base_button("random", self.state)
             .on_click(|| {
                 self.state.request_random_preview_for_selected();
             })
             .render(random_button_area, buf);
 
-        base_button("next ▶", self.theme, self.state)
+        base_button("next ▶", self.state)
             .on_click(|| {
                 self.state.next_preview_page();
             })
@@ -1277,11 +1277,11 @@ impl<'a> Widget for PreviewWidget<'a> {
 
             let text = vec![
                 Line::from(file_name),
-                Line::from(page_info).style(Style::default().fg(self.theme.border)),
+                Line::from(page_info).style(Style::default().fg(self.state.theme.border)),
             ];
 
             Paragraph::new(text)
-                .style(Style::default().fg(self.theme.content))
+                .style(Style::default().fg(self.state.theme.content))
                 .alignment(Alignment::Center)
                 .render(title_area, buf);
 
@@ -1293,7 +1293,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
             match &mut self.state.preview_state.protocol_state {
                 PreviewProtocolState::None => {
-                    render_image_placeholder(image_area, buf, self.theme);
+                    render_image_placeholder(image_area, buf, &self.state.theme);
                 }
                 PreviewProtocolState::PendingResize { thread_protocol } => {
                     if let Some(rect) =
@@ -1301,7 +1301,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                     {
                         thread_protocol.resize_encode(&Resize::Scale(None), rect);
                     }
-                    render_image_placeholder(image_area, buf, self.theme);
+                    render_image_placeholder(image_area, buf, &self.state.theme);
                 }
                 PreviewProtocolState::Ready { thread_protocol } => {
                     StatefulWidget::render(image, image_area, buf, thread_protocol);
@@ -1366,10 +1366,9 @@ fn preview_worker(
 // - default mouse_event = last_mouse_click
 fn base_button<'input, 'state>(
     text: impl Into<ratatui::text::Text<'input>>,
-    theme: &'input Theme,
     config: &'state ConfigState,
 ) -> Button<'input> {
-    Button::new(text, theme)
+    Button::new(text, config.theme)
         .enabled(!config.is_modal_open())
         .mouse_event(config.last_mouse_click)
 }
@@ -1560,12 +1559,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
     help_paragraph.render(popup_area, buf);
 }
 
-fn render_device_selector_popup(
-    area: Rect,
-    buf: &mut Buffer,
-    state: &mut ConfigState,
-    theme: &Theme,
-) {
+fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut ConfigState) {
     let popup_width = 50.min(area.width * 3 / 4);
     let popup_height = 20.min(area.height * 3 / 4);
 
@@ -1579,8 +1573,8 @@ fn render_device_selector_popup(
     let block = Block::default()
         .title(" select device ")
         .borders(Borders::ALL)
-        .border_style(theme.focused)
-        .style(Style::default().bg(theme.background));
+        .border_style(state.theme.focused)
+        .style(Style::default().bg(state.theme.background));
 
     let inner = block.inner(popup_area);
     block.render(popup_area, buf);
@@ -1608,7 +1602,7 @@ fn render_device_selector_popup(
                 "{:<20} {:>4}x{:<4}{}",
                 preset.name, preset.dimensions.0, preset.dimensions.1, checkmark
             );
-            ListItem::new(content).style(theme.content)
+            ListItem::new(content).style(state.theme.content)
         })
         .collect();
 
@@ -1624,7 +1618,7 @@ fn render_device_selector_popup(
             .spacing(2)
             .areas(button_area);
 
-    Button::new("confirm", theme)
+    Button::new("confirm", state.theme)
         .on_click(|| {
             if let Some(dimensions) = state.device_selector.confirm_selection() {
                 state.config.device_dimensions = dimensions;
@@ -1633,7 +1627,7 @@ fn render_device_selector_popup(
         .mouse_event(state.last_mouse_click)
         .render(confirm_area, buf);
 
-    Button::new("cancel", theme)
+    Button::new("cancel", state.theme)
         .on_click(|| {
             state.device_selector.close();
         })
@@ -1646,7 +1640,7 @@ fn render_device_selector_popup(
     Paragraph::new(help_text)
         .style(
             Style::default()
-                .fg(theme.content)
+                .fg(state.theme.content)
                 .add_modifier(Modifier::DIM),
         )
         .alignment(Alignment::Center)
