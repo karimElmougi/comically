@@ -261,15 +261,15 @@ pub fn render_title(theme: &Theme) -> impl Widget {
     };
 
     let styled_title = Line::from(vec![
-        Span::styled("c", Style::default().fg(c1).add_modifier(modifier)),
-        Span::styled("o", Style::default().fg(c1).add_modifier(modifier)),
-        Span::styled("m", Style::default().fg(c2).add_modifier(modifier)),
-        Span::styled("i", Style::default().fg(c2).add_modifier(modifier)),
-        Span::styled("c", Style::default().fg(c3).add_modifier(modifier)),
-        Span::styled("a", Style::default().fg(c3).add_modifier(modifier)),
-        Span::styled("l", Style::default().fg(c4).add_modifier(modifier)),
-        Span::styled("l", Style::default().fg(c4).add_modifier(modifier)),
-        Span::styled("y", Style::default().fg(c5).add_modifier(modifier)),
+        Span::styled("C", Style::default().fg(c1).add_modifier(modifier)),
+        Span::styled("O", Style::default().fg(c1).add_modifier(modifier)),
+        Span::styled("M", Style::default().fg(c2).add_modifier(modifier)),
+        Span::styled("I", Style::default().fg(c2).add_modifier(modifier)),
+        Span::styled("C", Style::default().fg(c3).add_modifier(modifier)),
+        Span::styled("A", Style::default().fg(c3).add_modifier(modifier)),
+        Span::styled("L", Style::default().fg(c4).add_modifier(modifier)),
+        Span::styled("L", Style::default().fg(c4).add_modifier(modifier)),
+        Span::styled("Y", Style::default().fg(c5).add_modifier(modifier)),
     ]);
 
     Paragraph::new(styled_title.centered()).block(
