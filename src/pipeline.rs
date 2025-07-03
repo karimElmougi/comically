@@ -68,8 +68,13 @@ pub fn process_files(
                 let archive_iter = comic_archive::unarchive_comic_iter(&comic.input)?;
                 let num_images = archive_iter.num_images();
                 let start = comic.image_processing_start(num_images);
-                let images =
-                    image_processor::process_archive_images(archive_iter, config, comic.processed_dir(), comic.id, &comic.tx)?;
+                let images = image_processor::process_archive_images(
+                    archive_iter,
+                    config,
+                    comic.processed_dir(),
+                    comic.id,
+                    &comic.tx,
+                )?;
                 comic.image_processing_complete(start.elapsed());
                 Ok(images)
             })?;
