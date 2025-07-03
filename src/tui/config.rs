@@ -6,7 +6,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Styled, Stylize},
-    text::Line,
+    text::{Line, Span, Text},
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
     },
@@ -1294,46 +1294,175 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
 
     Clear.render(popup_area, buf);
 
-    let help_text = vec![
-        "",
-        "processing settings",
-        "",
-        "reading direction (default: right to left):",
-        "  • left to right: standard western comic/book reading order",
-        "  • right to left: manga reading order - pages flow from right to left",
-        "",
-        "spread splitter (default: rotate & split):",
-        "  • none: do nothing",
-        "  • split: cut double page spreads into two separate pages",
-        "  • rotate: rotate double page spreads 90 degrees for better viewing",
-        "  • rotate & split: show pages twice - first rotated, then split",
-        "",
-        "auto crop (default: yes):",
-        "  automatically removes blank space from pages for better fit",
-        "",
-        "quality (default: 85, range: 0-100):",
-        "  jpeg compression quality for the output images",
-        "",
-        "brightness (default: -10, range: -100 to 100):",
-        "  adjusts the overall lightness/darkness of pages.",
-        "  • positive values make pages brighter",
-        "  • negative values make pages darker",
-        "",
-        "gamma (default: 1.8, range: 0.1 to 3.0):",
-        "  controls the contrast and tone curve of the images.",
-        "  • values < 1.0 = lower contrast, lifted shadows",
-        "  • values > 1.0 = higher contrast, deeper shadows",
-        "  • 1.0 = no adjustment",
-        "",
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "processing settings",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "reading direction ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: right to left)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("left to right", Style::default().fg(theme.primary)),
+            Span::raw(": standard western comic/book order"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("right to left", Style::default().fg(theme.primary)),
+            Span::raw(": manga order - pages flow right to left"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "spread splitter ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: rotate & split)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("none", Style::default().fg(theme.primary)),
+            Span::raw(": keep spreads as-is"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("split", Style::default().fg(theme.primary)),
+            Span::raw(": cut spreads into separate pages"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("rotate", Style::default().fg(theme.primary)),
+            Span::raw(": rotate spreads 90° for better viewing"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("rotate & split", Style::default().fg(theme.primary)),
+            Span::raw(": show twice - rotated then split"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "auto crop ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: yes)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from("  removes blank space for better fit"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "quality ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: 85, range: 0-100)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from("  jpeg compression quality"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "brightness ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: -10, range: -100 to 100)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from("  adjusts overall lightness/darkness"),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("+", Style::default().fg(theme.primary)),
+            Span::raw(" values: brighter"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("−", Style::default().fg(theme.primary)),
+            Span::raw(" values: darker"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "gamma ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: 1.8, range: 0.1-3.0)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from("  controls contrast and tone curve"),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("< 1.0", Style::default().fg(theme.primary)),
+            Span::raw(": lower contrast, lifted shadows"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("> 1.0", Style::default().fg(theme.primary)),
+            Span::raw(": higher contrast, deeper shadows"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("= 1.0", Style::default().fg(theme.primary)),
+            Span::raw(": no adjustment"),
+        ]),
+        Line::from(""),
     ];
 
-    let help_paragraph = Paragraph::new(help_text.join("\n"))
+    let help_text = Text::from(lines);
+    let help_paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(theme.content))
         .block(
             Block::default()
-                .title(" settings help (press 'h' or esc to close) ")
+                .title(" help ")
                 .borders(Borders::ALL)
                 .border_style(theme.accent)
+                .title(Line::from("[esc/h]").right_aligned())
                 .style(Style::default().bg(theme.background)),
         )
         .alignment(Alignment::Left);

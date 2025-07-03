@@ -178,8 +178,6 @@ where
 
 impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
-        let (fg, bg, top, bottom) = self.get_colors();
-
         let (header_area, button_area) = if (self.label.is_some() || self.hint.is_some())
             && area.height > 3
         {
@@ -191,6 +189,7 @@ impl<'a, F: FnOnce() + 'a> Widget for Button<'a, F> {
         };
 
         self.handle_mouse(button_area);
+        let (fg, bg, top, bottom) = self.get_colors();
 
         if let Some(header_area) = header_area {
             match (self.label, self.hint) {
