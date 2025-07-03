@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use unrar::Archive;
 use zip::ZipArchive;
@@ -22,13 +22,10 @@ impl ArchiveFile {
     }
 }
 
-enum ArchiveIter {
+pub enum ArchiveIter {
     Zip(ZipReader),
     Rar(RarReader),
 }
-
-pub trait ArchiveReader: Send + Iterator<Item = anyhow::Result<ArchiveFile>> {}
-impl<T: Send + Iterator<Item = anyhow::Result<ArchiveFile>>> ArchiveReader for T {}
 
 impl Iterator for ArchiveIter {
     type Item = anyhow::Result<ArchiveFile>;
@@ -41,7 +38,7 @@ impl Iterator for ArchiveIter {
     }
 }
 
-pub fn unarchive_comic_iter(comic_file: impl AsRef<Path>) -> anyhow::Result<impl ArchiveReader> {
+pub fn unarchive_comic_iter(comic_file: impl AsRef<Path>) -> anyhow::Result<ArchiveIter> {
     let path = comic_file.as_ref();
     let ext = path
         .extension()
@@ -61,7 +58,7 @@ pub fn unarchive_comic_iter(comic_file: impl AsRef<Path>) -> anyhow::Result<impl
     Ok(reader)
 }
 
-struct ZipReader {
+pub struct ZipReader {
     index: usize,
     archive: ZipArchive<BufReader<File>>,
 }
@@ -102,7 +99,7 @@ impl Iterator for ZipReader {
             };
 
             let mut data = Vec::new();
-            if let Err(e) = io::Read::read_to_end(&mut file, &mut data) {
+            if let Err(e) = Read::read_to_end(&mut file, &mut data) {
                 return Some(Err(e.into()));
             }
 
@@ -113,7 +110,7 @@ impl Iterator for ZipReader {
     }
 }
 
-struct RarReader {
+pub struct RarReader {
     archive: Option<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>>,
     finished: bool,
 }
