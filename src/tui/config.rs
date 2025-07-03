@@ -172,6 +172,7 @@ impl ConfigState {
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Esc {
             self.modal_state = ModalState::None;
+            self.selected_field = None;
             return;
         }
 
