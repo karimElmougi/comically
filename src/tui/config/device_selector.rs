@@ -170,7 +170,7 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
     let block = Block::default()
         .title(" select device ")
         .borders(Borders::ALL)
-        .border_style(state.theme.focused)
+        .border_style(state.theme.accent)
         .style(Style::default().bg(state.theme.background));
 
     let inner = block.inner(popup_area);

@@ -5,7 +5,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Modifier, Style, Styled, Stylize},
     text::Line,
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
@@ -33,7 +33,6 @@ use crate::{
 pub struct ConfigState {
     pub files: Vec<(MangaFile, bool)>,
     pub file_list_state: ListState,
-    pub focus: Focus,
     pub selected_field: Option<SelectedField>,
     pub preview_state: PreviewState,
 
@@ -55,12 +54,6 @@ pub enum ModalState {
 pub struct MangaFile {
     pub archive_path: PathBuf,
     pub name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Focus {
-    FileList,
-    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,7 +137,6 @@ impl ConfigState {
             files,
             file_list_state: list_state,
             config,
-            focus: Focus::FileList,
             selected_field: None,
             preview_state: PreviewState {
                 picker,
@@ -176,33 +168,102 @@ impl ConfigState {
             return;
         }
 
-        if let ModalState::DeviceSelector(selector) = &mut self.modal_state {
-            if let Some(dimensions) = selector.handle_key(key) {
-                self.modal_state = ModalState::None;
-                self.config.device_dimensions = dimensions;
-                return;
+        match &mut self.modal_state {
+            ModalState::DeviceSelector(selector) => {
+                if key.code == KeyCode::Char('d') {
+                    self.modal_state = ModalState::None;
+                    return;
+                }
+
+                if let Some(dimensions) = selector.handle_key(key) {
+                    self.modal_state = ModalState::None;
+                    self.config.device_dimensions = dimensions;
+                    return;
+                }
             }
+            ModalState::Help => {
+                if key.code == KeyCode::Char('h') {
+                    self.modal_state = ModalState::None;
+                    return;
+                }
+            }
+            ModalState::None => {}
         }
 
         match key.code {
             KeyCode::Char('h') => {
                 self.modal_state = ModalState::Help;
             }
-            KeyCode::Tab => {
-                self.focus = match self.focus {
-                    Focus::FileList => Focus::Settings,
-                    Focus::Settings => Focus::FileList,
-                };
-                self.selected_field = None;
-            }
             KeyCode::Enter => {
                 self.send_start_processing();
             }
+            // File list navigation
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.select_previous();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.select_next();
+            }
+            KeyCode::Char(' ') => {
+                if let Some(selected) = self.file_list_state.selected() {
+                    self.files[selected].1 = !self.files[selected].1;
+                }
+            }
+            KeyCode::Char('a') => {
+                let all_selected = self.files.iter().all(|(_, selected)| *selected);
+                for (_, selected) in &mut self.files {
+                    *selected = !all_selected;
+                }
+            }
 
-            _ => match self.focus {
-                Focus::FileList => self.handle_file_list_keys(key),
-                Focus::Settings => self.handle_settings_keys(key),
-            },
+            // Settings toggles
+            KeyCode::Char('m') => {
+                self.config.right_to_left = !self.config.right_to_left;
+            }
+            KeyCode::Char('s') => {
+                use crate::comic::SplitStrategy;
+                self.config.split = match self.config.split {
+                    SplitStrategy::None => SplitStrategy::Split,
+                    SplitStrategy::Split => SplitStrategy::Rotate,
+                    SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
+                    SplitStrategy::RotateAndSplit => SplitStrategy::None,
+                };
+            }
+            KeyCode::Char('c') => {
+                self.config.auto_crop = !self.config.auto_crop;
+            }
+            KeyCode::Char('u') => {
+                self.selected_field = Some(SelectedField::Quality);
+            }
+            KeyCode::Char('b') => {
+                self.selected_field = Some(SelectedField::Brightness);
+            }
+            KeyCode::Char('g') => {
+                self.selected_field = Some(SelectedField::Gamma);
+            }
+            KeyCode::Char('d') => {
+                self.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
+                    self.config.device_dimensions,
+                ));
+            }
+            KeyCode::Left => {
+                if let Some(field) = self.selected_field {
+                    let is_fine = key
+                        .modifiers
+                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
+                    self.adjust_setting(field, false, is_fine);
+                }
+            }
+            KeyCode::Right => {
+                if let Some(field) = self.selected_field {
+                    let is_fine = key
+                        .modifiers
+                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
+                    self.adjust_setting(field, true, is_fine);
+                }
+            }
+
+            _ => {}
         }
     }
 
@@ -246,30 +307,6 @@ impl ConfigState {
                     self.select_next();
                 }
             },
-            _ => {}
-        }
-    }
-
-    fn handle_file_list_keys(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.select_previous();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.select_next();
-            }
-            KeyCode::Char(' ') => {
-                if let Some(selected) = self.file_list_state.selected() {
-                    self.files[selected].1 = !self.files[selected].1;
-                }
-            }
-            KeyCode::Char('a') => {
-                // Toggle all
-                let all_selected = self.files.iter().all(|(_, selected)| *selected);
-                for (_, selected) in &mut self.files {
-                    *selected = !all_selected;
-                }
-            }
             _ => {}
         }
     }
@@ -498,60 +535,6 @@ impl ConfigState {
             }
         }
     }
-
-    fn handle_settings_keys(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('m') => {
-                self.config.right_to_left = !self.config.right_to_left;
-            }
-            KeyCode::Char('s') => {
-                use crate::comic::SplitStrategy;
-                self.config.split = match self.config.split {
-                    SplitStrategy::None => SplitStrategy::Split,
-                    SplitStrategy::Split => SplitStrategy::Rotate,
-                    SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
-                    SplitStrategy::RotateAndSplit => SplitStrategy::None,
-                };
-            }
-            KeyCode::Char('c') => {
-                self.config.auto_crop = !self.config.auto_crop;
-            }
-            KeyCode::Char('u') => {
-                self.selected_field = Some(SelectedField::Quality);
-            }
-            KeyCode::Char('b') => {
-                self.selected_field = Some(SelectedField::Brightness);
-            }
-            KeyCode::Char('g') => {
-                self.selected_field = Some(SelectedField::Gamma);
-            }
-            KeyCode::Char('d') => {
-                self.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
-                    self.config.device_dimensions,
-                ));
-            }
-            KeyCode::Left => {
-                if let Some(field) = self.selected_field {
-                    let is_fine = key
-                        .modifiers
-                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
-                    self.adjust_setting(field, false, is_fine);
-                }
-            }
-            KeyCode::Right => {
-                if let Some(field) = self.selected_field {
-                    let is_fine = key
-                        .modifiers
-                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT);
-                    self.adjust_setting(field, true, is_fine);
-                }
-            }
-            KeyCode::Esc => {
-                self.selected_field = None;
-            }
-            _ => {}
-        }
-    }
 }
 
 pub struct ConfigScreen<'a> {
@@ -590,14 +573,10 @@ impl<'a> Widget for ConfigScreen<'a> {
 
         PreviewWidget::new(self.state).render(preview_area, buf);
 
-        let footer_text = match (self.state.focus, self.state.selected_field) {
-            (Focus::FileList, _) => {
-                "↑/↓: navigate | space: toggle | a: toggle all | tab: switch panel | h: help | t: theme | q: quit"
-            }
-            (Focus::Settings, Some(_)) => {
-                "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | h: help | t: theme | q: quit"
-            }
-            (Focus::Settings, None) => "enter: start | tab: switch | h: help | t: theme | q: quit",
+        let footer_text = if self.state.selected_field.is_some() {
+            "←/→: adjust | shift+←/→: fine adjust | esc: cancel | enter: process | h: help | t: theme | q: quit"
+        } else {
+            "↑/↓/j/k: navigate | space: toggle | a: all | m/s/c: toggles | u/b/g/d: settings | enter: start | h: help | q: quit"
         };
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(self.state.theme.content))
@@ -636,7 +615,6 @@ impl<'a> Widget for FileListWidget<'a> {
         if let Some(mouse) = self.state.last_mouse_click {
             if area.contains(Position::new(mouse.column, mouse.row)) {
                 self.state.selected_field = None;
-                self.state.focus = Focus::FileList;
             }
         }
 
@@ -651,23 +629,28 @@ impl<'a> Widget for FileListWidget<'a> {
             })
             .collect();
 
+        let selected_count = self
+            .state
+            .files
+            .iter()
+            .filter(|(_, selected)| *selected)
+            .count();
+
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title(format!(
-                        "files ({} selected)",
-                        self.state
-                            .files
-                            .iter()
-                            .filter(|(_, selected)| *selected)
-                            .count()
-                    ))
+                    .title(
+                        Line::from(" files ")
+                            .set_style(self.state.theme.content)
+                            .centered(),
+                    )
+                    .title(
+                        Line::from(format!("{selected_count}"))
+                            .right_aligned()
+                            .style(self.state.theme.accent),
+                    )
                     .borders(Borders::ALL)
-                    .border_style(if self.state.focus == Focus::FileList {
-                        self.state.theme.focused
-                    } else {
-                        self.state.theme.border
-                    }),
+                    .border_style(self.state.theme.border),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
@@ -711,7 +694,7 @@ impl<'a> SettingsWidget<'a> {
 
         // Render the key hint
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(self.state.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.accent))
             .render(key_area, buf);
     }
 
@@ -727,7 +710,7 @@ impl<'a> SettingsWidget<'a> {
         mut on_adjust: impl FnMut(&mut ConfigState, bool),
     ) {
         let style = if selected {
-            Style::default().fg(self.state.theme.content).underlined()
+            Style::default().fg(self.state.theme.accent).underlined()
         } else {
             Style::default().fg(self.state.theme.content)
         };
@@ -746,7 +729,7 @@ impl<'a> SettingsWidget<'a> {
         Paragraph::new(label).style(style).render(text_area, buf);
 
         Paragraph::new(format!(" {}", key))
-            .style(Style::default().fg(self.state.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.accent))
             .render(shortcut_area, buf);
 
         let [minus_area, value_area, plus_area] = Layout::horizontal([
@@ -799,7 +782,7 @@ impl<'a> SettingsWidget<'a> {
             .render(text_area, buf);
 
         Paragraph::new(" [d]")
-            .style(Style::default().fg(self.state.theme.key_hint))
+            .style(Style::default().fg(self.state.theme.accent))
             .render(key_area, buf);
 
         let current_dims = self.state.config.device_dimensions;
@@ -824,20 +807,11 @@ impl<'a> SettingsWidget<'a> {
 
 impl<'a> Widget for SettingsWidget<'a> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
-        if let Some(mouse) = self.state.last_mouse_click {
-            if area.contains(Position::new(mouse.column, mouse.row)) {
-                self.state.focus = Focus::Settings;
-            }
-        }
-
         let block = Block::default()
-            .title("settings")
+            .title(Line::from(" settings ").set_style(self.state.theme.content))
+            .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
-            .style(Style::default().fg(if self.state.focus == Focus::Settings {
-                self.state.theme.focused
-            } else {
-                self.state.theme.border
-            }));
+            .border_style(self.state.theme.border);
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -1009,10 +983,11 @@ impl<'a> PreviewWidget<'a> {
 impl<'a> Widget for PreviewWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
-            .title("preview")
+            .title(" preview ")
+            .title_style(Style::default().fg(self.state.theme.content))
+            .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.state.theme.border))
-            .style(Style::default());
+            .border_style(Style::default().fg(self.state.theme.border));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1381,9 +1356,6 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  • values > 1.0 = higher contrast, deeper shadows",
         "  • 1.0 = no adjustment",
         "",
-        "device dimensions (default: 1236x1648 - kindle paperwhite 11):",
-        "  target resolution for the output. images will be scaled to fit",
-        "  within these dimensions while preserving aspect ratio.",
     ];
 
     let help_paragraph = Paragraph::new(help_text.join("\n"))
@@ -1392,7 +1364,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
             Block::default()
                 .title(" settings help (press 'h' or esc to close) ")
                 .borders(Borders::ALL)
-                .border_style(theme.focused)
+                .border_style(theme.accent)
                 .style(Style::default().bg(theme.background)),
         )
         .alignment(Alignment::Left);

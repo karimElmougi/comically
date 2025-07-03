@@ -12,7 +12,7 @@ pub struct Theme {
     pub border: Color,
     pub content: Color,
     pub background: Color,
-    pub focused: Color,
+    pub accent: Color,
 
     pub primary: Color,
     pub primary_bg: Color,
@@ -22,7 +22,6 @@ pub struct Theme {
     pub secondary_bg: Color,
     pub secondary_pressed: Color,
 
-    pub key_hint: Color,
     pub error_fg: Color,
     pub error_bg: Color,
     pub scrollbar_thumb: Color,
@@ -48,14 +47,13 @@ impl Theme {
             border: palette::tailwind::SLATE.c400,
             content: palette::tailwind::SLATE.c200,
             background: palette::tailwind::SLATE.c950,
-            focused: palette::tailwind::AMBER.c400,
+            accent: palette::tailwind::AMBER.c400,
             primary: palette::tailwind::CYAN.c200,
             primary_bg: palette::tailwind::CYAN.c600,
             primary_pressed: palette::tailwind::CYAN.c500,
             secondary: palette::tailwind::FUCHSIA.c300,
             secondary_bg: palette::tailwind::FUCHSIA.c600,
             secondary_pressed: palette::tailwind::FUCHSIA.c500,
-            key_hint: palette::tailwind::YELLOW.c300,
             error_fg: palette::tailwind::RED.c400,
             error_bg: palette::tailwind::RED.c800,
             scrollbar_thumb: palette::tailwind::CYAN.c500,
@@ -74,22 +72,21 @@ impl Theme {
         // paper-like theme inspired by solarized light and old books
         Self {
             mode: ThemeMode::Light,
-            border: Color::Rgb(101, 123, 131), // Solarized base00 - darker for better contrast
-            content: Color::Rgb(88, 110, 117), // Solarized base01 - better contrast
+            border: palette::tailwind::STONE.c400, // Solarized base00 - darker for better contrast
+            content: Color::Rgb(88, 110, 117),     // Solarized base01 - better contrast
             background: Color::Rgb(253, 246, 227), // Warm paper color (Solarized base3)
-            focused: palette::tailwind::AMBER.c500,
+            accent: palette::tailwind::AMBER.c500,
             primary: palette::tailwind::SKY.c500,
             primary_bg: palette::tailwind::SKY.c200,
             primary_pressed: palette::tailwind::SKY.c100,
             secondary: palette::tailwind::VIOLET.c500,
             secondary_bg: palette::tailwind::VIOLET.c200,
             secondary_pressed: palette::tailwind::VIOLET.c100,
-            key_hint: palette::tailwind::GREEN.c400,
             error_fg: palette::tailwind::RED.c800,
             error_bg: palette::tailwind::RED.c100,
-            scrollbar_thumb: palette::tailwind::SLATE.c400,
-            gauge_label: palette::tailwind::SLATE.c700,
-            muted: palette::tailwind::SLATE.c300,
+            scrollbar_thumb: palette::tailwind::STONE.c400,
+            gauge_label: palette::tailwind::STONE.c700,
+            muted: palette::tailwind::STONE.c300,
             stage_colors: StageColors {
                 extract: palette::tailwind::BLUE.c300,
                 process: palette::tailwind::PURPLE.c300,
