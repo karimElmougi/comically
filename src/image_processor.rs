@@ -182,7 +182,8 @@ where
 
 /// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
 fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
-    // Apply gamma correction if not 1.0
+    let gamma = gamma.clamp(0.1, 3.0);
+    // only apply gamma if it's not 1.0
     if (gamma - 1.0).abs() > 0.01 {
         imageproc::map::map_colors_mut(&mut img, |pixel| {
             let normalized = pixel[0] as f32 / 255.0;

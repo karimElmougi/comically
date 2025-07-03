@@ -73,7 +73,7 @@ pub struct ComicConfig {
     pub auto_crop: bool,
     pub compression_quality: u8,
     pub brightness: i32,
-    // Gamma correction: 0.1-3.0
+    // Gamma correction: 0.0-3.0
     pub gamma: f32,
 }
 
