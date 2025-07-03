@@ -25,6 +25,9 @@ struct ComicState {
     title: String,
     status: Vec<ComicStatus>,
     timings: StageTimings,
+    image_processing_start: Option<Instant>,
+    images_processed: usize,
+    total_images: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +60,13 @@ impl ComicState {
         self.status
             .iter()
             .rev()
-            .find(|status| !matches!(status, ComicStatus::StageCompleted { .. }))
+            .find(|status| {
+                !matches!(
+                    status,
+                    ComicStatus::StageCompleted { .. }
+                        | ComicStatus::ImageProcessingComplete { .. }
+                )
+            })
             .unwrap()
     }
 }
@@ -83,20 +92,40 @@ impl ProgressState {
                         title: file_name,
                         status: vec![ComicStatus::Waiting],
                         timings: StageTimings::new(),
+                        image_processing_start: None,
+                        images_processed: 0,
+                        total_images: 0,
                     });
                 } else {
                     self.comics[id] = ComicState {
                         title: file_name,
                         status: vec![ComicStatus::Waiting],
                         timings: StageTimings::new(),
+                        image_processing_start: None,
+                        images_processed: 0,
+                        total_images: 0,
                     };
                 }
             }
             ProgressEvent::ComicUpdate { id, status } => {
                 if let Some(comic) = self.comics.get_mut(id) {
-                    match status {
+                    match &status {
                         ComicStatus::StageCompleted { stage, duration } => {
-                            comic.timings.add_stage(stage, duration);
+                            comic.timings.add_stage(*stage, *duration);
+                        }
+                        ComicStatus::ImageProcessingStart {
+                            total_images,
+                            start,
+                        } => {
+                            comic.total_images = *total_images;
+                            comic.images_processed = 0;
+                            comic.image_processing_start = Some(*start);
+                        }
+                        ComicStatus::ImageProcessed => {
+                            comic.images_processed += 1;
+                        }
+                        ComicStatus::ImageProcessingComplete { duration } => {
+                            comic.timings.add_stage(ComicStage::Process, *duration);
                         }
                         _ => {}
                     }
@@ -326,7 +355,36 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
 
             gauge.render(area, buf);
         }
-        ComicStatus::StageCompleted { .. } => unreachable!(),
+        ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed { .. } => {
+            let elapsed = comic_state
+                .image_processing_start
+                .map(|s| s.elapsed())
+                .unwrap_or_default();
+            let color = stage_color(ComicStage::Process, theme);
+            let progress_ratio = if comic_state.total_images > 0 {
+                comic_state.images_processed as f64 / comic_state.total_images as f64
+            } else {
+                0.0
+            };
+            let label = Span::styled(
+                format!(
+                    "{:3}/{:3} images {:.1}s",
+                    comic_state.images_processed,
+                    comic_state.total_images,
+                    elapsed.as_secs_f64()
+                ),
+                Style::default().fg(theme.gauge_label),
+            );
+            let gauge = Gauge::default()
+                .gauge_style(Style::default().fg(color))
+                .ratio(progress_ratio)
+                .label(label);
+
+            gauge.render(area, buf);
+        }
+        ComicStatus::StageCompleted { .. } | ComicStatus::ImageProcessingComplete { .. } => {
+            unreachable!("not storing this status")
+        }
         ComicStatus::Success => {
             StageTimingBar::new(&comic_state.timings, theme)
                 .width(area.width)

@@ -65,11 +65,12 @@ pub fn process_files(
         .par_bridge()
         .filter_map(|mut comic| {
             let images = comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Process, 50.0);
-                let files = comic_archive::unarchive_comic_iter(&comic.input)?;
+                let archive_iter = comic_archive::unarchive_comic_iter(&comic.input)?;
+                let num_images = archive_iter.num_images();
+                let start = comic.image_processing_start(num_images);
                 let images =
-                    image_processor::process_archive_images(files, config, comic.processed_dir())?;
-                comic.stage_completed(ComicStage::Process, start.elapsed());
+                    image_processor::process_archive_images(archive_iter, config, comic.processed_dir(), comic.id, &comic.tx)?;
+                comic.image_processing_complete(start.elapsed());
                 Ok(images)
             })?;
 

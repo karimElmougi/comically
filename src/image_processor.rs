@@ -7,16 +7,21 @@ use imageproc::image::{
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
+use std::sync::mpsc;
 
 use crate::comic::{ComicConfig, ProcessedImage};
 use crate::comic_archive::ArchiveFile;
+use crate::Event;
 
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
     config: ComicConfig,
     output_dir: &Path,
+    comic_id: usize,
+    event_tx: &mpsc::Sender<Event>,
 ) -> Result<Vec<ProcessedImage>> {
     log::info!("Processing archive images");
+
     let mut images = archive
         .par_bridge()
         .filter_map(|load| {
@@ -34,7 +39,7 @@ pub fn process_archive_images(
             Some((archive_file, process_image(img, &config)))
         })
         .flat_map(|(archive_file, images)| {
-            images
+            let result = images
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, img)| {
@@ -58,7 +63,18 @@ pub fn process_archive_images(
                         }
                     }
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            // Send progress update for each successfully processed image
+            if !result.is_empty() {
+                use crate::comic::{ComicStatus, ProgressEvent};
+                let _ = event_tx.send(Event::Progress(ProgressEvent::ComicUpdate {
+                    id: comic_id,
+                    status: ComicStatus::ImageProcessed,
+                }));
+            }
+
+            result
         })
         .collect::<Vec<_>>();
 

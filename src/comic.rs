@@ -33,6 +33,14 @@ pub enum ComicStatus {
         progress: f64,
         start: Instant,
     },
+    ImageProcessingStart {
+        total_images: usize,
+        start: Instant,
+    },
+    ImageProcessed,
+    ImageProcessingComplete {
+        duration: Duration,
+    },
     StageCompleted {
         stage: ComicStage,
         duration: Duration,
@@ -230,6 +238,32 @@ impl Comic {
         self.notify(ProgressEvent::ComicUpdate {
             id: self.id,
             status: ComicStatus::Failed { error },
+        });
+    }
+
+    pub fn image_processing_start(&self, total_images: usize) -> Instant {
+        let start = Instant::now();
+        self.notify(ProgressEvent::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::ImageProcessingStart {
+                total_images,
+                start,
+            },
+        });
+        start
+    }
+
+    pub fn image_processed(&self) {
+        self.notify(ProgressEvent::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::ImageProcessed,
+        });
+    }
+
+    pub fn image_processing_complete(&self, duration: Duration) {
+        self.notify(ProgressEvent::ComicUpdate {
+            id: self.id,
+            status: ComicStatus::ImageProcessingComplete { duration },
         });
     }
 

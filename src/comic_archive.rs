@@ -27,6 +27,19 @@ pub enum ArchiveIter {
     Rar(RarReader),
 }
 
+impl ArchiveIter {
+    pub fn num_images(&self) -> usize {
+        match self {
+            ArchiveIter::Zip(reader) => reader
+                .archive
+                .file_names()
+                .filter(|name| validate_file(name).is_some())
+                .count(),
+            ArchiveIter::Rar(reader) => reader.files.len(),
+        }
+    }
+}
+
 impl Iterator for ArchiveIter {
     type Item = anyhow::Result<ArchiveFile>;
 
@@ -112,6 +125,7 @@ impl Iterator for ZipReader {
 
 pub struct RarReader {
     archive: Option<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>>,
+    files: Vec<unrar::FileHeader>,
     finished: bool,
 }
 
@@ -120,14 +134,21 @@ unsafe impl Send for RarReader {}
 
 impl RarReader {
     fn new(path: &Path) -> anyhow::Result<Self> {
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
-        let archive = Archive::new(path_str)
+        let files: Vec<unrar::FileHeader> = Archive::new(path)
+            .open_for_listing()
+            .context("Failed to open RAR file")?
+            .filter_map(|header| header.ok())
+            .filter(|header| !header.is_directory())
+            .filter(|header| validate_file(&header.filename).is_some())
+            .collect();
+
+        let archive = Archive::new(path)
             .open_for_processing()
             .context("Failed to open RAR file")?;
+
         Ok(Self {
             archive: Some(archive),
+            files,
             finished: false,
         })
     }
@@ -184,7 +205,8 @@ impl Iterator for RarReader {
     }
 }
 
-fn validate_file(path: &Path) -> Option<PathBuf> {
+fn validate_file(path: impl AsRef<Path>) -> Option<PathBuf> {
+    let path = path.as_ref();
     let file_name = path.file_name()?;
     let file_name = file_name.to_string_lossy();
     if should_skip_file(&file_name) || !has_image_extension(path) {
