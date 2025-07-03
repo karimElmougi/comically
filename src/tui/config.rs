@@ -1,3 +1,5 @@
+mod device_selector;
+
 use imageproc::image::DynamicImage;
 use ratatui::{
     buffer::Buffer,
@@ -23,25 +25,30 @@ use crate::{
     comic_archive,
     tui::{
         button::{Button, ButtonVariant},
+        config::device_selector::DeviceSelectorState,
         Theme,
     },
 };
 
 pub struct ConfigState {
-    pub files: Vec<MangaFile>,
-    pub selected_files: Vec<bool>,
-    pub list_state: ListState,
-    pub config: ComicConfig,
-    pub prefix: Option<String>,
+    pub files: Vec<(MangaFile, bool)>,
+    pub file_list_state: ListState,
     pub focus: Focus,
     pub selected_field: Option<SelectedField>,
     pub preview_state: PreviewState,
-    pub picker: Picker,
+
+    pub config: ComicConfig,
     pub theme: Theme,
-    event_tx: std::sync::mpsc::Sender<crate::Event>,
-    last_mouse_click: Option<MouseEvent>,
-    show_help: bool,
-    device_selector: DeviceSelectorState,
+    pub event_tx: std::sync::mpsc::Sender<crate::Event>,
+    pub last_mouse_click: Option<MouseEvent>,
+
+    pub modal_state: ModalState,
+}
+
+pub enum ModalState {
+    None,
+    Help,
+    DeviceSelector(DeviceSelectorState),
 }
 
 #[derive(Debug)]
@@ -63,137 +70,6 @@ pub enum SelectedField {
     Gamma,
 }
 
-pub struct DevicePreset {
-    pub name: &'static str,
-    pub dimensions: (u32, u32),
-}
-
-pub struct DeviceSelectorState {
-    pub show: bool,
-    pub list_state: ListState,
-    pub selected_index: Option<usize>,
-}
-
-impl DeviceSelectorState {
-    pub fn new(current_dimensions: (u32, u32)) -> Self {
-        let selected_index = DEVICE_PRESETS
-            .iter()
-            .position(|preset| preset.dimensions == current_dimensions);
-
-        let mut list_state = ListState::default();
-        if let Some(idx) = selected_index {
-            list_state.select(Some(idx));
-        }
-
-        Self {
-            show: false,
-            list_state,
-            selected_index,
-        }
-    }
-
-    pub fn open(&mut self) {
-        self.show = true;
-        // Update the list state to current selection
-        if let Some(idx) = self.selected_index {
-            self.list_state.select(Some(idx));
-        }
-    }
-
-    pub fn close(&mut self) {
-        self.show = false;
-    }
-
-    pub fn confirm_selection(&mut self) -> Option<(u32, u32)> {
-        if let Some(selected) = self.list_state.selected() {
-            self.selected_index = Some(selected);
-            self.show = false;
-            Some(DEVICE_PRESETS[selected].dimensions)
-        } else {
-            None
-        }
-    }
-}
-
-const DEVICE_PRESETS: &[DevicePreset] = &[
-    DevicePreset {
-        name: "Kindle PW 11",
-        dimensions: (1236, 1648),
-    },
-    DevicePreset {
-        name: "Kindle PW 12",
-        dimensions: (1264, 1680),
-    },
-    DevicePreset {
-        name: "Kindle Oasis",
-        dimensions: (1264, 1680),
-    },
-    DevicePreset {
-        name: "Kindle Scribe",
-        dimensions: (1860, 2480),
-    },
-    DevicePreset {
-        name: "Kindle Basic",
-        dimensions: (800, 600),
-    },
-    DevicePreset {
-        name: "Kindle 11",
-        dimensions: (1072, 1448),
-    },
-    DevicePreset {
-        name: "Kobo Clara HD",
-        dimensions: (1072, 1448),
-    },
-    DevicePreset {
-        name: "Kobo Clara 2E",
-        dimensions: (1072, 1448),
-    },
-    DevicePreset {
-        name: "Kobo Libra 2",
-        dimensions: (1264, 1680),
-    },
-    DevicePreset {
-        name: "Kobo Sage",
-        dimensions: (1440, 1920),
-    },
-    DevicePreset {
-        name: "Kobo Elipsa",
-        dimensions: (1404, 1872),
-    },
-    DevicePreset {
-        name: "reMarkable 2",
-        dimensions: (1404, 1872),
-    },
-    DevicePreset {
-        name: "iPad Mini",
-        dimensions: (1488, 2266),
-    },
-    DevicePreset {
-        name: "iPad 10.9",
-        dimensions: (1640, 2360),
-    },
-    DevicePreset {
-        name: "iPad Pro 11",
-        dimensions: (1668, 2388),
-    },
-    DevicePreset {
-        name: "Onyx Boox Nova",
-        dimensions: (1200, 1600),
-    },
-    DevicePreset {
-        name: "Onyx Boox Note",
-        dimensions: (1404, 1872),
-    },
-    DevicePreset {
-        name: "PocketBook Era",
-        dimensions: (1200, 1600),
-    },
-    DevicePreset {
-        name: "Custom",
-        dimensions: (1236, 1648),
-    },
-];
-
 enum PreviewProtocolState {
     None,
     PendingResize { thread_protocol: ThreadProtocol },
@@ -201,6 +77,7 @@ enum PreviewProtocolState {
 }
 
 pub struct PreviewState {
+    picker: Picker,
     protocol_state: PreviewProtocolState,
     preview_tx: mpsc::Sender<PreviewRequest>,
     resize_tx: mpsc::Sender<ResizeRequest>,
@@ -244,7 +121,7 @@ impl ConfigState {
         files: Vec<MangaFile>,
         theme: Theme,
     ) -> anyhow::Result<Self> {
-        let selected_files = vec![true; files.len()]; // Select all by default
+        let files: Vec<(MangaFile, bool)> = files.into_iter().map(|f| (f, true)).collect();
 
         let mut list_state = ListState::default();
         if !files.is_empty() {
@@ -265,24 +142,21 @@ impl ConfigState {
 
         let mut state = Self {
             files,
-            selected_files,
-            list_state,
+            file_list_state: list_state,
             config,
-            prefix: None,
             focus: Focus::FileList,
             selected_field: None,
             preview_state: PreviewState {
+                picker,
                 protocol_state: PreviewProtocolState::None,
                 preview_tx,
                 resize_tx,
                 loaded_image: None,
             },
-            picker,
             theme,
             event_tx,
             last_mouse_click: None,
-            show_help: false,
-            device_selector: DeviceSelectorState::new(config.device_dimensions),
+            modal_state: ModalState::None,
         };
 
         // Auto-load the first image
@@ -292,21 +166,26 @@ impl ConfigState {
     }
 
     pub fn is_modal_open(&self) -> bool {
-        self.show_help || self.device_selector.show
+        !matches!(self.modal_state, ModalState::None)
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        if self.device_selector.show {
-            self.handle_device_selector_keys(key);
+        if key.code == KeyCode::Esc {
+            self.modal_state = ModalState::None;
             return;
+        }
+
+        if let ModalState::DeviceSelector(selector) = &mut self.modal_state {
+            if let Some(dimensions) = selector.handle_key(key) {
+                self.modal_state = ModalState::None;
+                self.config.device_dimensions = dimensions;
+                return;
+            }
         }
 
         match key.code {
             KeyCode::Char('h') => {
-                self.show_help = !self.show_help;
-            }
-            KeyCode::Esc if self.show_help => {
-                self.show_help = false;
+                self.modal_state = ModalState::Help;
             }
             KeyCode::Tab => {
                 self.focus = match self.focus {
@@ -330,8 +209,7 @@ impl ConfigState {
         let selected_paths: Vec<PathBuf> = self
             .files
             .iter()
-            .zip(&self.selected_files)
-            .filter(|(_, selected)| **selected)
+            .filter(|(_, selected)| *selected)
             .map(|(file, _)| file.archive_path.clone())
             .collect();
 
@@ -339,7 +217,7 @@ impl ConfigState {
             let _ = self.event_tx.send(crate::Event::StartProcessing {
                 files: selected_paths,
                 config: self.config,
-                prefix: self.prefix.clone(),
+                prefix: None,
             });
         }
     }
@@ -349,30 +227,24 @@ impl ConfigState {
             MouseEventKind::Up(MouseButton::Left) | MouseEventKind::Down(MouseButton::Left) => {
                 self.last_mouse_click = Some(mouse);
             }
-            MouseEventKind::ScrollUp => {
-                if self.device_selector.show {
-                    if let Some(selected) = self.device_selector.list_state.selected() {
-                        if selected > 0 {
-                            self.device_selector.list_state.select(Some(selected - 1));
-                        }
-                    }
-                } else {
+            MouseEventKind::ScrollUp => match &mut self.modal_state {
+                ModalState::DeviceSelector(s) => {
+                    s.select_previous();
+                }
+                ModalState::Help => {}
+                ModalState::None => {
                     self.select_previous();
                 }
-            }
-            MouseEventKind::ScrollDown => {
-                if self.device_selector.show {
-                    if let Some(selected) = self.device_selector.list_state.selected() {
-                        if selected < DEVICE_PRESETS.len() - 1 {
-                            self.device_selector.list_state.select(Some(selected + 1));
-                        }
-                    } else {
-                        self.device_selector.list_state.select(Some(0));
-                    }
-                } else {
+            },
+            MouseEventKind::ScrollDown => match &mut self.modal_state {
+                ModalState::DeviceSelector(s) => {
+                    s.select_next();
+                }
+                ModalState::Help => {}
+                ModalState::None => {
                     self.select_next();
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -380,28 +252,20 @@ impl ConfigState {
     fn handle_file_list_keys(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(selected) = self.list_state.selected() {
-                    if selected > 0 {
-                        self.select_previous();
-                    }
-                }
+                self.select_previous();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(selected) = self.list_state.selected() {
-                    if selected < self.files.len() - 1 {
-                        self.select_next();
-                    }
-                }
+                self.select_next();
             }
             KeyCode::Char(' ') => {
-                if let Some(selected) = self.list_state.selected() {
-                    self.selected_files[selected] = !self.selected_files[selected];
+                if let Some(selected) = self.file_list_state.selected() {
+                    self.files[selected].1 = !self.files[selected].1;
                 }
             }
             KeyCode::Char('a') => {
                 // Toggle all
-                let all_selected = self.selected_files.iter().all(|&s| s);
-                for selected in &mut self.selected_files {
+                let all_selected = self.files.iter().all(|(_, selected)| *selected);
+                for (_, selected) in &mut self.files {
                     *selected = !all_selected;
                 }
             }
@@ -411,8 +275,8 @@ impl ConfigState {
 
     // request a preview for the selected file
     fn reload_preview(&mut self) {
-        if let Some(file_idx) = self.list_state.selected() {
-            if let Some(file) = self.files.get(file_idx) {
+        if let Some(file_idx) = self.file_list_state.selected() {
+            if let Some((file, _)) = self.files.get(file_idx) {
                 // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
 
@@ -438,8 +302,8 @@ impl ConfigState {
 
     // request a random page preview for the selected file
     fn request_random_preview_for_selected(&mut self) {
-        if let Some(file_idx) = self.list_state.selected() {
-            if let Some(file) = self.files.get(file_idx) {
+        if let Some(file_idx) = self.file_list_state.selected() {
+            if let Some((file, _)) = self.files.get(file_idx) {
                 // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
 
@@ -457,8 +321,8 @@ impl ConfigState {
 
     // navigate to next page in preview
     fn next_preview_page(&mut self) {
-        if let Some(file_idx) = self.list_state.selected() {
-            if let Some(file) = self.files.get(file_idx) {
+        if let Some(file_idx) = self.file_list_state.selected() {
+            if let Some((file, _)) = self.files.get(file_idx) {
                 // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
 
@@ -486,8 +350,8 @@ impl ConfigState {
 
     // navigate to previous page in preview
     fn previous_preview_page(&mut self) {
-        if let Some(file_idx) = self.list_state.selected() {
-            if let Some(file) = self.files.get(file_idx) {
+        if let Some(file_idx) = self.file_list_state.selected() {
+            if let Some((file, _)) = self.files.get(file_idx) {
                 // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
 
@@ -514,13 +378,13 @@ impl ConfigState {
     }
 
     pub fn update_picker(&mut self, new_picker: Picker) {
-        self.picker = new_picker;
+        self.preview_state.picker = new_picker;
         self.preview_state.protocol_state = PreviewProtocolState::None;
         if let Some(loaded_image) = self.preview_state.loaded_image.as_ref() {
             let file = self
                 .files
                 .iter()
-                .any(|f| f.archive_path == loaded_image.archive_path);
+                .any(|(f, _)| f.archive_path == loaded_image.archive_path);
             if file {
                 let _ = self
                     .preview_state
@@ -535,17 +399,17 @@ impl ConfigState {
     }
 
     fn select_previous(&mut self) {
-        if let Some(selected) = self.list_state.selected() {
+        if let Some(selected) = self.file_list_state.selected() {
             if selected > 0 {
-                self.list_state.select(Some(selected - 1));
+                self.file_list_state.select(Some(selected - 1));
             }
         }
     }
 
     fn select_next(&mut self) {
-        if let Some(selected) = self.list_state.selected() {
+        if let Some(selected) = self.file_list_state.selected() {
             if selected < self.files.len() - 1 {
-                self.list_state.select(Some(selected + 1));
+                self.file_list_state.select(Some(selected + 1));
             }
         }
     }
@@ -601,7 +465,7 @@ impl ConfigState {
                     height: image.height(),
                     config,
                 });
-                let protocol = self.picker.new_resize_protocol(image);
+                let protocol = self.preview_state.picker.new_resize_protocol(image);
                 let thread_protocol =
                     ThreadProtocol::new(self.preview_state.resize_tx.clone(), Some(protocol));
                 self.preview_state.protocol_state =
@@ -648,7 +512,7 @@ impl ConfigState {
                     SplitStrategy::RotateAndSplit => SplitStrategy::None,
                 };
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('c') => {
                 self.config.auto_crop = !self.config.auto_crop;
             }
             KeyCode::Char('u') => {
@@ -657,11 +521,13 @@ impl ConfigState {
             KeyCode::Char('b') => {
                 self.selected_field = Some(SelectedField::Brightness);
             }
-            KeyCode::Char('c') => {
+            KeyCode::Char('g') => {
                 self.selected_field = Some(SelectedField::Gamma);
             }
             KeyCode::Char('d') => {
-                self.device_selector.open();
+                self.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
+                    self.config.device_dimensions,
+                ));
             }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
@@ -681,36 +547,6 @@ impl ConfigState {
             }
             KeyCode::Esc => {
                 self.selected_field = None;
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_device_selector_keys(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.device_selector.close();
-            }
-            KeyCode::Enter => {
-                if let Some(dimensions) = self.device_selector.confirm_selection() {
-                    self.config.device_dimensions = dimensions;
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(selected) = self.device_selector.list_state.selected() {
-                    if selected > 0 {
-                        self.device_selector.list_state.select(Some(selected - 1));
-                    }
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(selected) = self.device_selector.list_state.selected() {
-                    if selected < DEVICE_PRESETS.len() - 1 {
-                        self.device_selector.list_state.select(Some(selected + 1));
-                    }
-                } else {
-                    self.device_selector.list_state.select(Some(0));
-                }
             }
             _ => {}
         }
@@ -772,12 +608,12 @@ impl<'a> Widget for ConfigScreen<'a> {
             );
         footer.render(footer_area, buf);
 
-        if self.state.show_help {
-            render_help_popup(area, buf, &self.state.theme);
-        }
-
-        if self.state.device_selector.show {
-            render_device_selector_popup(area, buf, self.state);
+        match &self.state.modal_state {
+            ModalState::Help => render_help_popup(area, buf, &self.state.theme),
+            ModalState::DeviceSelector(_) => {
+                device_selector::render_device_selector_popup(area, buf, self.state);
+            }
+            ModalState::None => {}
         }
 
         self.state.last_mouse_click = None;
@@ -807,7 +643,6 @@ impl<'a> Widget for FileListWidget<'a> {
             .state
             .files
             .iter()
-            .zip(&self.state.selected_files)
             .map(|(file, selected)| {
                 let checkbox = if *selected { "[✓]" } else { "[ ]" };
                 let content = format!("{} {}", checkbox, file.name);
@@ -820,7 +655,11 @@ impl<'a> Widget for FileListWidget<'a> {
                 Block::default()
                     .title(format!(
                         "files ({} selected)",
-                        self.state.selected_files.iter().filter(|&&s| s).count()
+                        self.state
+                            .files
+                            .iter()
+                            .filter(|(_, selected)| *selected)
+                            .count()
                     ))
                     .borders(Borders::ALL)
                     .border_style(if self.state.focus == Focus::FileList {
@@ -832,7 +671,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
 
-        StatefulWidget::render(list, area, buf, &mut self.state.list_state);
+        StatefulWidget::render(list, area, buf, &mut self.state.file_list_state);
     }
 }
 
@@ -963,19 +802,20 @@ impl<'a> SettingsWidget<'a> {
             .render(key_area, buf);
 
         let current_dims = self.state.config.device_dimensions;
-        let device_name = DEVICE_PRESETS
+        let button_text = device_selector::DEVICE_PRESETS
             .iter()
             .find(|preset| preset.dimensions == current_dims)
             .map(|preset| preset.name)
-            .unwrap_or("Custom");
-
-        let button_text = format!("{} ({}x{})", device_name, current_dims.0, current_dims.1);
+            .map(|name| format!("{} ({}x{})", name, current_dims.0, current_dims.1))
+            .unwrap_or_else(|| format!("{}x{}", current_dims.0, current_dims.1).into());
 
         base_button(button_text, self.state)
             .on_click(|| {
                 // make sure the mouse click is not used in the popup layer
                 self.state.last_mouse_click = None;
-                self.state.device_selector.open();
+                self.state.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
+                    self.state.config.device_dimensions,
+                ));
             })
             .render(button_area, buf);
     }
@@ -1105,9 +945,9 @@ impl<'a> Widget for SettingsWidget<'a> {
         );
 
         self.render_adjustable_setting(
-            "contrast",
+            "gamma",
             &format!("{:3.2}", self.state.config.gamma),
-            "[r]",
+            "[g]",
             contrast_area,
             buf,
             self.state.selected_field == Some(SelectedField::Gamma),
@@ -1195,10 +1035,10 @@ impl<'a> Widget for PreviewWidget<'a> {
 
         let file_changed = self
             .state
-            .list_state
+            .file_list_state
             .selected()
             .and_then(|idx| self.state.files.get(idx))
-            .and_then(|selected_file| {
+            .and_then(|(selected_file, _)| {
                 self.state
                     .preview_state
                     .loaded_image
@@ -1288,7 +1128,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             let image_area = calculate_centered_image_area(
                 image_area,
                 loaded_image,
-                self.state.picker.font_size(),
+                self.state.preview_state.picker.font_size(),
             );
 
             match &mut self.state.preview_state.protocol_state {
@@ -1534,7 +1374,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  • negative values make pages darker",
         "  • 0 = no adjustment",
         "",
-        "contrast/gamma (default: 1.8, range: 0.1 to 3.0):",
+        "gamma (default: 1.8, range: 0.1 to 3.0):",
         "  controls the contrast and tone curve of the images.",
         "  • values < 1.0 = lower contrast, lifted shadows",
         "  • values > 1.0 = higher contrast, deeper shadows",
@@ -1557,92 +1397,4 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         .alignment(Alignment::Left);
 
     help_paragraph.render(popup_area, buf);
-}
-
-fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut ConfigState) {
-    let popup_width = 50.min(area.width * 3 / 4);
-    let popup_height = 20.min(area.height * 3 / 4);
-
-    let popup_x = area.left() + (area.width.saturating_sub(popup_width)) / 2;
-    let popup_y = area.top() + (area.height.saturating_sub(popup_height)) / 2;
-
-    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-
-    Clear.render(popup_area, buf);
-
-    let block = Block::default()
-        .title(" select device ")
-        .borders(Borders::ALL)
-        .border_style(state.theme.focused)
-        .style(Style::default().bg(state.theme.background));
-
-    let inner = block.inner(popup_area);
-    block.render(popup_area, buf);
-
-    // Split into list area and button area
-    let [list_area, button_area, help_area] = Layout::vertical([
-        Constraint::Min(0),    // List
-        Constraint::Length(3), // Buttons
-        Constraint::Length(1), // Help text
-    ])
-    .spacing(1)
-    .areas(inner);
-
-    // Render device list
-    let current_dims = state.config.device_dimensions;
-    let items: Vec<ListItem> = DEVICE_PRESETS
-        .iter()
-        .map(|preset| {
-            let checkmark = if preset.dimensions == current_dims {
-                " ✓"
-            } else {
-                "  "
-            };
-            let content = format!(
-                "{:<20} {:>4}x{:<4}{}",
-                preset.name, preset.dimensions.0, preset.dimensions.1, checkmark
-            );
-            ListItem::new(content).style(state.theme.content)
-        })
-        .collect();
-
-    let list = List::new(items)
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("> ");
-
-    StatefulWidget::render(list, list_area, buf, &mut state.device_selector.list_state);
-
-    // Render buttons
-    let [confirm_area, cancel_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .spacing(2)
-            .areas(button_area);
-
-    Button::new("confirm", state.theme)
-        .on_click(|| {
-            if let Some(dimensions) = state.device_selector.confirm_selection() {
-                state.config.device_dimensions = dimensions;
-            }
-        })
-        .mouse_event(state.last_mouse_click)
-        .render(confirm_area, buf);
-
-    Button::new("cancel", state.theme)
-        .on_click(|| {
-            state.device_selector.close();
-        })
-        .mouse_event(state.last_mouse_click)
-        .variant(ButtonVariant::Secondary)
-        .render(cancel_area, buf);
-
-    // Render help text
-    let help_text = "[↑/↓ navigate, enter to select, esc to cancel]";
-    Paragraph::new(help_text)
-        .style(
-            Style::default()
-                .fg(state.theme.content)
-                .add_modifier(Modifier::DIM),
-        )
-        .alignment(Alignment::Center)
-        .render(help_area, buf);
 }
