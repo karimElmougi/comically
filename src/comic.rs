@@ -253,13 +253,6 @@ impl Comic {
         start
     }
 
-    pub fn image_processed(&self) {
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::ImageProcessed,
-        });
-    }
-
     pub fn image_processing_complete(&self, duration: Duration) {
         self.notify(ProgressEvent::ComicUpdate {
             id: self.id,

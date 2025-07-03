@@ -211,16 +211,6 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
     render_title(theme).render(title_area, buf);
 
     let total = state.comics.len();
-    let completed = state
-        .comics
-        .iter()
-        .filter(|state| {
-            matches!(
-                state.current_status(),
-                ComicStatus::Success { .. } | ComicStatus::Failed { .. }
-            )
-        })
-        .count();
 
     let successful = state
         .comics
@@ -228,8 +218,49 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
         .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
         .count();
 
-    let progress_ratio = if total > 0 {
-        completed as f64 / total as f64
+    let mut total_work = 0.0;
+    let mut completed_work = 0.0;
+
+    for comic in &state.comics {
+        match comic.current_status() {
+            ComicStatus::Waiting => {
+                total_work += 1.0;
+            }
+            ComicStatus::Progress {
+                stage, progress, ..
+            } => {
+                total_work += 1.0;
+                // Each stage contributes a portion
+                let stage_weight = match stage {
+                    ComicStage::Extract => 0.05,
+                    ComicStage::Process => 0.5,
+                    ComicStage::Epub => 0.05,
+                    ComicStage::Mobi => 0.4,
+                };
+                completed_work += stage_weight * (progress / 100.0);
+            }
+            ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed { .. } => {
+                total_work += 1.0;
+                // Image processing is weighted as 50% of the work
+                if comic.total_images > 0 {
+                    let image_progress = comic.images_processed as f64 / comic.total_images as f64;
+                    completed_work += 0.5 * image_progress;
+                }
+            }
+            ComicStatus::Success { .. } => {
+                total_work += 1.0;
+                completed_work += 1.0;
+            }
+            ComicStatus::Failed { .. } => {
+                total_work += 1.0;
+                completed_work += 1.0;
+            }
+            _ => {}
+        }
+    }
+
+    let progress_ratio = if total_work > 0.0 {
+        completed_work / total_work
     } else {
         0.0
     };
