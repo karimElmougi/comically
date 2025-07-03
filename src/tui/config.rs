@@ -830,7 +830,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         let constraints = [
             Constraint::Length(1), // top spacer
             Constraint::Min(9),    // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Min(10),   // Buttons (quality, brightness, contrast)
+            Constraint::Min(5),    // Buttons (quality, brightness, contrast)
             Constraint::Min(12),   // Dimensions (dynamic grid)
             Constraint::Min(3),    // bottom button
         ];
@@ -903,7 +903,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         let [quality_area, brightness_area, contrast_area] = make_grid_layout::<3>(
             buttons_area,
             GridLayout {
-                row_length: 2,
+                row_length: 3,
                 height: Some(Constraint::Length(4)),
                 width: None,
                 spacing_x: None,
