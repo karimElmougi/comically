@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::{
     comic::ComicConfig,
-    comic_archive::{self, ArchiveFile},
+    comic_archive,
     tui::{
         button::{Button, ButtonVariant},
         Theme,
@@ -79,7 +79,6 @@ pub struct LoadedPreviewImage {
     idx: usize,
     total_pages: usize,
     archive_path: PathBuf,
-    image_file: ArchiveFile,
     width: u32,
     height: u32,
     config: ComicConfig,
@@ -99,7 +98,6 @@ pub enum ConfigEvent {
         total_pages: usize,
         archive_path: PathBuf,
         image: DynamicImage,
-        file: ArchiveFile,
         config: ComicConfig,
     },
     ResizeComplete(ResizeResponse),
@@ -430,14 +428,12 @@ impl ConfigState {
                 total_pages,
                 image,
                 archive_path,
-                file,
                 config,
             } => {
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
                     idx,
                     total_pages,
                     archive_path,
-                    image_file: file,
                     width: image.width(),
                     height: image.height(),
                     config,
@@ -1146,13 +1142,12 @@ fn preview_worker(
                     let result = load_and_process_preview(&path, &config, page_index);
 
                     match result {
-                        Ok((image, file, idx, total_pages)) => {
+                        Ok((image, idx, total_pages)) => {
                             let _ = tx.send(crate::Event::Config(ConfigEvent::ImageLoaded {
                                 idx,
                                 total_pages,
                                 archive_path: path,
                                 image,
-                                file,
                                 config,
                             }));
                         }
@@ -1184,7 +1179,7 @@ fn load_and_process_preview(
     path: &PathBuf,
     config: &ComicConfig,
     page_index: Option<usize>,
-) -> anyhow::Result<(DynamicImage, ArchiveFile, usize, usize)> {
+) -> anyhow::Result<(DynamicImage, usize, usize)> {
     let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
         .into_iter()
         .filter_map(|r| r.ok())
@@ -1228,7 +1223,7 @@ fn load_and_process_preview(
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 
-    Ok((compressed_img, archive_file, idx, total_pages))
+    Ok((compressed_img, idx, total_pages))
 }
 
 fn get_latest<T>(rx: &mpsc::Receiver<T>) -> Option<T> {
