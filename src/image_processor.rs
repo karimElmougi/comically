@@ -9,7 +9,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::comic::{ComicConfig, ProcessedImage};
+use crate::comic::{ComicConfig, ProcessedImage, SplitStrategy};
 use crate::comic_archive::ArchiveFile;
 use crate::Event;
 
@@ -104,28 +104,80 @@ where
     I: GenericImageView<Pixel = Luma<u8>> + Send + Sync,
 {
     let (width, height) = img.dimensions();
-    let processed_images = if c.split_double_page && width > height {
-        let (left, right) = split_double_pages(img);
+    let is_double_page = width > height;
 
-        let (left_resized, right_resized) = rayon::join(
-            || resize_image(&*left, c.device_dimensions),
-            || resize_image(&*right, c.device_dimensions),
-        );
+    match c.split {
+        SplitStrategy::None => {
+            // Just resize, no splitting or rotation
+            vec![resize_image(img, c.device_dimensions)]
+        }
+        SplitStrategy::Split => {
+            if is_double_page {
+                // Split double pages
+                let (left, right) = split_double_pages(img);
 
-        // Determine order based on right_to_left setting
-        let (first, second) = if c.right_to_left {
-            (right_resized, left_resized)
-        } else {
-            (left_resized, right_resized)
-        };
+                let (left_resized, right_resized) = rayon::join(
+                    || resize_image(&*left, c.device_dimensions),
+                    || resize_image(&*right, c.device_dimensions),
+                );
 
-        vec![first, second]
-    } else {
-        let resized = resize_image(img, c.device_dimensions);
-        vec![resized]
-    };
+                // Determine order based on right_to_left setting
+                let (first, second) = if c.right_to_left {
+                    (right_resized, left_resized)
+                } else {
+                    (left_resized, right_resized)
+                };
 
-    processed_images
+                vec![first, second]
+            } else {
+                vec![resize_image(img, c.device_dimensions)]
+            }
+        }
+        SplitStrategy::Rotate => {
+            if is_double_page {
+                let rotated = rotate_image_90(img, c.right_to_left);
+                vec![resize_image(&rotated, c.device_dimensions)]
+            } else {
+                vec![resize_image(img, c.device_dimensions)]
+            }
+        }
+        SplitStrategy::RotateAndSplit => {
+            if is_double_page {
+                let (left, right) = split_double_pages(img);
+
+                let mut rotated_resized = None;
+                let mut left_resized = None;
+                let mut right_resized = None;
+
+                rayon::scope(|s| {
+                    s.spawn(|_| {
+                        let rotated = rotate_image_90(img, c.right_to_left);
+                        rotated_resized = Some(resize_image(&rotated, c.device_dimensions));
+                    });
+                    s.spawn(|_| {
+                        left_resized = Some(resize_image(&*left, c.device_dimensions));
+                    });
+                    s.spawn(|_| {
+                        right_resized = Some(resize_image(&*right, c.device_dimensions));
+                    });
+                });
+
+                let rotated_resized = rotated_resized.unwrap();
+                let left_resized = left_resized.unwrap();
+                let right_resized = right_resized.unwrap();
+
+                let (first, second) = if c.right_to_left {
+                    (right_resized, left_resized)
+                } else {
+                    (left_resized, right_resized)
+                };
+
+                vec![rotated_resized, first, second]
+            } else {
+                vec![resize_image(img, c.device_dimensions)]
+            }
+        }
+    }
 }
 
 /// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
@@ -174,6 +226,27 @@ fn split_double_pages<I: GenericImageView>(img: &I) -> (SubImage<&I>, SubImage<&
     let right = imageops::crop_imm(img, width / 2, 0, width / 2, height);
 
     (left, right)
+}
+
+fn rotate_image_90<I>(img: &I, clockwise: bool) -> GrayImage
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
+{
+    let (width, height) = img.dimensions();
+    let mut rotated = GrayImage::new(height, width);
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            if clockwise {
+                rotated.put_pixel(height - 1 - y, x, pixel);
+            } else {
+                rotated.put_pixel(y, width - 1 - x, pixel);
+            }
+        }
+    }
+
+    rotated
 }
 
 // Pixel values above this are considered "white"

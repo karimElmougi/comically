@@ -58,10 +58,18 @@ pub enum ProgressEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SplitStrategy {
+    None,
+    Split,
+    Rotate,
+    RotateAndSplit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComicConfig {
     pub device_dimensions: (u32, u32),
     pub right_to_left: bool,
-    pub split_double_page: bool,
+    pub split: SplitStrategy,
     pub auto_crop: bool,
     pub compression_quality: u8,
     pub brightness: i32,
@@ -74,7 +82,7 @@ impl Default for ComicConfig {
         Self {
             device_dimensions: (1236, 1648),
             right_to_left: true,
-            split_double_page: true,
+            split: SplitStrategy::RotateAndSplit,
             auto_crop: true,
             compression_quality: 85,
             brightness: -10,

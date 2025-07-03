@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
-    comic::ComicConfig,
+    comic::{ComicConfig, SplitStrategy},
     comic_archive,
     tui::{
         button::{Button, ButtonVariant},
@@ -477,7 +477,13 @@ impl ConfigState {
                 self.config.right_to_left = !self.config.right_to_left;
             }
             KeyCode::Char('s') => {
-                self.config.split_double_page = !self.config.split_double_page;
+                use crate::comic::SplitStrategy;
+                self.config.split = match self.config.split {
+                    SplitStrategy::None => SplitStrategy::Split,
+                    SplitStrategy::Split => SplitStrategy::Rotate,
+                    SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
+                    SplitStrategy::RotateAndSplit => SplitStrategy::None,
+                };
             }
             KeyCode::Char('r') => {
                 self.config.auto_crop = !self.config.auto_crop;
@@ -858,19 +864,24 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
         );
 
-        // Split Double Pages toggle
         self.render_toggle_button(
-            "split double pages",
-            if self.state.config.split_double_page {
-                "yes"
-            } else {
-                "no"
+            "double page handling",
+            match self.state.config.split {
+                SplitStrategy::None => "none",
+                SplitStrategy::Split => "split",
+                SplitStrategy::Rotate => "rotate",
+                SplitStrategy::RotateAndSplit => "split & rotate",
             },
             "[s]",
             split_double_pages_area,
             buf,
             |state| {
-                state.config.split_double_page = !state.config.split_double_page;
+                state.config.split = match state.config.split {
+                    SplitStrategy::None => SplitStrategy::Split,
+                    SplitStrategy::Split => SplitStrategy::Rotate,
+                    SplitStrategy::Rotate => SplitStrategy::RotateAndSplit,
+                    SplitStrategy::RotateAndSplit => SplitStrategy::None,
+                };
             },
         );
 
@@ -1353,8 +1364,11 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  • left to right: standard western comic/book reading order",
         "  • right to left: manga reading order - pages flow from right to left",
         "",
-        "split double pages (default: yes):",
-        "  when enabled, detects and splits two-page spreads into individual pages.",
+        "double page handling (default: rotate & split):",
+        "  • none: keep double page spreads as-is",
+        "  • split: cut double page spreads into two separate pages",
+        "  • rotate: rotate double page spreads 90 degrees for better viewing",
+        "  • rotate & split: show pages twice - first rotated, then split",
         "",
         "auto crop (default: yes):",
         "  automatically removes white borders and margins from pages, making the page fit the screen better.",
