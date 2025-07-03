@@ -1027,6 +1027,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                 Constraint::Length(3), // Navigation buttons
             ])
             .spacing(1)
+            .flex(Flex::End)
             .areas(buttons_area);
 
         // Load preview button (full width)
