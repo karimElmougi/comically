@@ -5,7 +5,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
-    style::{Modifier, Style, Styled, Stylize},
+    style::{Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
@@ -26,6 +26,7 @@ use crate::{
     tui::{
         button::{Button, ButtonVariant},
         config::device_selector::DeviceSelectorState,
+        utils::{padding, themed_block, Side},
         Theme,
     },
 };
@@ -584,11 +585,7 @@ impl<'a> Widget for ConfigScreen<'a> {
         let footer = Paragraph::new(footer_text)
             .style(Style::default().fg(self.state.theme.content))
             .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(self.state.theme.border),
-            );
+            .block(themed_block(None, &self.state.theme));
         footer.render(footer_area, buf);
 
         match &self.state.modal_state {
@@ -641,19 +638,11 @@ impl<'a> Widget for FileListWidget<'a> {
 
         let list = List::new(items)
             .block(
-                Block::default()
-                    .title(
-                        Line::from(" files ")
-                            .set_style(self.state.theme.content)
-                            .centered(),
-                    )
-                    .title(
-                        Line::from(format!("{selected_count}"))
-                            .right_aligned()
-                            .style(self.state.theme.accent),
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(self.state.theme.border),
+                themed_block(Some("files"), &self.state.theme).title(
+                    Line::from(format!("{selected_count}"))
+                        .right_aligned()
+                        .style(self.state.theme.accent),
+                ),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
@@ -774,25 +763,20 @@ impl<'a> SettingsWidget<'a> {
 
 impl<'a> Widget for SettingsWidget<'a> {
     fn render(mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default()
-            .title(Line::from(" settings ").set_style(self.state.theme.content))
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_style(self.state.theme.border);
+        let block = themed_block(Some("settings"), &self.state.theme);
         let inner = block.inner(area);
         block.render(area, buf);
 
-        // Create layout for all settings sections
-        let constraints = [
-            Constraint::Length(1), // top spacer
-            Constraint::Length(9), // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Length(4), // Buttons (quality, brightness, contrast)
-            Constraint::Length(4), // Device selector button
-            Constraint::Min(3),    // bottom button
-        ];
-
-        let [_, toggles_area, buttons_area, device_selector_area, process_button_area] =
-            Layout::vertical(constraints).spacing(1).areas(inner);
+        let [toggles_area, buttons_area, device_selector_area, process_button_area] =
+            Layout::vertical([
+                Constraint::Length(9), // Toggles ( reading direction, split double pages, auto crop)
+                Constraint::Length(4), // Buttons (quality, brightness, contrast)
+                Constraint::Length(4), // Device selector button
+                Constraint::Min(3),    // bottom button
+            ])
+            .flex(Flex::Start)
+            .spacing(1)
+            .areas(padding(inner, Constraint::Length(1), Side::Top));
 
         // Create a 2x2 grid manually for toggles
         let [row1, row2] = Layout::vertical([Constraint::Length(4), Constraint::Length(4)])
@@ -948,12 +932,7 @@ impl<'a> PreviewWidget<'a> {
 
 impl<'a> Widget for PreviewWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default()
-            .title(" preview ")
-            .title_style(Style::default().fg(self.state.theme.content))
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.state.theme.border));
+        let block = themed_block(Some("preview"), &self.state.theme);
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1451,7 +1430,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         .style(Style::default().fg(theme.content))
         .block(
             Block::default()
-                .title(" help ")
+                .title(Line::from(" help ").centered())
                 .borders(Borders::ALL)
                 .border_style(theme.accent)
                 .title(Line::from("[esc/h]").right_aligned())
