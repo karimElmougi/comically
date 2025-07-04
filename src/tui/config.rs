@@ -836,7 +836,7 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         base_button(
             match self.state.config.output_format {
-                OutputFormat::Mobi => "MOBI",
+                OutputFormat::Mobi => "AZW3/MOBI",
                 OutputFormat::Epub => "EPUB",
                 OutputFormat::Cbz => "CBZ",
             },
