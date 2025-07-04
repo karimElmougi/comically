@@ -1,7 +1,9 @@
 use crate::{
-    comic::{Comic, ComicConfig, ComicStage, ComicStatus, ProgressEvent},
+    cbz_builder,
+    comic::{Comic, ComicConfig, ComicStage, ComicStatus, OutputFormat, ProgressEvent},
     comic_archive, epub_builder, image_processor, mobi_converter, Event,
 };
+use anyhow::Context;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{
     path::PathBuf,
@@ -82,13 +84,44 @@ pub fn process_files(
 
             comic.processed_files = images;
 
-            comic.with_try(|comic| {
-                let start = comic.update_status(ComicStage::Epub, 50.0);
-                epub_builder::build_epub(comic)?;
-                comic.stage_completed(ComicStage::Epub, start.elapsed());
-                Ok(())
-            })?;
-            Some(comic)
+            match config.output_format {
+                OutputFormat::Cbz => {
+                    // For CBZ, skip EPUB building and go straight to CBZ
+                    comic.with_try(|comic| {
+                        let start = comic.update_status(ComicStage::Epub, 75.0); // Using Epub stage for CBZ progress
+                        cbz_builder::build_cbz(comic)?;
+                        comic.stage_completed(ComicStage::Epub, start.elapsed());
+                        comic.success();
+                        Ok(())
+                    })?;
+                    None // Don't send to kindlegen
+                }
+                OutputFormat::Epub => {
+                    comic.with_try(|comic| {
+                        let start = comic.update_status(ComicStage::Epub, 75.0);
+                        epub_builder::build_epub(comic)?;
+                        comic.stage_completed(ComicStage::Epub, start.elapsed());
+                        
+                        // Move EPUB to final destination
+                        let output_path = comic.output_path();
+                        std::fs::rename(comic.epub_file(), &output_path)
+                            .with_context(|| format!("Failed to move EPUB to output: {:?}", output_path))?;
+                        
+                        comic.success();
+                        Ok(())
+                    })?;
+                    None // Don't send to kindlegen
+                }
+                OutputFormat::Mobi => {
+                    comic.with_try(|comic| {
+                        let start = comic.update_status(ComicStage::Epub, 50.0);
+                        epub_builder::build_epub(comic)?;
+                        comic.stage_completed(ComicStage::Epub, start.elapsed());
+                        Ok(())
+                    })?;
+                    Some(comic) // Send to kindlegen
+                }
+            }
         })
         .for_each(|comic| {
             kindlegen_tx.send(comic).unwrap();

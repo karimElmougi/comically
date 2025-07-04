@@ -25,13 +25,13 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     create_mimetype_file(&epub_dir)?;
     create_container_xml(&meta_inf_dir)?;
 
-    let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
-
     let mut image_map: Vec<(ProcessedImage, String)> = Vec::new();
     for (i, image) in comic.processed_files.iter().enumerate() {
         let filename = format!("image{:03}.jpg", i + 1);
         image_map.push((image.clone(), format!("Images/{}", filename)));
     }
+
+    let cover_html_path = create_cover_page(&oebps_dir, &image_map)?;
 
     // Generate HTML for each image
     let html_dir = oebps_dir.clone();
@@ -74,16 +74,16 @@ fn create_container_xml(meta_inf_dir: &Path) -> Result<()> {
 }
 
 /// Creates a cover page using the first image
-fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<PathBuf> {
+fn create_cover_page(oebps_dir: &Path, image_map: &[(ProcessedImage, String)]) -> Result<PathBuf> {
     // If no images, return early
-    if images.is_empty() {
+    if image_map.is_empty() {
         return Err(anyhow::anyhow!("No images found to create cover page"));
     }
 
-    // Use first image as cover
-    let cover_img_path = &images[0].path;
+    // Use the first image from the map as cover
+    let (_, rel_path) = &image_map[0];
 
-    // Create cover HTML
+    // Create cover HTML with relative path from image_map
     let cover_html = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -98,7 +98,7 @@ fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Path
   </div>
 </body>
 </html>"#,
-        cover_img_path.display()
+        rel_path
     );
 
     let cover_html_path = oebps_dir.join("cover.html");

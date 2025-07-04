@@ -9,7 +9,7 @@ use ratatui::{
 use std::time::{Duration, Instant};
 
 use crate::{
-    comic::{ComicStage, ComicStatus, ProgressEvent},
+    comic::{ComicStage, ComicStatus, OutputFormat, ProgressEvent},
     tui::{
         render_title,
         utils::{themed_block, themed_block_title},
@@ -23,6 +23,7 @@ pub struct ProgressState {
     complete: Option<Duration>,
     scroll_offset: usize,
     pub theme: Theme,
+    pub output_format: OutputFormat,
 }
 
 #[derive(Debug)]
@@ -77,13 +78,14 @@ impl ComicState {
 }
 
 impl ProgressState {
-    pub fn new(theme: Theme) -> Self {
+    pub fn new(theme: Theme, output_format: OutputFormat) -> Self {
         Self {
             start: Instant::now(),
             comics: Vec::new(),
             complete: None,
             scroll_offset: 0,
             theme,
+            output_format,
         }
     }
 
@@ -236,13 +238,8 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
                 stage, progress, ..
             } => {
                 total_work += 1.0;
-                // Each stage contributes a portion
-                let stage_weight = match stage {
-                    ComicStage::Extract => 0.05,
-                    ComicStage::Process => 0.5,
-                    ComicStage::Epub => 0.05,
-                    ComicStage::Mobi => 0.4,
-                };
+                // Each stage contributes a portion based on output format
+                let stage_weight = state.output_format.stage_weight(*stage);
                 completed_work += stage_weight * (progress / 100.0);
             }
             ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed => {
@@ -473,17 +470,28 @@ fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect, theme: &Them
     keys.render(controls_area, buf);
 
     if !state.comics.is_empty() {
-        draw_stage_legend(buf, legend_area, theme);
+        draw_stage_legend(buf, legend_area, theme, state.output_format);
     }
 }
 
-fn draw_stage_legend(buf: &mut Buffer, area: Rect, theme: &Theme) {
-    let stages = [
-        ComicStage::Extract,
-        ComicStage::Process,
-        ComicStage::Epub,
-        ComicStage::Mobi,
-    ];
+fn draw_stage_legend(buf: &mut Buffer, area: Rect, theme: &Theme, output_format: OutputFormat) {
+    let stages = match output_format {
+        OutputFormat::Mobi => vec![
+            ComicStage::Extract,
+            ComicStage::Process,
+            ComicStage::Epub,
+            ComicStage::Mobi,
+        ],
+        OutputFormat::Epub => vec![
+            ComicStage::Extract,
+            ComicStage::Process,
+            ComicStage::Epub,
+        ],
+        OutputFormat::Cbz => vec![
+            ComicStage::Extract,
+            ComicStage::Process,
+        ],
+    };
 
     let constraints = vec![Constraint::Length(16); stages.len()];
 

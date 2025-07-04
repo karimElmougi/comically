@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
-    comic::{ComicConfig, SplitStrategy},
+    comic::{ComicConfig, OutputFormat, SplitStrategy},
     comic_archive,
     tui::{
         button::{Button, ButtonVariant},
@@ -230,6 +230,13 @@ impl ConfigState {
             }
             KeyCode::Char('c') => {
                 self.config.auto_crop = !self.config.auto_crop;
+            }
+            KeyCode::Char('f') => {
+                self.config.output_format = match self.config.output_format {
+                    OutputFormat::Mobi => OutputFormat::Epub,
+                    OutputFormat::Epub => OutputFormat::Cbz,
+                    OutputFormat::Cbz => OutputFormat::Mobi,
+                };
             }
             KeyCode::Char('u') => {
                 self.selected_field = Some(SelectedField::Quality);
@@ -768,7 +775,7 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(1)
                 .areas(row1);
 
-        let [auto_crop_area, _] =
+        let [auto_crop_area, output_format_area] =
             Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .spacing(1)
                 .areas(row2);
@@ -823,6 +830,25 @@ impl<'a> Widget for SettingsWidget<'a> {
             self.state.config.auto_crop = !self.state.config.auto_crop;
         })
         .render(auto_crop_area, buf);
+
+        base_button(
+            match self.state.config.output_format {
+                OutputFormat::Mobi => "MOBI",
+                OutputFormat::Epub => "EPUB",
+                OutputFormat::Cbz => "CBZ",
+            },
+            self.state,
+        )
+        .label("output format")
+        .hint("[f]")
+        .on_click(|| {
+            self.state.config.output_format = match self.state.config.output_format {
+                OutputFormat::Mobi => OutputFormat::Epub,
+                OutputFormat::Epub => OutputFormat::Cbz,
+                OutputFormat::Cbz => OutputFormat::Mobi,
+            };
+        })
+        .render(output_format_area, buf);
 
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] =

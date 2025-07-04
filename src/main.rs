@@ -1,3 +1,4 @@
+mod cbz_builder;
 mod comic;
 mod comic_archive;
 mod epub_builder;

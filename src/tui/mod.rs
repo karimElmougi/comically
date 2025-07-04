@@ -187,7 +187,7 @@ fn process_events(
                 prefix,
             } => {
                 let _ = config.save();
-                app.state = AppState::Processing(progress::ProgressState::new(app.theme));
+                app.state = AppState::Processing(progress::ProgressState::new(app.theme, config.output_format));
 
                 let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
 
