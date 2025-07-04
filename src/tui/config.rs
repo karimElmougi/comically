@@ -79,7 +79,8 @@ pub struct PreviewState {
 
 #[derive(Debug, Clone)]
 pub struct LoadedPreviewImage {
-    idx: usize,
+    file_idx: usize,
+    page_idx: usize,
     total_pages: usize,
     archive_path: PathBuf,
     width: u32,
@@ -91,13 +92,15 @@ enum PreviewRequest {
     LoadFile {
         archive_path: PathBuf,
         config: ComicConfig,
-        page_index: Option<usize>,
+        page_idx: Option<usize>,
+        file_idx: usize,
     },
 }
 
 pub enum ConfigEvent {
     ImageLoaded {
-        idx: usize,
+        file_idx: usize,
+        page_idx: usize,
         total_pages: usize,
         archive_path: PathBuf,
         image: DynamicImage,
@@ -154,7 +157,7 @@ impl ConfigState {
         };
 
         // Auto-load the first image
-        state.reload_preview();
+        state.load_preview();
 
         state
     }
@@ -256,7 +259,7 @@ impl ConfigState {
                 ));
             }
             KeyCode::Char('p') => {
-                self.reload_preview();
+                self.load_preview();
             }
             KeyCode::Left => {
                 if let Some(field) = self.selected_field {
@@ -324,18 +327,17 @@ impl ConfigState {
     }
 
     // request a preview for the selected file
-    fn reload_preview(&mut self) {
+    fn load_preview(&mut self) {
         if let Some(file_idx) = self.file_list_state.selected() {
             if let Some((file, _)) = self.files.get(file_idx) {
-                // Reset protocol state when loading a new image
                 self.preview_state.protocol_state = PreviewProtocolState::None;
 
-                // if we have a loaded image, use the same index
                 let idx = self
                     .preview_state
                     .loaded_image
                     .as_ref()
-                    .map(|i| i.idx)
+                    .filter(|i| i.file_idx == file_idx)
+                    .map(|i| i.page_idx)
                     .unwrap_or(0);
 
                 let _ = self
@@ -344,107 +346,82 @@ impl ConfigState {
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
                         config: self.config.clone(),
-                        page_index: Some(idx),
+                        page_idx: Some(idx),
+                        file_idx,
                     });
             }
         }
     }
 
     // request a random page preview for the selected file
-    fn request_random_preview_for_selected(&mut self) {
-        if let Some(file_idx) = self.file_list_state.selected() {
-            if let Some((file, _)) = self.files.get(file_idx) {
-                // Reset protocol state when loading a new image
-                self.preview_state.protocol_state = PreviewProtocolState::None;
+    fn request_random_preview_for_current(&mut self) {
+        if let Some(file) = self.preview_state.loaded_image.as_ref() {
+            self.preview_state.protocol_state = PreviewProtocolState::None;
 
-                let _ = self
-                    .preview_state
-                    .preview_tx
-                    .send(PreviewRequest::LoadFile {
-                        archive_path: file.archive_path.clone(),
-                        config: self.config.clone(),
-                        page_index: None,
-                    });
-            }
+            let _ = self
+                .preview_state
+                .preview_tx
+                .send(PreviewRequest::LoadFile {
+                    archive_path: file.archive_path.clone(),
+                    config: self.config.clone(),
+                    page_idx: None,
+                    file_idx: file.file_idx,
+                });
         }
     }
 
     // navigate to next page in preview
     fn next_preview_page(&mut self) {
-        if let Some(file_idx) = self.file_list_state.selected() {
-            if let Some((file, _)) = self.files.get(file_idx) {
-                // Reset protocol state when loading a new image
-                self.preview_state.protocol_state = PreviewProtocolState::None;
+        if let Some(file) = self.preview_state.loaded_image.as_ref() {
+            self.preview_state.protocol_state = PreviewProtocolState::None;
 
-                // Get current index and increment
-                let current_idx = self
-                    .preview_state
-                    .loaded_image
-                    .as_ref()
-                    .map(|i| i.idx)
-                    .unwrap_or(0);
+            let next_idx = file.page_idx.saturating_add(1);
 
-                let next_idx = current_idx + 1;
-
-                let _ = self
-                    .preview_state
-                    .preview_tx
-                    .send(PreviewRequest::LoadFile {
-                        archive_path: file.archive_path.clone(),
-                        config: self.config.clone(),
-                        page_index: Some(next_idx),
-                    });
-            }
+            let _ = self
+                .preview_state
+                .preview_tx
+                .send(PreviewRequest::LoadFile {
+                    archive_path: file.archive_path.clone(),
+                    config: self.config.clone(),
+                    page_idx: Some(next_idx),
+                    file_idx: file.file_idx,
+                });
         }
     }
 
     // navigate to previous page in preview
     fn previous_preview_page(&mut self) {
-        if let Some(file_idx) = self.file_list_state.selected() {
-            if let Some((file, _)) = self.files.get(file_idx) {
-                // Reset protocol state when loading a new image
-                self.preview_state.protocol_state = PreviewProtocolState::None;
+        if let Some(file) = self.preview_state.loaded_image.as_ref() {
+            self.preview_state.protocol_state = PreviewProtocolState::None;
 
-                // Get current index and decrement
-                let current_idx = self
-                    .preview_state
-                    .loaded_image
-                    .as_ref()
-                    .map(|i| i.idx)
-                    .unwrap_or(0);
+            let prev_idx = file.page_idx.saturating_sub(1);
 
-                let prev_idx = current_idx.saturating_sub(1);
-
-                let _ = self
-                    .preview_state
-                    .preview_tx
-                    .send(PreviewRequest::LoadFile {
-                        archive_path: file.archive_path.clone(),
-                        config: self.config.clone(),
-                        page_index: Some(prev_idx),
-                    });
-            }
+            let _ = self
+                .preview_state
+                .preview_tx
+                .send(PreviewRequest::LoadFile {
+                    archive_path: file.archive_path.clone(),
+                    config: self.config.clone(),
+                    page_idx: Some(prev_idx),
+                    file_idx: file.file_idx,
+                });
         }
     }
 
+    // update picker and reload the current image
     pub fn update_picker(&mut self, new_picker: Picker) {
         self.preview_state.picker = new_picker;
         self.preview_state.protocol_state = PreviewProtocolState::None;
         if let Some(loaded_image) = self.preview_state.loaded_image.as_ref() {
-            let file = self
-                .files
-                .iter()
-                .any(|(f, _)| f.archive_path == loaded_image.archive_path);
-            if file {
-                let _ = self
-                    .preview_state
-                    .preview_tx
-                    .send(PreviewRequest::LoadFile {
-                        archive_path: loaded_image.archive_path.clone(),
-                        config: self.config.clone(),
-                        page_index: Some(loaded_image.idx),
-                    });
-            }
+            let _ = self
+                .preview_state
+                .preview_tx
+                .send(PreviewRequest::LoadFile {
+                    archive_path: loaded_image.archive_path.clone(),
+                    config: self.config.clone(),
+                    page_idx: Some(loaded_image.page_idx),
+                    file_idx: loaded_image.file_idx,
+                });
         }
     }
 
@@ -501,14 +478,16 @@ impl ConfigState {
     pub fn handle_event(&mut self, event: ConfigEvent) {
         match event {
             ConfigEvent::ImageLoaded {
-                idx,
+                file_idx,
+                page_idx,
                 total_pages,
                 image,
                 archive_path,
                 config,
             } => {
                 self.preview_state.loaded_image = Some(LoadedPreviewImage {
-                    idx,
+                    file_idx,
+                    page_idx,
                     total_pages,
                     archive_path,
                     width: image.width(),
@@ -991,7 +970,7 @@ impl<'a> Widget for PreviewWidget<'a> {
         base_button("load preview", self.state)
             .hint("[p]")
             .on_click(|| {
-                self.state.reload_preview();
+                self.state.load_preview();
             })
             .enabled((config_changed || file_changed) && !modal_open)
             .render(top_button_area, buf);
@@ -1015,7 +994,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
         base_button("random", self.state)
             .on_click(|| {
-                self.state.request_random_preview_for_selected();
+                self.state.request_random_preview_for_current();
             })
             .render(random_button_area, buf);
 
@@ -1039,7 +1018,7 @@ impl<'a> Widget for PreviewWidget<'a> {
 
             let page_info = format!(
                 "page {} of {}",
-                loaded_image.idx + 1,
+                loaded_image.page_idx + 1,
                 loaded_image.total_pages
             );
 
@@ -1091,14 +1070,16 @@ fn preview_worker(
                 PreviewRequest::LoadFile {
                     archive_path: path,
                     config,
-                    page_index,
+                    page_idx,
+                    file_idx,
                 } => {
-                    let result = load_and_process_preview(&path, &config, page_index);
+                    let result = load_and_process_preview(&path, &config, page_idx);
 
                     match result {
                         Ok((image, idx, total_pages)) => {
                             let _ = tx.send(crate::Event::Config(ConfigEvent::ImageLoaded {
-                                idx,
+                                file_idx,
+                                page_idx: idx,
                                 total_pages,
                                 archive_path: path,
                                 image,
