@@ -695,8 +695,7 @@ impl<'a> SettingsWidget<'a> {
             Constraint::Length(label.len() as u16 + 1),
             Constraint::Length(key.len() as u16 + 1),
         ])
-        .flex(Flex::Start)
-        .spacing(1)
+        .flex(Flex::SpaceBetween)
         .areas(header_area);
 
         Paragraph::new(label).style(style).render(text_area, buf);
@@ -705,13 +704,8 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.state.theme.accent))
             .render(shortcut_area, buf);
 
-        let [minus_area, value_area, plus_area] = Layout::horizontal([
-            Constraint::Length(5), // [-] button
-            Constraint::Length(5), // value
-            Constraint::Length(5), // [+] button
-        ])
-        .spacing(1)
-        .areas(buttons_area);
+        let [minus_area, value_area, plus_area] =
+            Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(buttons_area);
 
         // Render [-] button
         base_button("-", self.state)
@@ -869,7 +863,8 @@ impl<'a> Widget for SettingsWidget<'a> {
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] =
             Layout::horizontal([Constraint::Ratio(1, 3); 3])
-                .spacing(1)
+                .flex(Flex::SpaceBetween)
+                .spacing(2)
                 .areas(buttons_area);
 
         self.render_adjustable_setting(
