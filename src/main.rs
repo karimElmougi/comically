@@ -31,32 +31,47 @@ use crate::tui::config::ConfigEvent;
 struct Args {
     /// Optional directory to scan for manga files (defaults to current directory)
     directory: Option<PathBuf>,
+    
+    /// Enable debug logging to file
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let log_path = "comically.log";
-    let log_file = std::fs::File::create(log_path).unwrap();
+    // Only initialize file logging if --debug flag is set
+    if args.debug {
+        let log_path = "comically.log";
+        let log_file = std::fs::File::create(log_path)
+            .context("Failed to create debug log file")?;
 
-    // set the log level to info, if not set
-    std::env::set_var(
-        "RUST_LOG",
-        std::env::var("RUST_LOG").unwrap_or_else(|_| format!("{}=info", env!("CARGO_CRATE_NAME"))),
-    );
+        // Set log level to debug when --debug is used
+        std::env::set_var(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME"))),
+        );
 
-    let file_subscriber = tracing_subscriber::fmt::layer()
-        .with_file(true)
-        .with_line_number(true)
-        .with_writer(log_file)
-        .with_target(false)
-        .with_ansi(false)
-        .with_filter(tracing_subscriber::filter::EnvFilter::from_default_env());
+        let file_subscriber = tracing_subscriber::fmt::layer()
+            .with_file(true)
+            .with_line_number(true)
+            .with_writer(log_file)
+            .with_target(false)
+            .with_ansi(false)
+            .with_filter(tracing_subscriber::filter::EnvFilter::from_default_env());
 
-    tracing_subscriber::registry()
-        .with(file_subscriber)
-        .with(tracing_error::ErrorLayer::default())
-        .init();
+        tracing_subscriber::registry()
+            .with(file_subscriber)
+            .with(tracing_error::ErrorLayer::default())
+            .init();
+        
+        log::info!("Debug logging enabled - writing to {}", log_path);
+    } else {
+        // Initialize a no-op subscriber when debug is not enabled
+        tracing_subscriber::registry()
+            .with(tracing_error::ErrorLayer::default())
+            .init();
+    }
 
     if cfg!(target_os = "macos") {
         let additional_paths = [
