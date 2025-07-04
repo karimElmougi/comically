@@ -12,10 +12,13 @@ comically is a blazing fast optimizer built specifically for e-ink displays. wat
 
 ![preview](assets/preview.png)
 
-**built for e-ink:**
-- deep blacks and proper contrast
-- perfectly sized for your device 
-- smaller files so you can read more
+**features:**
+- live image previews in your terminal
+- batch process entire series
+- smart page splitting for double spreads
+- auto contrast for e-ink displays
+- perfectly sized for your device
+- smaller files, better performance
 
 **actually fast:**
 > tested with spread splitting & rotation enabled on kindle pw 11 (1236x1648)
@@ -24,13 +27,7 @@ comically is a blazing fast optimizer built specifically for e-ink displays. wat
 |--------|---------|-------|------|------|-----------|
 | dorohedoro | 23 | 4,647 | 2.5gb | 45s | 105s |
 | alice in borderland | 9 | 3,064 | 4.5gb | 55s | 77s |
-| naruto | 72 | 12,849 | 17.5gb | 240s | 334s |
-
-**features:**
-- see image previews in your terminal while you tweak settings
-- batch process entire series
-- smart page splitting for double spreads
-- auto contrast 
+| naruto | 72 | 12,849 | 17.5gb | 240s | 334s | 
 
 ## prerequisites
 
