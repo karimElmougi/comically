@@ -310,14 +310,14 @@ fn process_events(
                 config,
                 output_dir,
             } => {
-                if config.output_format == OutputFormat::Mobi {
-                    if !crate::mobi_converter::is_kindlegen_available() {
-                        return Err(ErrorInfo::error(
+                if config.output_format == OutputFormat::Mobi
+                    && !crate::mobi_converter::is_kindlegen_available()
+                {
+                    return Err(ErrorInfo::error(
                             "KindleGen not installed",
                             "Please install KindleGen and make sure it's in your PATH",
                             Some("Install Kindle Previewer(3) from Amazon\n\nhttps://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011".into()),
                         ));
-                    }
                 }
 
                 let _ = config.save();

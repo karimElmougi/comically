@@ -24,7 +24,7 @@ impl ErrorInfo {
         Self {
             title: title.into(),
             message: vec![message.into()],
-            hint: hint.map(|h| h.into()),
+            hint,
         }
     }
 
