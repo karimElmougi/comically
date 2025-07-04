@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::time::Duration;
 
 use imageproc::image::{self, GrayImage};
-use ratatui::layout::{Constraint, Flex, Layout};
+use ratatui::layout::Constraint;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -113,7 +113,7 @@ pub fn show_splash_screen(
     Ok(())
 }
 
-const ASCII_ART: &str = r#"
+const TITLE_SMALL: &str = r#"
 ██████  ██████  ███    ███  ██  ██████   █████   ██       ██       ██    ██
 ██      ██  ██  ████  ████  ██  ██      ██   ██  ██       ██        ██  ██
 ██      ██  ██  ██ ████ ██  ██  ██      ███████  ██       ██         ████
@@ -121,28 +121,45 @@ const ASCII_ART: &str = r#"
 ██████  ██████  ██      ██  ██  ██████  ██   ██  ███████  ███████     ██
 "#;
 
-fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
-    let [area] = Layout::horizontal([horizontal])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
-    area
+const TITLE_LARGE: &str = r#"
+████████████    ████████████    ██████        ██████    ████    ████████████    ████████████    ████          ████        ████        ████
+████████████    ████████████    ██████        ██████    ████    ████████████    ████████████    ████          ████        ████        ████
+████            ████    ████    ████████    ████████    ████    ████            ████    ████    ████          ████          ████    ████
+████            ████    ████    ████████    ████████    ████    ████            ████    ████    ████          ████          ████    ████
+████            ████    ████    ████  ████████  ████    ████    ████            ████████████    ████          ████            ████████
+████            ████    ████    ████  ████████  ████    ████    ████            ████████████    ████          ████            ████████
+████            ████    ████    ████    ████    ████    ████    ████            ████    ████    ████          ████              ████
+████            ████    ████    ████    ████    ████    ████    ████            ████    ████    ████          ████              ████
+████████████    ████████████    ████            ████    ████    ████████████    ████    ████    ██████████    ██████████        ████
+████████████    ████████████    ████            ████    ████    ████████████    ████    ████    ██████████    ██████████        ████
+"#;
+
+fn max_line_width(text: &str) -> u16 {
+    text.trim()
+        .lines()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0) as u16
 }
 
 fn render_ascii(frame: &mut Frame, theme: Theme) {
     let area = frame.area();
 
-    let height = ASCII_ART.trim().lines().count() as u16;
-    let width = ASCII_ART
-        .trim()
-        .lines()
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(0) as u16;
+    let large_width = max_line_width(TITLE_LARGE);
 
-    let centered_area = center(area, Constraint::Length(width), Constraint::Length(height));
+    let title = if area.width < large_width {
+        TITLE_SMALL
+    } else {
+        TITLE_LARGE
+    };
 
-    let ascii_paragraph = Paragraph::new(ASCII_ART.trim()).style(
+    let height = title.trim().lines().count() as u16;
+    let width = max_line_width(title);
+
+    let centered_area =
+        super::utils::center(area, Constraint::Length(width), Constraint::Length(height));
+
+    let ascii_paragraph = Paragraph::new(title.trim()).style(
         Style::default()
             .fg(theme.secondary)
             .add_modifier(Modifier::BOLD),

@@ -4,6 +4,7 @@ pub mod error;
 pub mod progress;
 pub mod splash;
 pub mod theme;
+pub mod utils;
 
 use ratatui::{
     backend::Backend,
