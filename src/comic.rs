@@ -10,19 +10,17 @@ use crate::Event;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ComicStage {
-    Extract,
     Process,
-    Epub,
-    Mobi,
+    Package, // Building the output format (EPUB/CBZ)
+    Convert, // Converting EPUB to MOBI (only for MOBI output)
 }
 
 impl std::fmt::Display for ComicStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComicStage::Extract => write!(f, "extract"),
             ComicStage::Process => write!(f, "process"),
-            ComicStage::Epub => write!(f, "epub"),
-            ComicStage::Mobi => write!(f, "mobi"),
+            ComicStage::Package => write!(f, "package"),
+            ComicStage::Convert => write!(f, "convert"),
         }
     }
 }
@@ -31,22 +29,19 @@ impl OutputFormat {
     pub fn stage_weight(&self, stage: ComicStage) -> f64 {
         match (self, stage) {
             // MOBI format weights
-            (OutputFormat::Mobi, ComicStage::Extract) => 0.05,
             (OutputFormat::Mobi, ComicStage::Process) => 0.5,
-            (OutputFormat::Mobi, ComicStage::Epub) => 0.05,
-            (OutputFormat::Mobi, ComicStage::Mobi) => 0.4,
-            
+            (OutputFormat::Mobi, ComicStage::Package) => 0.05, // EPUB building
+            (OutputFormat::Mobi, ComicStage::Convert) => 0.4,  // EPUB to MOBI conversion
+
             // EPUB format weights
-            (OutputFormat::Epub, ComicStage::Extract) => 0.1,
             (OutputFormat::Epub, ComicStage::Process) => 0.8,
-            (OutputFormat::Epub, ComicStage::Epub) => 0.1,
-            (OutputFormat::Epub, ComicStage::Mobi) => 0.0, // Not used
-            
+            (OutputFormat::Epub, ComicStage::Package) => 0.1, // EPUB building
+            (OutputFormat::Epub, ComicStage::Convert) => 0.0, // Not used
+
             // CBZ format weights
-            (OutputFormat::Cbz, ComicStage::Extract) => 0.1,
-            (OutputFormat::Cbz, ComicStage::Process) => 0.9,
-            (OutputFormat::Cbz, ComicStage::Epub) => 0.0, // CBZ creation is tracked under Epub stage
-            (OutputFormat::Cbz, ComicStage::Mobi) => 0.0, // Not used
+            (OutputFormat::Cbz, ComicStage::Process) => 0.85,
+            (OutputFormat::Cbz, ComicStage::Package) => 0.05, // CBZ building
+            (OutputFormat::Cbz, ComicStage::Convert) => 0.0,  // Not used
         }
     }
 }
@@ -250,19 +245,6 @@ impl Comic {
         self.epub_dir().join("book.epub")
     }
 
-    pub fn output_mobi(&self) -> PathBuf {
-        let mut path = self.input.clone();
-        if let Some(prefix) = &self.prefix {
-            path.set_file_name(format!(
-                "{}_{}",
-                prefix,
-                path.file_stem().unwrap().to_string_lossy()
-            ));
-        }
-        path.set_extension("mobi");
-        path
-    }
-
     pub fn output_path(&self) -> PathBuf {
         let mut path = self.input.clone();
         if let Some(prefix) = &self.prefix {
@@ -272,13 +254,13 @@ impl Comic {
                 path.file_stem().unwrap().to_string_lossy()
             ));
         }
-        
+
         let extension = match self.config.output_format {
             OutputFormat::Mobi => "mobi",
             OutputFormat::Epub => "epub",
             OutputFormat::Cbz => "cbz",
         };
-        
+
         path.set_extension(extension);
         path
     }

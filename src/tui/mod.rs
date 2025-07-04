@@ -187,22 +187,14 @@ fn process_events(
                 prefix,
             } => {
                 let _ = config.save();
-                app.state = AppState::Processing(progress::ProgressState::new(app.theme, config.output_format));
+                app.state = AppState::Processing(progress::ProgressState::new(
+                    app.theme,
+                    config.output_format,
+                ));
 
-                let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<Comic>();
-
-                let event_tx_clone = event_tx.clone();
-                let kindlegen_tx_clone = kindlegen_tx.clone();
-                thread::spawn(move || {
-                    process_files(files, config, prefix, event_tx_clone, kindlegen_tx_clone);
-                });
-
-                let event_tx_clone = event_tx.clone();
-                thread::spawn(move || {
-                    poll_kindlegen(kindlegen_rx);
-                    event_tx_clone
-                        .send(Event::Progress(ProgressEvent::ProcessingComplete))
-                        .unwrap();
+                let event_tx = event_tx.clone();
+                rayon::spawn(move || {
+                    process_files(files, config, prefix, event_tx);
                 });
             }
         }

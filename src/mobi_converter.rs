@@ -30,7 +30,7 @@ pub fn create_mobi(comic: &Comic) -> Result<SpawnedKindleGen> {
     let spawned = SpawnedKindleGen {
         child,
         mobi_file: comic.epub_file().with_extension("mobi"),
-        output_mobi: comic.output_mobi(),
+        output_mobi: comic.output_path(),
     };
 
     Ok(spawned)

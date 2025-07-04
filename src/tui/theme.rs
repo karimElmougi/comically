@@ -34,7 +34,6 @@ pub struct Theme {
 
 #[derive(Debug, Clone, Copy)]
 pub struct StageColors {
-    pub extract: Color,
     pub process: Color,
     pub mobi: Color,
     pub epub: Color,
@@ -60,7 +59,6 @@ impl Theme {
             gauge_label: palette::tailwind::SLATE.c200,
             muted: palette::tailwind::SLATE.c600,
             stage_colors: StageColors {
-                extract: palette::tailwind::BLUE.c700,
                 process: palette::tailwind::PURPLE.c700,
                 mobi: palette::tailwind::PINK.c700,
                 epub: palette::tailwind::EMERALD.c700,
@@ -88,7 +86,6 @@ impl Theme {
             gauge_label: palette::tailwind::STONE.c700,
             muted: palette::tailwind::STONE.c300,
             stage_colors: StageColors {
-                extract: palette::tailwind::BLUE.c300,
                 process: palette::tailwind::PURPLE.c300,
                 mobi: palette::tailwind::PINK.c300,
                 epub: palette::tailwind::EMERALD.c300,

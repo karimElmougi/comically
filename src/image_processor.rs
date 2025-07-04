@@ -51,7 +51,7 @@ pub fn process_archive_images(
                     ));
                     match save_image(&img, &path, config.compression_quality) {
                         Ok(_) => {
-                            log::info!("Saved image: {}", path.display());
+                            log::debug!("Saved image: {}", path.display());
                             Some(ProcessedImage {
                                 path,
                                 dimensions: img.dimensions(),

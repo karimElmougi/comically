@@ -477,20 +477,12 @@ fn draw_footer(buf: &mut Buffer, state: &ProgressState, area: Rect, theme: &Them
 fn draw_stage_legend(buf: &mut Buffer, area: Rect, theme: &Theme, output_format: OutputFormat) {
     let stages = match output_format {
         OutputFormat::Mobi => vec![
-            ComicStage::Extract,
             ComicStage::Process,
-            ComicStage::Epub,
-            ComicStage::Mobi,
+            ComicStage::Package,
+            ComicStage::Convert,
         ],
-        OutputFormat::Epub => vec![
-            ComicStage::Extract,
-            ComicStage::Process,
-            ComicStage::Epub,
-        ],
-        OutputFormat::Cbz => vec![
-            ComicStage::Extract,
-            ComicStage::Process,
-        ],
+        OutputFormat::Epub => vec![ComicStage::Process, ComicStage::Package],
+        OutputFormat::Cbz => vec![ComicStage::Process, ComicStage::Package],
     };
 
     let constraints = vec![Constraint::Length(16); stages.len()];
@@ -517,10 +509,9 @@ fn draw_stage_legend(buf: &mut Buffer, area: Rect, theme: &Theme, output_format:
 
 fn stage_color(stage: ComicStage, theme: &Theme) -> Color {
     match stage {
-        ComicStage::Extract => theme.stage_colors.extract,
         ComicStage::Process => theme.stage_colors.process,
-        ComicStage::Mobi => theme.stage_colors.mobi,
-        ComicStage::Epub => theme.stage_colors.epub,
+        ComicStage::Package => theme.stage_colors.epub,
+        ComicStage::Convert => theme.stage_colors.mobi,
     }
 }
 
