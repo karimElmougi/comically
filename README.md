@@ -10,6 +10,8 @@ tired of manga looking terrible on your kindle? waiting forever for conversions?
 
 comically optimizes manga/comics specifically for e-ink displays. live preview in the terminal shows exactly how it'll look on your device.
 
+![preview](assets/preview.png)
+
 **built for e-ink:**
 - deep blacks and proper contrast (not washed out lcd optimization)
 - perfectly sized for your device (clipping excess margin, smaller files)
@@ -65,8 +67,3 @@ remarkable - 2, ipad mini/pro, onyx boox, pocketbook era
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
 
-## pro tips
-
-- gamma 1.8 = instant kindle optimization  
-- most scans need brightness -15
-- scribe users: you're using all 2480 pixels now
