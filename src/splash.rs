@@ -42,7 +42,6 @@ impl SplashScreen {
         }
     }
 
-    /// Calculate brightness based on current animation step
     #[inline(always)]
     fn get_brightness(&self) -> f32 {
         let progress = self.current_step as f32 / self.total_steps as f32;
@@ -140,7 +139,6 @@ fn render_ascii(frame: &mut Frame, is_dark: bool) {
 
     let centered_area = center(area, Constraint::Length(width), Constraint::Length(height));
 
-    // Create the paragraph
     let ascii_paragraph = Paragraph::new(ASCII_ART.trim()).style(
         Style::default()
             .fg(if is_dark {
