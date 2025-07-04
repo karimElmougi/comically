@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
         ratatui::crossterm::terminal::EnterAlternateScreen
     )?;
 
-    splash::show_splash_screen(&mut terminal, theme.is_dark())?;
+    splash::show_splash_screen(&mut terminal, theme)?;
 
     let dimensions = terminal.size()?;
 

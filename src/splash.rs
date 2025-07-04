@@ -8,7 +8,7 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use crate::tui::Theme;
 
-const SPLASH_IMAGE: &[u8] = include_bytes!("../assets/goku-splash-downscaled.png");
+const SPLASH_IMAGE: &[u8] = include_bytes!("../assets/goku-splash-processed.jpg");
 
 pub struct SplashScreen {
     image: GrayImage,
@@ -23,7 +23,10 @@ impl SplashScreen {
             .with_guessed_format()?
             .decode()?;
 
-        let image = img.to_luma8();
+        let mut image = img.to_luma8();
+        if is_dark {
+            image::imageops::colorops::invert(&mut image);
+        }
 
         Ok(Self {
             image,
@@ -86,9 +89,9 @@ impl Widget for &SplashScreen {
 
 pub fn show_splash_screen(
     terminal: &mut Terminal<impl Backend>,
-    is_dark: bool,
+    theme: Theme,
 ) -> anyhow::Result<()> {
-    let mut splash = SplashScreen::new(10, is_dark)?;
+    let mut splash = SplashScreen::new(10, theme.is_dark())?;
 
     while !splash.is_complete() {
         terminal.draw(|frame| {
@@ -102,7 +105,7 @@ pub fn show_splash_screen(
 
     terminal.draw(|frame| {
         frame.render_widget(&splash, frame.area());
-        render_ascii(frame, is_dark);
+        render_ascii(frame, theme);
     })?;
 
     std::thread::sleep(Duration::from_millis(1000));
@@ -126,7 +129,7 @@ fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
     area
 }
 
-fn render_ascii(frame: &mut Frame, is_dark: bool) {
+fn render_ascii(frame: &mut Frame, theme: Theme) {
     let area = frame.area();
 
     let height = ASCII_ART.trim().lines().count() as u16;
@@ -141,13 +144,39 @@ fn render_ascii(frame: &mut Frame, is_dark: bool) {
 
     let ascii_paragraph = Paragraph::new(ASCII_ART.trim()).style(
         Style::default()
-            .fg(if is_dark {
-                Theme::dark().primary
-            } else {
-                Theme::light().primary
-            })
+            .fg(theme.secondary)
             .add_modifier(Modifier::BOLD),
     );
 
     frame.render_widget(ascii_paragraph, centered_area);
+}
+
+#[test]
+#[ignore]
+fn test_make_splash() {
+    let img = imageproc::image::open("assets/goku-splash-original.jpg").unwrap();
+    let img = img.to_luma8();
+
+    let threshold_value = 155;
+
+    let img = imageproc::contrast::threshold(
+        &img,
+        threshold_value,
+        imageproc::contrast::ThresholdType::Binary,
+    );
+
+    let (width, height) = img.dimensions();
+    let factor = 0.2;
+    let width = (width as f32 * factor) as u32;
+    let height = (height as f32 * factor) as u32;
+
+    let img = image::imageops::resize(
+        &img,
+        width,
+        height,
+        imageproc::image::imageops::FilterType::Lanczos3,
+    );
+
+    let mut output_buffer = std::fs::File::create("assets/goku-splash-processed.jpg").unwrap();
+    crate::image_processor::compress_to_jpeg(&img, &mut output_buffer, 90).unwrap();
 }
