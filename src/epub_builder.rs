@@ -41,13 +41,7 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     create_toc_ncx(comic, &oebps_dir, &cover_html_path, &html_files)?;
 
     // Create content.opf
-    create_content_opf(
-        comic,
-        &oebps_dir,
-        &cover_html_path,
-        &html_files,
-        &image_map,
-    )?;
+    create_content_opf(comic, &oebps_dir, &cover_html_path, &html_files, &image_map)?;
 
     // Package as EPUB
     let epub_path = comic.epub_file();
@@ -311,6 +305,8 @@ fn create_content_opf(
         right_to_left = !right_to_left;
     }
 
+    let (width, height) = c.config.device_dimensions();
+
     // Create the OPF content with page-progression-direction
     let opf_content = format!(
         r###"<?xml version="1.0" encoding="UTF-8"?>
@@ -338,8 +334,6 @@ fn create_content_opf(
           <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
         title = &c.title,
-        width = c.config.device_dimensions.0,
-        height = c.config.device_dimensions.1,
         writing_mode = if c.config.right_to_left {
             "horizontal-rl"
         } else {

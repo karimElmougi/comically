@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{KeyCode, KeyEvent},
@@ -6,10 +8,13 @@ use ratatui::{
     widgets::{Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
-use crate::tui::{
-    button::{Button, ButtonVariant},
-    config::{ConfigState, ModalState},
-    utils::popup_block,
+use crate::{
+    comic::DevicePreset,
+    tui::{
+        button::{Button, ButtonVariant},
+        config::{ConfigState, ModalState},
+        utils::popup_block,
+    },
 };
 
 pub struct DeviceSelectorState {
@@ -18,10 +23,10 @@ pub struct DeviceSelectorState {
 }
 
 impl DeviceSelectorState {
-    pub fn new(current_dimensions: (u32, u32)) -> Self {
-        let selected_index = DEVICE_PRESETS
-            .iter()
-            .position(|preset| preset.dimensions == current_dimensions);
+    pub fn new(current_preset: DevicePreset) -> Self {
+        let selected_index = DEVICE_PRESETS.iter().position(|preset| {
+            preset.name == current_preset.name && preset.dimensions == current_preset.dimensions
+        });
 
         let mut list_state = ListState::default();
         if let Some(idx) = selected_index {
@@ -34,10 +39,10 @@ impl DeviceSelectorState {
         }
     }
 
-    pub fn confirm_selection(&mut self) -> Option<(u32, u32)> {
+    pub fn confirm_selection(&mut self) -> Option<&DevicePreset> {
         if let Some(selected) = self.list_state.selected() {
             self.selected_index = Some(selected);
-            Some(DEVICE_PRESETS[selected].dimensions)
+            Some(&DEVICE_PRESETS[selected])
         } else {
             None
         }
@@ -59,10 +64,10 @@ impl DeviceSelectorState {
         }
     }
 
-    // returns dimensions if they were selected
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<(u32, u32)> {
+    // returns device preset if it was selected
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<DevicePreset> {
         match key.code {
-            KeyCode::Enter => return self.confirm_selection(),
+            KeyCode::Enter => return self.confirm_selection().cloned(),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.select_previous();
             }
@@ -77,83 +82,78 @@ impl DeviceSelectorState {
 
 pub const DEVICE_PRESETS: &[DevicePreset] = &[
     DevicePreset {
-        name: "Kindle PW 11",
+        name: Cow::Borrowed("Kindle PW 11"),
         dimensions: (1236, 1648),
     },
     DevicePreset {
-        name: "Kindle PW 12",
+        name: Cow::Borrowed("Kindle PW 12"),
         dimensions: (1264, 1680),
     },
     DevicePreset {
-        name: "Kindle Oasis",
+        name: Cow::Borrowed("Kindle Oasis"),
         dimensions: (1264, 1680),
     },
     DevicePreset {
-        name: "Kindle Scribe",
+        name: Cow::Borrowed("Kindle Scribe"),
         dimensions: (1860, 2480),
     },
     DevicePreset {
-        name: "Kindle Basic",
+        name: Cow::Borrowed("Kindle Basic"),
         dimensions: (800, 600),
     },
     DevicePreset {
-        name: "Kindle 11",
+        name: Cow::Borrowed("Kindle 11"),
         dimensions: (1072, 1448),
     },
     DevicePreset {
-        name: "Kobo Clara HD",
+        name: Cow::Borrowed("Kobo Clara HD"),
         dimensions: (1072, 1448),
     },
     DevicePreset {
-        name: "Kobo Clara 2E",
+        name: Cow::Borrowed("Kobo Clara 2E"),
         dimensions: (1072, 1448),
     },
     DevicePreset {
-        name: "Kobo Libra 2",
+        name: Cow::Borrowed("Kobo Libra 2"),
         dimensions: (1264, 1680),
     },
     DevicePreset {
-        name: "Kobo Sage",
+        name: Cow::Borrowed("Kobo Sage"),
         dimensions: (1440, 1920),
     },
     DevicePreset {
-        name: "Kobo Elipsa",
+        name: Cow::Borrowed("Kobo Elipsa"),
         dimensions: (1404, 1872),
     },
     DevicePreset {
-        name: "reMarkable 2",
+        name: Cow::Borrowed("reMarkable 2"),
         dimensions: (1404, 1872),
     },
     DevicePreset {
-        name: "iPad Mini",
+        name: Cow::Borrowed("iPad Mini"),
         dimensions: (1488, 2266),
     },
     DevicePreset {
-        name: "iPad 10.9",
+        name: Cow::Borrowed("iPad 10.9"),
         dimensions: (1640, 2360),
     },
     DevicePreset {
-        name: "iPad Pro 11",
+        name: Cow::Borrowed("iPad Pro 11"),
         dimensions: (1668, 2388),
     },
     DevicePreset {
-        name: "Onyx Boox Nova",
+        name: Cow::Borrowed("Onyx Boox Nova"),
         dimensions: (1200, 1600),
     },
     DevicePreset {
-        name: "Onyx Boox Note",
+        name: Cow::Borrowed("Onyx Boox Note"),
         dimensions: (1404, 1872),
     },
     DevicePreset {
-        name: "PocketBook Era",
+        name: Cow::Borrowed("PocketBook Era"),
         dimensions: (1200, 1600),
     },
 ];
-
-pub struct DevicePreset {
-    pub name: &'static str,
-    pub dimensions: (u32, u32),
-}
 
 pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut ConfigState) {
     let popup_width = 50.min(area.width * 3 / 4);
@@ -177,11 +177,13 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
         .areas(inner);
 
     // Render device list
-    let current_dims = state.config.device_dimensions;
+    let current_preset = &state.config.device;
     let items: Vec<ListItem> = DEVICE_PRESETS
         .iter()
         .map(|preset| {
-            let checkmark = if preset.dimensions == current_dims {
+            let checkmark = if preset.name == current_preset.name
+                && preset.dimensions == current_preset.dimensions
+            {
                 " ✓"
             } else {
                 "  "
@@ -212,8 +214,8 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
         .hint("[enter]")
         .on_click(|| {
             if let ModalState::DeviceSelector(selector_state) = &mut state.modal_state {
-                if let Some(dimensions) = selector_state.confirm_selection() {
-                    state.config.device_dimensions = dimensions;
+                if let Some(preset) = selector_state.confirm_selection() {
+                    state.config.device = preset.clone();
                 }
             }
             state.modal_state = ModalState::None;

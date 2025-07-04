@@ -103,13 +103,14 @@ fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
 where
     I: GenericImageView<Pixel = Luma<u8>> + Send + Sync,
 {
+    let target = c.device_dimensions();
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
 
     match c.split {
         SplitStrategy::None => {
             // Just resize, no splitting or rotation
-            vec![resize_image(img, c.device_dimensions)]
+            vec![resize_image(img, target)]
         }
         SplitStrategy::Split => {
             if is_double_page {
@@ -117,8 +118,8 @@ where
                 let (left, right) = split_double_pages(img);
 
                 let (left_resized, right_resized) = rayon::join(
-                    || resize_image(&*left, c.device_dimensions),
-                    || resize_image(&*right, c.device_dimensions),
+                    || resize_image(&*left, target),
+                    || resize_image(&*right, target),
                 );
 
                 // Determine order based on right_to_left setting
@@ -130,15 +131,15 @@ where
 
                 vec![first, second]
             } else {
-                vec![resize_image(img, c.device_dimensions)]
+                vec![resize_image(img, target)]
             }
         }
         SplitStrategy::Rotate => {
             if is_double_page {
                 let rotated = rotate_image_90(img, c.right_to_left);
-                vec![resize_image(&rotated, c.device_dimensions)]
+                vec![resize_image(&rotated, target)]
             } else {
-                vec![resize_image(img, c.device_dimensions)]
+                vec![resize_image(img, target)]
             }
         }
         SplitStrategy::RotateAndSplit => {
@@ -152,13 +153,13 @@ where
                 rayon::scope(|s| {
                     s.spawn(|_| {
                         let rotated = rotate_image_90(img, c.right_to_left);
-                        rotated_resized = Some(resize_image(&rotated, c.device_dimensions));
+                        rotated_resized = Some(resize_image(&rotated, target));
                     });
                     s.spawn(|_| {
-                        left_resized = Some(resize_image(&*left, c.device_dimensions));
+                        left_resized = Some(resize_image(&*left, target));
                     });
                     s.spawn(|_| {
-                        right_resized = Some(resize_image(&*right, c.device_dimensions));
+                        right_resized = Some(resize_image(&*right, target));
                     });
                 });
 
@@ -174,7 +175,7 @@ where
 
                 vec![rotated_resized, first, second]
             } else {
-                vec![resize_image(img, c.device_dimensions)]
+                vec![resize_image(img, target)]
             }
         }
     }
@@ -369,7 +370,12 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
             let ny = y as i32 + dy;
 
             // Make sure coordinates are valid
-            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 && img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD {
+            if nx >= 0
+                && ny >= 0
+                && nx < width as i32
+                && ny < height as i32
+                && img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD
+            {
                 dark_neighbors += 1;
 
                 // Early return if we have enough neighbors

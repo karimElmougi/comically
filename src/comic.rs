@@ -1,10 +1,12 @@
-use crate::Event;
 use std::{
+    borrow::Cow,
     fs,
     path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
 };
+
+use crate::Event;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ComicStage {
@@ -65,9 +67,9 @@ pub enum SplitStrategy {
     RotateAndSplit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComicConfig {
-    pub device_dimensions: (u32, u32),
+    pub device: DevicePreset,
     pub right_to_left: bool,
     pub split: SplitStrategy,
     pub auto_crop: bool,
@@ -77,10 +79,19 @@ pub struct ComicConfig {
     pub gamma: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DevicePreset {
+    pub name: Cow<'static, str>,
+    pub dimensions: (u32, u32),
+}
+
 impl Default for ComicConfig {
     fn default() -> Self {
         Self {
-            device_dimensions: (1236, 1648),
+            device: DevicePreset {
+                name: Cow::Borrowed("Kindle PW 11"),
+                dimensions: (1236, 1648),
+            },
             right_to_left: true,
             split: SplitStrategy::RotateAndSplit,
             auto_crop: true,
@@ -108,6 +119,10 @@ impl ComicConfig {
         serde_json::to_string_pretty(self)
             .ok()
             .and_then(|json| fs::write(&config_path, json).ok())
+    }
+
+    pub fn device_dimensions(&self) -> (u32, u32) {
+        self.device.dimensions
     }
 }
 

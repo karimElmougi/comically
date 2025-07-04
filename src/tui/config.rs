@@ -1,4 +1,4 @@
-mod device_selector;
+pub mod device_selector;
 
 use imageproc::image::DynamicImage;
 use ratatui::{
@@ -174,9 +174,9 @@ impl ConfigState {
                     return;
                 }
 
-                if let Some(dimensions) = selector.handle_key(key) {
+                if let Some(preset) = selector.handle_key(key) {
                     self.modal_state = ModalState::None;
-                    self.config.device_dimensions = dimensions;
+                    self.config.device = preset;
                     return;
                 }
             }
@@ -242,7 +242,7 @@ impl ConfigState {
             }
             KeyCode::Char('d') => {
                 self.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
-                    self.config.device_dimensions,
+                    self.config.device.clone(),
                 ));
             }
             KeyCode::Char('p') => {
@@ -280,7 +280,7 @@ impl ConfigState {
         if !selected_paths.is_empty() {
             let _ = self.event_tx.send(crate::Event::StartProcessing {
                 files: selected_paths,
-                config: self.config,
+                config: self.config.clone(),
                 prefix: None,
             });
         }
@@ -333,7 +333,7 @@ impl ConfigState {
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
-                        config: self.config,
+                        config: self.config.clone(),
                         page_index: Some(idx),
                     });
             }
@@ -352,7 +352,7 @@ impl ConfigState {
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
-                        config: self.config,
+                        config: self.config.clone(),
                         page_index: None,
                     });
             }
@@ -381,7 +381,7 @@ impl ConfigState {
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
-                        config: self.config,
+                        config: self.config.clone(),
                         page_index: Some(next_idx),
                     });
             }
@@ -410,7 +410,7 @@ impl ConfigState {
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
                         archive_path: file.archive_path.clone(),
-                        config: self.config,
+                        config: self.config.clone(),
                         page_index: Some(prev_idx),
                     });
             }
@@ -431,7 +431,7 @@ impl ConfigState {
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
                         archive_path: loaded_image.archive_path.clone(),
-                        config: self.config,
+                        config: self.config.clone(),
                         page_index: Some(loaded_image.idx),
                     });
             }
@@ -715,7 +715,6 @@ impl<'a> SettingsWidget<'a> {
             .alignment(Alignment::Center)
             .render(value_layout, buf);
 
-        // Render [+] button
         base_button("+", self.state)
             .on_click(|| {
                 on_select(self.state);
@@ -725,37 +724,21 @@ impl<'a> SettingsWidget<'a> {
     }
 
     fn render_device_selector_button(&mut self, area: Rect, buf: &mut Buffer) {
-        let [label_area, button_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
-
-        let [text_area, key_area] =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(4)]).areas(label_area);
-
-        Paragraph::new("dimensions")
-            .style(Style::default().fg(self.state.theme.content))
-            .render(text_area, buf);
-
-        Paragraph::new(" [d]")
-            .style(Style::default().fg(self.state.theme.accent))
-            .render(key_area, buf);
-
-        let current_dims = self.state.config.device_dimensions;
-        let button_text = device_selector::DEVICE_PRESETS
-            .iter()
-            .find(|preset| preset.dimensions == current_dims)
-            .map(|preset| preset.name)
-            .map(|name| format!("{} ({}x{})", name, current_dims.0, current_dims.1))
-            .unwrap_or_else(|| format!("{}x{}", current_dims.0, current_dims.1));
+        let current_preset = &self.state.config.device;
+        let (width, height) = current_preset.dimensions;
+        let button_text = format!("{} ({}x{})", current_preset.name, width, height);
 
         base_button(button_text, self.state)
             .on_click(|| {
                 // make sure the mouse click is not used in the popup layer
                 self.state.last_mouse_click = None;
                 self.state.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
-                    self.state.config.device_dimensions,
+                    self.state.config.device.clone(),
                 ));
             })
-            .render(button_area, buf);
+            .label("device")
+            .hint("[d]")
+            .render(area, buf);
     }
 }
 
@@ -776,7 +759,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             .spacing(1)
             .areas(padding(inner, Constraint::Length(1), Side::Top));
 
-        // Create a 2x2 grid manually for toggles
         let [row1, row2] = Layout::vertical([Constraint::Length(4), Constraint::Length(4)])
             .spacing(1)
             .areas(toggles_area);

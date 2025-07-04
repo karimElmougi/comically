@@ -42,7 +42,7 @@ pub fn process_files(
                 file.clone(),
                 prefix.as_deref(),
                 title,
-                config,
+                config.clone(),
                 event_tx.clone(),
             ) {
                 Ok(comic) => Some(comic),
@@ -69,7 +69,7 @@ pub fn process_files(
                 let start = comic.image_processing_start(num_images);
                 let images = image_processor::process_archive_images(
                     archive_iter,
-                    config,
+                    config.clone(),
                     comic.processed_dir(),
                     comic.id,
                     &comic.tx,
