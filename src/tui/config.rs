@@ -791,8 +791,8 @@ impl<'a> Widget for SettingsWidget<'a> {
         // Create layout for all settings sections
         let constraints = [
             Constraint::Length(1), // top spacer
-            Constraint::Min(9),    // Toggles ( reading direction, split double pages, auto crop)
-            Constraint::Min(5),    // Buttons (quality, brightness, contrast)
+            Constraint::Length(9), // Toggles ( reading direction, split double pages, auto crop)
+            Constraint::Length(4), // Buttons (quality, brightness, contrast)
             Constraint::Length(4), // Device selector button
             Constraint::Min(3),    // bottom button
         ];
@@ -867,13 +867,10 @@ impl<'a> Widget for SettingsWidget<'a> {
         .render(auto_crop_area, buf);
 
         // Create a horizontal layout for the three adjustable settings
-        let [quality_area, brightness_area, contrast_area] = Layout::horizontal([
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-        ])
-        .spacing(1)
-        .areas(buttons_area);
+        let [quality_area, brightness_area, contrast_area] =
+            Layout::horizontal([Constraint::Ratio(1, 3); 3])
+                .spacing(1)
+                .areas(buttons_area);
 
         self.render_adjustable_setting(
             "quality",
