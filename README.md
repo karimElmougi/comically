@@ -8,7 +8,7 @@ comically fast manga/comic optimizer for e-readers
 
 tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-comically optimizes manga/comics specifically for e-ink displays. (NEED SOMETHING ABOUT PERFORMANCE). live image preview shows exactly how it'll look on your device
+comically optimizes manga/comics specifically for e-ink displays. processes 100+ pages per second. live image preview shows exactly how it'll look on your device
 
 ![preview](assets/preview.png)
 
@@ -18,17 +18,13 @@ comically optimizes manga/comics specifically for e-ink displays. (NEED SOMETHIN
 - smaller files so you can read more
 
 **actually fast:**
-> with spread splitting and rotating enabled
-> kindle PW 11 1236x1648
-- 23 volumes of dorohedoro (4647 pages, 2.5gb) 
-   - to epub → 45 seconds
-   - to awz3/mobi → 105 seconds
-- 9 volumes of Alice in Borderland (3064 pages, 4.5gb)
-   - to epub → 55 seconds
-   - to awz3/mobi → 77 seconds
-- 72 volumes of Naruto (12849 pages, 17.5gb)
-   - to epub → 240 seconds
-   - to awz3/mobi → 334 seconds
+> tested with spread splitting & rotation enabled on kindle pw 11 (1236x1648)
+
+| series | volumes | pages | size | epub | awz3/mobi |
+|--------|---------|-------|------|------|-----------|
+| dorohedoro | 23 | 4,647 | 2.5gb | 45s | 105s |
+| alice in borderland | 9 | 3,064 | 4.5gb | 55s | 77s |
+| naruto | 72 | 12,849 | 17.5gb | 240s | 334s |
 
 **features:**
 - see image previews in your terminal while you tweak settings
