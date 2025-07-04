@@ -19,12 +19,16 @@ comically optimizes manga/comics specifically for e-ink displays. live preview i
 
 **actually fast:**
 > with spread splitting and rotating enabled
-- 23 volumes of dorohedoro (4647 images, 2.5gb) 
+> kindle PW 11 1236x1648
+- 23 volumes of dorohedoro (4647 pages, 2.5gb) 
    - to epub → 45 seconds
-   - to awz3/mobi -> 105 seconds
-- 9 volumes of Alice in Borderland (3064 images, 4.5gb)
-   - to epub -> 55 seconds
-   - to awz3/mobi -> 77 seconds
+   - to awz3/mobi → 105 seconds
+- 9 volumes of Alice in Borderland (3064 pages, 4.5gb)
+   - to epub → 55 seconds
+   - to awz3/mobi → 77 seconds
+- 72 volumes of Naruto (12849 pages, 17.5gb)
+   - to epub → 240 seconds
+   - to awz3/mobi → 334 seconds
 
 **features:**
 - see image previews in your terminal while you tweak settings
