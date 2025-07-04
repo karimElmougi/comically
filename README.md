@@ -8,14 +8,14 @@ comically fast manga/comic optimizer for e-readers
 
 tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-comically optimizes manga/comics specifically for e-ink displays. live preview in the terminal shows exactly how it'll look on your device.
+comically optimizes manga/comics specifically for e-ink displays. (NEED SOMETHING ABOUT PERFORMANCE). live image preview shows exactly how it'll look on your device
 
 ![preview](assets/preview.png)
 
 **built for e-ink:**
-- deep blacks and proper contrast (not washed out lcd optimization)
-- perfectly sized for your device (clipping excess margin, smaller files)
-- tiny files that load instantly 
+- deep blacks and proper contrast
+- perfectly sized for your device 
+- smaller files so you can read more
 
 **actually fast:**
 > with spread splitting and rotating enabled
@@ -35,7 +35,6 @@ comically optimizes manga/comics specifically for e-ink displays. live preview i
 - batch process entire series
 - smart page splitting for double spreads
 - auto contrast 
-- remembers your settings for next time
 
 ## prerequisites
 
