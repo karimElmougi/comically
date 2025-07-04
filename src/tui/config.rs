@@ -7,9 +7,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-    },
+    widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
     picker::Picker,
@@ -26,7 +24,7 @@ use crate::{
     tui::{
         button::{Button, ButtonVariant},
         config::device_selector::DeviceSelectorState,
-        utils::{padding, themed_block, Side},
+        utils::{padding, popup_block, themed_block, Side},
         Theme,
     },
 };
@@ -1266,14 +1264,6 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
     Clear.render(popup_area, buf);
 
     let lines = vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "processing settings",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(""),
         Line::from(vec![
             Span::styled(
                 "reading direction ",
@@ -1428,14 +1418,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
     let help_text = Text::from(lines);
     let help_paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(theme.content))
-        .block(
-            Block::default()
-                .title(Line::from(" help ").centered())
-                .borders(Borders::ALL)
-                .border_style(theme.accent)
-                .title(Line::from("[esc/h]").right_aligned())
-                .style(Style::default().bg(theme.background)),
-        )
+        .block(popup_block("help", theme).title(Line::from("[esc/h]").right_aligned()))
         .alignment(Alignment::Left);
 
     help_paragraph.render(popup_area, buf);

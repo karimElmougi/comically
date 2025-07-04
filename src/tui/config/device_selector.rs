@@ -3,14 +3,13 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
-    widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget,
-    },
+    widgets::{Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
 use crate::tui::{
     button::{Button, ButtonVariant},
     config::{ConfigState, ModalState},
+    utils::popup_block,
 };
 
 pub struct DeviceSelectorState {
@@ -167,11 +166,7 @@ pub fn render_device_selector_popup(area: Rect, buf: &mut Buffer, state: &mut Co
 
     Clear.render(popup_area, buf);
 
-    let block = Block::default()
-        .title(" select device ")
-        .borders(Borders::ALL)
-        .border_style(state.theme.accent)
-        .style(Style::default().bg(state.theme.background));
+    let block = popup_block("select device", &state.theme);
 
     let inner = block.inner(popup_area);
     block.render(popup_area, buf);

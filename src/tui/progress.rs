@@ -3,14 +3,18 @@ use ratatui::{
     crossterm::event::{self, KeyEvent, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Padding, Paragraph, StatefulWidget, Widget},
+    text::Span,
+    widgets::{Block, Gauge, Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::time::{Duration, Instant};
 
 use crate::{
     comic::{ComicStage, ComicStatus, ProgressEvent},
-    tui::{render_title, Theme},
+    tui::{
+        render_title,
+        utils::{themed_block, themed_block_title},
+        Theme,
+    },
 };
 
 pub struct ProgressState {
@@ -275,36 +279,23 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
             Style::default().fg(theme.gauge_label),
         ))
         .ratio(progress_ratio)
-        .block(
-            Block::new()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title("progress")
-                .title_alignment(Alignment::Center),
-        )
+        .block(themed_block(Some("progress"), theme))
         .render(progress, buf);
 }
 
 fn draw_main_content(buf: &mut Buffer, state: &mut ProgressState, area: Rect, theme: &Theme) {
-    let [names_area, status_area, scrollbar_area] = Layout::horizontal([
-        Constraint::Percentage(15),
-        Constraint::Percentage(85),
-        Constraint::Length(1),
-    ])
-    .spacing(1)
-    .areas(area);
+    let [names_area, status_area] =
+        Layout::horizontal([Constraint::Percentage(15), Constraint::Percentage(85)]).areas(area);
 
-    let names_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border)
-        .title("files")
-        .title_alignment(Alignment::Center);
+    let [status_area, scrollbar_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(1)])
+            .spacing(1)
+            .areas(status_area);
 
-    let status_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border)
-        .title(Line::from("status").centered())
-        .title(Line::from("total").right_aligned());
+    let names_block = themed_block(Some("files"), theme);
+
+    let status_block = themed_block(Some("status"), theme)
+        .title(themed_block_title("total", theme).right_aligned());
 
     let names_inner_area = names_block.inner(names_area);
     let status_inner_area = status_block.inner(status_area);

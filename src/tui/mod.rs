@@ -11,7 +11,7 @@ use ratatui::{
     crossterm::event,
     style::{palette, Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
     Terminal,
 };
 use std::{path::PathBuf, sync::mpsc};
@@ -274,9 +274,5 @@ pub fn render_title(theme: &Theme) -> impl Widget {
         Span::styled("Y", Style::default().fg(c5).add_modifier(modifier)),
     ]);
 
-    Paragraph::new(styled_title.centered()).block(
-        Block::new()
-            .borders(Borders::ALL)
-            .border_style(theme.border),
-    )
+    Paragraph::new(styled_title.centered()).block(utils::themed_block(None, theme))
 }
