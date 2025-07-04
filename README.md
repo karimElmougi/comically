@@ -2,15 +2,13 @@
 
 comically fast manga/comic optimizer for e-readers
 
-![comically splash screen](assets/goku-splash-original.jpg)
+![preview](assets/preview.png)
 
 ## what's this?
 
 tired of manga looking terrible on your kindle? waiting forever for conversions?
 
 comically is a blazing fast optimizer built specifically for e-ink displays. watch your comics transform in real-time with live terminal previews, then batch convert at 100+ pages per second.
-
-![preview](assets/preview.png)
 
 **features:**
 - live image previews in your terminal
@@ -19,6 +17,7 @@ comically is a blazing fast optimizer built specifically for e-ink displays. wat
 - auto contrast for e-ink displays
 - perfectly sized for your device
 - smaller files, better performance
+- terminal UI with mouse support
 
 **actually fast:**
 > tested with spread splitting & rotation enabled on kindle pw 11 (1236x1648)
@@ -62,4 +61,3 @@ remarkable - 2, ipad mini/pro, onyx boox, pocketbook era
 - **awz3/mobi** - amazon kindle format (REQUIRES KINDLEGEN)
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
-
