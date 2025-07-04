@@ -2,6 +2,7 @@ pub mod button;
 pub mod config;
 pub mod error;
 pub mod progress;
+pub mod splash;
 pub mod theme;
 
 use ratatui::{

@@ -4,7 +4,6 @@ mod epub_builder;
 mod image_processor;
 mod mobi_converter;
 mod pipeline;
-mod splash;
 mod tui;
 
 use anyhow::Context;
@@ -85,7 +84,7 @@ fn main() -> anyhow::Result<()> {
         ratatui::crossterm::terminal::EnterAlternateScreen
     )?;
 
-    splash::show_splash_screen(&mut terminal, theme)?;
+    tui::splash::show_splash_screen(&mut terminal, theme)?;
 
     let dimensions = terminal.size()?;
 
