@@ -1,29 +1,32 @@
 # comically
 
-the fastest manga/comic optimizer for e-readers
+blazing fast manga/comic optimizer. IMAGES IN YOUR TERMINAL.
 
 ![comically splash screen](assets/goku-splash-original.jpg)
 
 ## what's this?
 
-comically optimizes manga and comics for e-ink readers. it makes pages display fullscreen without margins, with proper fixed layout support.
+tired of washed out manga on your kindle? comics with huge margins? waiting forever for conversions?
 
-why use this? e-ink screens need different processing than lcd screens. comically handles the annoying stuff:
-- fixes washed out blacks that make comics hard to read
-- removes unnecessary margins 
-- uses your device's full resolution
-- handles right-to-left manga properly
-- aligns two-page spreads correctly
+comically is a futuristic tui that shows live previews RIGHT IN THE TERMINAL. watch your adjustments in real-time.
 
-the result? way smaller file sizes (hundreds of mb saved per volume), faster page turns, better battery life. all without visible quality loss on e-ink. 
+**actually fast:**
+- 23 volumes of dorohedoro (4647 images, 2.5gb) → epub in 45 seconds
+- that's 100+ images per second
+- with full processing: splitting, rotation, optimization
 
-features:
-- multi-threaded processing
-- live preview with adjustments
-- mouse support
-- device presets for e-readers
-- smart page splitting & rotation
-- saves your last config
+**fixes the annoying stuff:**
+- washed out blacks → deep contrast that looks good on e-ink
+- wasted margins → fullscreen pages
+- wrong resolution → uses all 2480 pixels on your scribe
+- broken spreads → perfect alignment
+- huge files → 312mb → 28mb (no quality loss)
+
+**features:**
+- see your comics in the terminal (seriously)
+- live preview as you adjust settings
+- batch process entire series
+- remembers your settings
 
 ## prerequisites
 
@@ -59,8 +62,8 @@ remarkable - 2, ipad mini/pro, onyx boox, pocketbook era
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
 
-## tips
+## pro tips
 
-- gamma 1.8-2.2 works great for e-ink
-- brightness -10 to -20 for scanned comics
-- \"rotate & split\" for double-page spreads
+- gamma 1.8 = instant kindle optimization  
+- most scans need brightness -15
+- scribe users: you're using all 2480 pixels now
