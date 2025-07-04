@@ -6,6 +6,7 @@ pub mod splash;
 pub mod theme;
 pub mod utils;
 
+use anyhow::Context;
 use ratatui::{
     backend::Backend,
     crossterm::event,
@@ -14,15 +15,22 @@ use ratatui::{
     widgets::{Paragraph, Widget},
     Terminal,
 };
-use std::{path::PathBuf, sync::mpsc};
+use std::{
+    fs::create_dir_all,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
+};
 
 use crate::{
-    comic::Comic,
-    pipeline::{poll_kindlegen, process_files},
-    tui::{config::MangaFile, error::ErrorInfo},
-    Event, ProgressEvent,
+    pipeline::process_files,
+    tui::{
+        config::MangaFile,
+        error::ErrorInfo,
+        splash::{splash_title, SplashScreen},
+    },
+    Event,
 };
-use std::thread;
 
 pub use theme::{Theme, ThemeMode};
 
@@ -32,37 +40,166 @@ pub struct App {
 }
 
 pub enum AppState {
-    Error(ErrorInfo),
     Config(config::ConfigState),
     Processing(progress::ProgressState),
 }
 
 pub fn run(
-    directory: Option<PathBuf>,
+    input_dir: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+
+    terminal: &mut Terminal<impl Backend>,
+    picker: ratatui_image::picker::Picker,
+    theme: Theme,
+
+    event_tx: mpsc::Sender<Event>,
+    mut event_rx: mpsc::Receiver<Event>,
+) {
+    let input_dir =
+        input_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let output_dir = output_dir.unwrap_or_else(|| input_dir.join("comically"));
+
+    let files = match get_files(&input_dir, &output_dir) {
+        Ok(files) => files,
+        Err(e) => {
+            let _ = run_fatal_error(terminal, &mut event_rx, &e, &theme);
+            return;
+        }
+    };
+
+    match show_splash_screen(terminal, &mut event_rx, theme) {
+        Ok(true) => {}
+        Ok(false) => {
+            return;
+        }
+        Err(e) => {
+            let e = ErrorInfo::unknown_error(e);
+            let _ = run_fatal_error(terminal, &mut event_rx, &e, &theme);
+            return;
+        }
+    }
+
+    match run_main(
+        files,
+        output_dir,
+        terminal,
+        event_tx,
+        &mut event_rx,
+        picker,
+        theme,
+    ) {
+        Ok(()) => {}
+        Err(e) => {
+            let e = ErrorInfo::unknown_error(e);
+            let _ = run_fatal_error(terminal, &mut event_rx, &e, &theme);
+        }
+    }
+}
+
+// if true continue, else exit
+// TODO: clean this up, maybe make it recursive?
+fn show_splash_screen(
+    terminal: &mut Terminal<impl Backend>,
+    event_rx: &mut mpsc::Receiver<Event>,
+    theme: Theme,
+) -> anyhow::Result<bool> {
+    let mut splash = SplashScreen::new(10, theme.is_dark())?;
+
+    while !splash.is_complete() {
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                Event::Key(key) => {
+                    if key.code == event::KeyCode::Char('q') || key.code == event::KeyCode::Esc {
+                        return Ok(false);
+                    } else {
+                        return Ok(true);
+                    }
+                }
+                Event::Resize(_) => {
+                    terminal.autoresize()?;
+                }
+                _ => {}
+            }
+        }
+        terminal.draw(|frame| {
+            let area = frame.area();
+            frame.render_widget(&splash, area);
+        })?;
+
+        splash.advance();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    terminal.draw(|frame| {
+        frame.render_widget(&splash, frame.area());
+        splash_title(frame, theme);
+    })?;
+
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < Duration::from_secs(1) {
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                Event::Key(key) => {
+                    if key.code == event::KeyCode::Char('q') || key.code == event::KeyCode::Esc {
+                        return Ok(false);
+                    } else {
+                        return Ok(true);
+                    }
+                }
+                Event::Resize(_) => {
+                    terminal.autoresize()?;
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Ok(true)
+}
+
+fn run_fatal_error(
+    terminal: &mut Terminal<impl Backend>,
+    event_rx: &mut mpsc::Receiver<Event>,
+    error_info: &ErrorInfo,
+    theme: &Theme,
+) -> anyhow::Result<()> {
+    while let Ok(event) = event_rx.recv() {
+        match event {
+            Event::Key(key) => {
+                if key.code == event::KeyCode::Char('q') || key.code == event::KeyCode::Esc {
+                    return Ok(());
+                }
+            }
+            Event::Resize(_) => {
+                terminal.autoresize()?;
+            }
+            _ => {}
+        }
+
+        terminal.draw(|frame| {
+            error::render_error_screen(theme, error_info, frame.area(), frame.buffer_mut());
+        })?;
+    }
+    Ok(())
+}
+
+fn run_main(
+    manga_files: Vec<MangaFile>,
+    output_dir: PathBuf,
     terminal: &mut Terminal<impl Backend>,
     event_tx: mpsc::Sender<Event>,
-    event_rx: mpsc::Receiver<Event>,
+    event_rx: &mut mpsc::Receiver<Event>,
     picker: ratatui_image::picker::Picker,
     theme: Theme,
 ) -> anyhow::Result<()> {
-    let dir =
-        directory.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let state = config::ConfigState::new(event_tx.clone(), picker, manga_files, theme, output_dir)?;
 
-    let state = match find_manga_files(&dir) {
-        Ok(files) => {
-            if files.is_empty() {
-                AppState::Error(ErrorInfo::no_files(&dir))
-            } else {
-                match config::ConfigState::new(event_tx.clone(), picker, files, theme) {
-                    Ok(config_state) => AppState::Config(config_state),
-                    Err(e) => AppState::Error(ErrorInfo::directory_error(&dir, &e.to_string())),
-                }
-            }
-        }
-        Err(e) => AppState::Error(ErrorInfo::directory_error(&dir, &e.to_string())),
+    let mut app = App {
+        state: AppState::Config(state),
+        theme,
     };
-
-    let mut app = App { state, theme };
     let mut pending_events = Vec::new();
 
     'outer: loop {
@@ -84,14 +221,6 @@ pub fn run(
                 let render_start = std::time::Instant::now();
 
                 match &mut app.state {
-                    AppState::Error(error_info) => {
-                        error::render_error_screen(
-                            &app.theme,
-                            error_info,
-                            frame.area(),
-                            frame.buffer_mut(),
-                        );
-                    }
                     AppState::Config(config_state) => {
                         config::ConfigScreen::new(config_state)
                             .render(frame.area(), frame.buffer_mut());
@@ -129,7 +258,6 @@ fn process_events(
     for event in pending_events.drain(..) {
         match event {
             Event::Mouse(mouse) => match &mut app.state {
-                AppState::Error(_) => {}
                 AppState::Config(c) => {
                     c.handle_mouse(mouse);
                 }
@@ -151,13 +279,11 @@ fn process_events(
                         AppState::Processing(processing_state) => {
                             processing_state.theme = app.theme;
                         }
-                        AppState::Error(_) => {}
                     }
                     continue;
                 }
 
                 match &mut app.state {
-                    AppState::Error(_) => {}
                     AppState::Config(c) => c.handle_key(key),
                     AppState::Processing(p) => p.handle_key(key),
                 }
@@ -184,7 +310,7 @@ fn process_events(
             Event::StartProcessing {
                 files,
                 config,
-                prefix,
+                output_dir,
             } => {
                 let _ = config.save();
                 app.state = AppState::Processing(progress::ProgressState::new(
@@ -194,7 +320,7 @@ fn process_events(
 
                 let event_tx = event_tx.clone();
                 rayon::spawn(move || {
-                    process_files(files, config, prefix, event_tx);
+                    process_files(files, config, output_dir, event_tx);
                 });
             }
         }
@@ -202,11 +328,28 @@ fn process_events(
     Ok(true)
 }
 
+fn get_files(input_dir: &Path, output_dir: &Path) -> Result<Vec<MangaFile>, ErrorInfo> {
+    if let Err(e) = create_dir_all(output_dir) {
+        return Err(ErrorInfo::output_dir_error(output_dir, &e.to_string()));
+    }
+
+    match find_manga_files(input_dir) {
+        Ok(files) => {
+            if files.is_empty() {
+                Err(ErrorInfo::no_files(input_dir))
+            } else {
+                Ok(files)
+            }
+        }
+        Err(e) => Err(ErrorInfo::directory_error(input_dir, &e.to_string())),
+    }
+}
+
 fn find_manga_files(dir: &std::path::Path) -> anyhow::Result<Vec<MangaFile>> {
     let mut files = Vec::new();
 
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir).context("failed to read dir")? {
+        let entry = entry.context("failed to read dir entry")?;
         let path = entry.path();
 
         if let Some(ext) = path.extension() {

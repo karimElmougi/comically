@@ -1,5 +1,4 @@
 use std::io::Cursor;
-use std::time::Duration;
 
 use imageproc::image::{self, GrayImage};
 use ratatui::layout::Constraint;
@@ -85,32 +84,6 @@ impl Widget for &SplashScreen {
     }
 }
 
-pub fn show_splash_screen(
-    terminal: &mut Terminal<impl Backend>,
-    theme: Theme,
-) -> anyhow::Result<()> {
-    let mut splash = SplashScreen::new(10, theme.is_dark())?;
-
-    while !splash.is_complete() {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            frame.render_widget(&splash, area);
-        })?;
-
-        splash.advance();
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    terminal.draw(|frame| {
-        frame.render_widget(&splash, frame.area());
-        render_ascii(frame, theme);
-    })?;
-
-    std::thread::sleep(Duration::from_millis(1000));
-
-    Ok(())
-}
-
 const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/goku-splash-processed.jpg");
 
 const TITLE_SMALL: &str = r#"
@@ -142,7 +115,7 @@ fn max_line_width(text: &str) -> u16 {
         .unwrap_or(0) as u16
 }
 
-fn render_ascii(frame: &mut Frame, theme: Theme) {
+pub fn splash_title(frame: &mut Frame, theme: Theme) {
     let area = frame.area();
 
     let large_width = max_line_width(TITLE_LARGE);

@@ -167,7 +167,7 @@ pub struct Comic {
     pub processed_dir: PathBuf,
     pub processed_files: Vec<ProcessedImage>,
     pub title: String,
-    pub prefix: Option<String>,
+    pub output_dir: PathBuf,
     pub input: PathBuf,
     pub config: ComicConfig,
 }
@@ -182,22 +182,12 @@ impl Comic {
     pub fn new(
         id: usize,
         file: PathBuf,
-        title_prefix: Option<&str>,
+        output_dir: PathBuf,
         title: String,
         mut config: ComicConfig,
         tx: mpsc::Sender<Event>,
     ) -> anyhow::Result<Self> {
         config.compression_quality = config.compression_quality.clamp(0, 100);
-
-        let title_prefix = title_prefix
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(String::from);
-
-        let full_title = match &title_prefix {
-            Some(prefix) => format!("{} {}", prefix, title),
-            _ => title,
-        };
 
         let temp_dir = tempfile::tempdir()?;
 
@@ -207,8 +197,8 @@ impl Comic {
             processed_dir: temp_dir.path().join("Processed"),
             temp_dir,
             processed_files: Vec::new(),
-            title: full_title,
-            prefix: title_prefix,
+            title,
+            output_dir,
             input: file,
             config,
         };
@@ -246,14 +236,7 @@ impl Comic {
     }
 
     pub fn output_path(&self) -> PathBuf {
-        let mut path = self.input.clone();
-        if let Some(prefix) = &self.prefix {
-            path.set_file_name(format!(
-                "{}_{}",
-                prefix,
-                path.file_stem().unwrap().to_string_lossy()
-            ));
-        }
+        let filename = self.input.file_stem().unwrap().to_string_lossy();
 
         let extension = match self.config.output_format {
             OutputFormat::Mobi => "mobi",
@@ -261,8 +244,9 @@ impl Comic {
             OutputFormat::Cbz => "cbz",
         };
 
-        path.set_extension(extension);
-        path
+        self.output_dir
+            .join(filename.as_ref())
+            .with_extension(extension)
     }
 
     pub fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {

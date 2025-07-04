@@ -39,6 +39,7 @@ pub struct ConfigState {
     pub theme: Theme,
     pub event_tx: std::sync::mpsc::Sender<crate::Event>,
     pub last_mouse_click: Option<MouseEvent>,
+    pub output_dir: PathBuf,
 
     pub modal_state: ModalState,
 }
@@ -112,6 +113,7 @@ impl ConfigState {
         picker: Picker,
         files: Vec<MangaFile>,
         theme: Theme,
+        output_dir: PathBuf,
     ) -> anyhow::Result<Self> {
         let files: Vec<(MangaFile, bool)> = files.into_iter().map(|f| (f, true)).collect();
 
@@ -147,6 +149,7 @@ impl ConfigState {
             theme,
             event_tx,
             last_mouse_click: None,
+            output_dir,
             modal_state: ModalState::None,
         };
 
@@ -288,7 +291,7 @@ impl ConfigState {
             let _ = self.event_tx.send(crate::Event::StartProcessing {
                 files: selected_paths,
                 config: self.config.clone(),
-                prefix: None,
+                output_dir: self.output_dir.clone(),
             });
         }
     }

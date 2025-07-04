@@ -15,7 +15,7 @@ use std::{
 pub fn process_files(
     files: Vec<PathBuf>,
     config: ComicConfig,
-    prefix: Option<String>,
+    output_dir: PathBuf,
     event_tx: mpsc::Sender<Event>,
 ) {
     log::info!("processing with config: {:?}", config);
@@ -54,7 +54,7 @@ pub fn process_files(
             match Comic::new(
                 id,
                 file.clone(),
-                prefix.as_deref(),
+                output_dir.clone(),
                 title,
                 config.clone(),
                 event_tx.clone(),

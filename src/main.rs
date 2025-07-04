@@ -32,7 +32,11 @@ use crate::tui::config::ConfigEvent;
 struct Args {
     /// Optional directory to scan for manga files (defaults to current directory)
     directory: Option<PathBuf>,
-    
+
+    /// Optional output directory (defaults to input {directory}/comically)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
     /// Enable debug logging to file
     #[arg(long)]
     debug: bool,
@@ -44,13 +48,14 @@ fn main() -> anyhow::Result<()> {
     // Only initialize file logging if --debug flag is set
     if args.debug {
         let log_path = "comically.log";
-        let log_file = std::fs::File::create(log_path)
-            .context("Failed to create debug log file")?;
+        let log_file =
+            std::fs::File::create(log_path).context("Failed to create debug log file")?;
 
         // Set log level to debug when --debug is used
         std::env::set_var(
             "RUST_LOG",
-            std::env::var("RUST_LOG").unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME"))),
+            std::env::var("RUST_LOG")
+                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME"))),
         );
 
         let file_subscriber = tracing_subscriber::fmt::layer()
@@ -65,7 +70,7 @@ fn main() -> anyhow::Result<()> {
             .with(file_subscriber)
             .with(tracing_error::ErrorLayer::default())
             .init();
-        
+
         log::info!("Debug logging enabled - writing to {}", log_path);
     } else {
         // Initialize a no-op subscriber when debug is not enabled
@@ -100,8 +105,6 @@ fn main() -> anyhow::Result<()> {
         ratatui::crossterm::terminal::EnterAlternateScreen
     )?;
 
-    tui::splash::show_splash_screen(&mut terminal, theme)?;
-
     let dimensions = terminal.size()?;
 
     // need to call this after entering alternate screen, but before reading events
@@ -115,13 +118,14 @@ fn main() -> anyhow::Result<()> {
         move || input_handling(event_tx, dimensions)
     });
 
-    let result = tui::run(
+    tui::run(
         args.directory,
+        args.output,
         &mut terminal,
-        event_tx,
-        event_rx,
         picker,
         theme,
+        event_tx,
+        event_rx,
     );
 
     ratatui::crossterm::execute!(
@@ -130,7 +134,7 @@ fn main() -> anyhow::Result<()> {
     )?;
     ratatui::restore();
 
-    result
+    Ok(())
 }
 
 fn input_handling(tx: mpsc::Sender<Event>, dimensions: Size) {
@@ -194,6 +198,6 @@ pub enum Event {
     StartProcessing {
         files: Vec<PathBuf>,
         config: ComicConfig,
-        prefix: Option<String>,
+        output_dir: PathBuf,
     },
 }
