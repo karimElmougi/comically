@@ -23,6 +23,7 @@ use std::{
 };
 
 use crate::{
+    comic::OutputFormat,
     pipeline::process_files,
     tui::{
         config::MangaFile,
@@ -59,7 +60,7 @@ pub fn run(
         input_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let output_dir = output_dir.unwrap_or_else(|| input_dir.join("comically"));
 
-    let files = match get_files(&input_dir, &output_dir) {
+    let files = match init(&input_dir, &output_dir) {
         Ok(files) => files,
         Err(e) => {
             let _ = run_fatal_error(terminal, &mut event_rx, &e, &theme);
@@ -90,7 +91,6 @@ pub fn run(
     ) {
         Ok(()) => {}
         Err(e) => {
-            let e = ErrorInfo::unknown_error(e);
             let _ = run_fatal_error(terminal, &mut event_rx, &e, &theme);
         }
     }
@@ -189,8 +189,8 @@ fn run_main(
     event_rx: &mut mpsc::Receiver<Event>,
     picker: ratatui_image::picker::Picker,
     theme: Theme,
-) -> anyhow::Result<()> {
-    let state = config::ConfigState::new(event_tx.clone(), picker, manga_files, theme, output_dir)?;
+) -> Result<(), ErrorInfo> {
+    let state = config::ConfigState::new(event_tx.clone(), picker, manga_files, theme, output_dir);
 
     let mut app = App {
         state: AppState::Config(state),
@@ -213,26 +213,28 @@ fn run_main(
 
         // Draw if there were pending events
         if pending {
-            terminal.draw(|frame| {
-                let render_start = std::time::Instant::now();
+            terminal
+                .draw(|frame| {
+                    let render_start = std::time::Instant::now();
 
-                match &mut app.state {
-                    AppState::Config(config_state) => {
-                        config::ConfigScreen::new(config_state)
-                            .render(frame.area(), frame.buffer_mut());
+                    match &mut app.state {
+                        AppState::Config(config_state) => {
+                            config::ConfigScreen::new(config_state)
+                                .render(frame.area(), frame.buffer_mut());
+                        }
+                        AppState::Processing(processing_state) => {
+                            progress::ProgressScreen::new(processing_state)
+                                .render(frame.area(), frame.buffer_mut());
+                        }
                     }
-                    AppState::Processing(processing_state) => {
-                        progress::ProgressScreen::new(processing_state)
-                            .render(frame.area(), frame.buffer_mut());
+
+                    let render_time = render_start.elapsed();
+
+                    if render_time > std::time::Duration::from_millis(50) {
+                        log::warn!("Render closure took {:?}", render_time,);
                     }
-                }
-
-                let render_time = render_start.elapsed();
-
-                if render_time > std::time::Duration::from_millis(50) {
-                    log::warn!("Render closure took {:?}", render_time,);
-                }
-            })?;
+                })
+                .map_err(ErrorInfo::unknown_error)?;
         }
 
         // Wait for next event
@@ -250,7 +252,7 @@ fn process_events(
     app: &mut App,
     pending_events: &mut Vec<Event>,
     event_tx: &mpsc::Sender<Event>,
-) -> anyhow::Result<bool> {
+) -> Result<bool, ErrorInfo> {
     for event in pending_events.drain(..) {
         match event {
             Event::Mouse(mouse) => match &mut app.state {
@@ -285,7 +287,7 @@ fn process_events(
                 }
             }
             Event::Resize(picker) => {
-                terminal.autoresize()?;
+                terminal.autoresize().map_err(ErrorInfo::unknown_error)?;
                 if let AppState::Config(c) = &mut app.state {
                     if let Some(picker) = picker {
                         c.update_picker(picker);
@@ -308,6 +310,16 @@ fn process_events(
                 config,
                 output_dir,
             } => {
+                if config.output_format == OutputFormat::Mobi {
+                    if !crate::mobi_converter::is_kindlegen_available() {
+                        return Err(ErrorInfo::error(
+                            "KindleGen not installed",
+                            "Please install KindleGen and make sure it's in your PATH",
+                            Some("Install Kindle Previewer(3) from Amazon\n\nhttps://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011".into()),
+                        ));
+                    }
+                }
+
                 let _ = config.save();
                 app.state = AppState::Processing(progress::ProgressState::new(
                     app.theme,
@@ -324,20 +336,32 @@ fn process_events(
     Ok(true)
 }
 
-fn get_files(input_dir: &Path, output_dir: &Path) -> Result<Vec<MangaFile>, ErrorInfo> {
+fn init(input_dir: &Path, output_dir: &Path) -> Result<Vec<MangaFile>, ErrorInfo> {
     if let Err(e) = create_dir_all(output_dir) {
-        return Err(ErrorInfo::output_dir_error(output_dir, &e.to_string()));
+        return Err(ErrorInfo::error(
+            "failed to create output directory",
+            format!("directory {}: {e}", output_dir.display()),
+            Some("check permissions and disk space".into()),
+        ));
     }
 
     match find_manga_files(input_dir) {
         Ok(files) => {
             if files.is_empty() {
-                Err(ErrorInfo::no_files(input_dir))
+                Err(ErrorInfo::error(
+                    "no files found",
+                    format!("directory: {}", input_dir.display()),
+                    Some("supports .cbz .cbr .zip .rar".into()),
+                ))
             } else {
                 Ok(files)
             }
         }
-        Err(e) => Err(ErrorInfo::directory_error(input_dir, &e.to_string())),
+        Err(e) => Err(ErrorInfo::error(
+            "failed to read directory",
+            format!("directory {}: {e}", input_dir.display()),
+            Some("check that the directory exists".into()),
+        )),
     }
 }
 

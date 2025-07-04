@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path};
+use std::borrow::Cow;
 
 use ratatui::{
     style::{Modifier, Style, Stylize},
@@ -16,53 +16,23 @@ pub struct ErrorInfo {
 }
 
 impl ErrorInfo {
-    pub fn unknown_error(error: impl Into<anyhow::Error>) -> Self {
+    pub fn error(
+        title: impl Into<Cow<'static, str>>,
+        message: impl Into<Cow<'static, str>>,
+        hint: Option<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            message: vec![message.into()],
+            hint: hint.map(|h| h.into()),
+        }
+    }
+
+    pub fn unknown_error(error: impl std::fmt::Display) -> Self {
         Self {
             title: "unknown error".into(),
-            message: vec![error.into().to_string().into()],
+            message: vec![error.to_string().into()],
             hint: None,
-        }
-    }
-    pub fn no_files(dir: &Path) -> Self {
-        let dir_str = dir.display().to_string();
-        Self {
-            title: "no files found".into(),
-            message: vec![
-                "no comic/manga files found".into(),
-                "".into(),
-                format!("directory: {}", dir_str).into(),
-            ],
-            hint: Some("supports .cbz .cbr .zip .rar".into()),
-        }
-    }
-
-    pub fn directory_error(dir: &Path, error: &str) -> Self {
-        let dir_str = dir.display().to_string();
-        Self {
-            title: "can't read dir".into(),
-            message: vec![
-                "failed to read directory".into(),
-                "".into(),
-                format!("directory: {}", dir_str).into(),
-                "".into(),
-                format!("error: {}", error).into(),
-            ],
-            hint: Some("check that the directory exists".into()),
-        }
-    }
-
-    pub fn output_dir_error(dir: &Path, error: &str) -> Self {
-        let dir_str = dir.display().to_string();
-        Self {
-            title: "fatal error".into(),
-            message: vec![
-                "failed to create output directory".into(),
-                "".into(),
-                format!("directory: {}", dir_str).into(),
-                "".into(),
-                format!("error: {}", error).into(),
-            ],
-            hint: Some("check permissions and disk space".into()),
         }
     }
 }
@@ -85,7 +55,7 @@ pub fn render_error_screen(
     // Create a centered box for the error message
     let message_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme.error_fg)
+        .border_style(theme.content)
         .bg(theme.error_bg)
         .title(error_info.title.as_ref())
         .title(Line::from("[esc/q]").fg(theme.accent).right_aligned())

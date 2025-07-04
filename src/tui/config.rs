@@ -114,7 +114,7 @@ impl ConfigState {
         files: Vec<MangaFile>,
         theme: Theme,
         output_dir: PathBuf,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let files: Vec<(MangaFile, bool)> = files.into_iter().map(|f| (f, true)).collect();
 
         let mut list_state = ListState::default();
@@ -156,7 +156,7 @@ impl ConfigState {
         // Auto-load the first image
         state.reload_preview();
 
-        Ok(state)
+        state
     }
 
     pub fn is_modal_open(&self) -> bool {

@@ -12,10 +12,6 @@ pub fn create_mobi(comic: &Comic) -> Result<SpawnedKindleGen> {
         anyhow::bail!("EPUB file does not exist: {}", epub_path.display());
     }
 
-    if !is_kindlegen_available() {
-        anyhow::bail!("KindleGen is not found in PATH. Please install KindleGen and make sure it's in your PATH.");
-    }
-
     let child = Command::new("kindlegen")
         .arg("-dont_append_source")
         .arg("-c1")
@@ -103,6 +99,6 @@ impl SpawnedKindleGen {
 }
 
 /// Checks if KindleGen is available in the PATH
-fn is_kindlegen_available() -> bool {
+pub fn is_kindlegen_available() -> bool {
     Command::new("kindlegen").arg("-version").output().is_ok()
 }

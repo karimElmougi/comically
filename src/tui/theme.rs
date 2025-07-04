@@ -22,7 +22,6 @@ pub struct Theme {
     pub secondary_bg: Color,
     pub secondary_pressed: Color,
 
-    pub error_fg: Color,
     pub error_bg: Color,
     pub scrollbar_thumb: Color,
     pub stage_colors: StageColors,
@@ -53,7 +52,6 @@ impl Theme {
             secondary: palette::tailwind::FUCHSIA.c300,
             secondary_bg: palette::tailwind::FUCHSIA.c600,
             secondary_pressed: palette::tailwind::FUCHSIA.c500,
-            error_fg: palette::tailwind::RED.c400,
             error_bg: palette::tailwind::RED.c800,
             scrollbar_thumb: palette::tailwind::CYAN.c500,
             gauge_label: palette::tailwind::SLATE.c200,
@@ -80,7 +78,6 @@ impl Theme {
             secondary: palette::tailwind::VIOLET.c500,
             secondary_bg: palette::tailwind::VIOLET.c200,
             secondary_pressed: palette::tailwind::VIOLET.c100,
-            error_fg: palette::tailwind::RED.c800,
             error_bg: palette::tailwind::RED.c100,
             scrollbar_thumb: palette::tailwind::STONE.c400,
             gauge_label: palette::tailwind::STONE.c700,

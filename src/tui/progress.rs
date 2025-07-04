@@ -413,7 +413,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
         }
         ComicStatus::Failed { error, .. } => {
             let error_text = error.to_string();
-            let label = Span::styled(error_text, Style::default().fg(theme.error_fg));
+            let label = Span::styled(error_text, Style::default().fg(theme.content));
 
             let gauge = Gauge::default()
                 .gauge_style(theme.error_bg)
