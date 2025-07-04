@@ -8,8 +8,6 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use crate::tui::Theme;
 
-const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/goku-splash-processed.jpg");
-
 pub struct SplashScreen {
     image: GrayImage,
     current_step: u32,
@@ -112,6 +110,8 @@ pub fn show_splash_screen(
 
     Ok(())
 }
+
+const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/goku-splash-processed.jpg");
 
 const TITLE_SMALL: &str = r#"
 ██████  ██████  ███    ███  ██  ██████   █████   ██       ██       ██    ██

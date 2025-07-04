@@ -38,11 +38,11 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     let html_files = create_html_files(&html_dir, &image_map)?;
 
     // Create toc.ncx
-    create_toc_ncx(&comic, &oebps_dir, &cover_html_path, &html_files)?;
+    create_toc_ncx(comic, &oebps_dir, &cover_html_path, &html_files)?;
 
     // Create content.opf
     create_content_opf(
-        &comic,
+        comic,
         &oebps_dir,
         &cover_html_path,
         &html_files,
@@ -232,7 +232,7 @@ fn create_content_opf(
     // Add NCX
     manifest
         .push_str(r#"    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
-    manifest.push_str("\n");
+    manifest.push('\n');
 
     // Add cover HTML
     let cover_filename = cover_html_path.file_name().unwrap().to_string_lossy();
@@ -240,7 +240,7 @@ fn create_content_opf(
         r#"    <item id="cover-html" href="{}" media-type="application/xhtml+xml"/>"#,
         cover_filename
     ));
-    manifest.push_str("\n");
+    manifest.push('\n');
 
     // Add content HTML files
     for (i, html_file) in html_files.iter().enumerate() {
@@ -250,7 +250,7 @@ fn create_content_opf(
             i + 1,
             filename
         ));
-        manifest.push_str("\n");
+        manifest.push('\n');
     }
 
     // Add images
@@ -279,7 +279,7 @@ fn create_content_opf(
                 r#"    <item id="image{i}" href="{href}" media-type="{media_type}"/>"#,
             ));
         }
-        manifest.push_str("\n");
+        manifest.push('\n');
     }
 
     // Build spine items with page spread properties
@@ -287,10 +287,8 @@ fn create_content_opf(
 
     let progression_direction = if c.config.right_to_left { "rtl" } else { "ltr" };
     // Add cover as first item in spine (typically center spread)
-    spine.push_str(&format!(
-        r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#
-    ));
-    spine.push_str("\n");
+    spine.push_str(r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#);
+    spine.push('\n');
 
     // Add content pages with alternating spreads
     let mut right_to_left = c.config.right_to_left;
@@ -307,7 +305,7 @@ fn create_content_opf(
             i + 1,
             spread_property
         ));
-        spine.push_str("\n");
+        spine.push('\n');
 
         // Alternate page sides
         right_to_left = !right_to_left;

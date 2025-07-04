@@ -78,7 +78,7 @@ pub fn process_archive_images(
         })
         .collect::<Vec<_>>();
 
-    images.sort_by(|a, b| a.path.as_os_str().cmp(&b.path.as_os_str()));
+    images.sort_by(|a, b| a.path.as_os_str().cmp(b.path.as_os_str()));
     images.dedup_by_key(|i| i.path.as_os_str().to_owned());
 
     Ok(images)
@@ -258,7 +258,7 @@ const MIN_MARGIN_WIDTH: u32 = 10;
 const SAFETY_MARGIN: u32 = 2;
 
 /// Auto-crop white margins from all sides of the image
-fn auto_crop<'a>(img: &'a GrayImage) -> Option<SubImage<&'a GrayImage>> {
+fn auto_crop(img: &GrayImage) -> Option<SubImage<&GrayImage>> {
     let (width, height) = img.dimensions();
 
     // Left margin: scan from left to right
@@ -369,14 +369,12 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
             let ny = y as i32 + dy;
 
             // Make sure coordinates are valid
-            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
-                if img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD {
-                    dark_neighbors += 1;
+            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 && img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD {
+                dark_neighbors += 1;
 
-                    // Early return if we have enough neighbors
-                    if dark_neighbors >= REQUIRED_NEIGHBORS {
-                        return true;
-                    }
+                // Early return if we have enough neighbors
+                if dark_neighbors >= REQUIRED_NEIGHBORS {
+                    return true;
                 }
             }
         }

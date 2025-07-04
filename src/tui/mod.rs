@@ -164,13 +164,10 @@ fn process_events(
             }
             Event::Resize(picker) => {
                 terminal.autoresize()?;
-                match &mut app.state {
-                    AppState::Config(c) => {
-                        if let Some(picker) = picker {
-                            c.update_picker(picker);
-                        }
+                if let AppState::Config(c) = &mut app.state {
+                    if let Some(picker) = picker {
+                        c.update_picker(picker);
                     }
-                    _ => {}
                 }
             }
             Event::Tick => {}

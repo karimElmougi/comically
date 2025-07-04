@@ -745,7 +745,7 @@ impl<'a> SettingsWidget<'a> {
             .find(|preset| preset.dimensions == current_dims)
             .map(|preset| preset.name)
             .map(|name| format!("{} ({}x{})", name, current_dims.0, current_dims.1))
-            .unwrap_or_else(|| format!("{}x{}", current_dims.0, current_dims.1).into());
+            .unwrap_or_else(|| format!("{}x{}", current_dims.0, current_dims.1));
 
         base_button(button_text, self.state)
             .on_click(|| {
@@ -946,7 +946,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             .preview_state
             .loaded_image
             .as_ref()
-            .map(|loaded| &loaded.config != &self.state.config)
+            .map(|loaded| loaded.config != self.state.config)
             .unwrap_or(true);
 
         let file_changed = self
@@ -1064,7 +1064,6 @@ impl<'a> Widget for PreviewWidget<'a> {
                     StatefulWidget::render(image, image_area, buf, thread_protocol);
                 }
             }
-        } else {
         }
     }
 }
@@ -1136,7 +1135,6 @@ fn load_and_process_preview(
     page_index: Option<usize>,
 ) -> anyhow::Result<(DynamicImage, usize, usize)> {
     let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
-        .into_iter()
         .filter_map(|r| r.ok())
         .collect();
 
@@ -1152,8 +1150,7 @@ fn load_and_process_preview(
     let idx = match page_index {
         None => {
             use rand::Rng;
-            let random_idx = rand::thread_rng().gen_range(0..archive_files.len());
-            random_idx
+            rand::thread_rng().gen_range(0..archive_files.len())
         }
         Some(idx) => idx.clamp(0, archive_files.len() - 1),
     };

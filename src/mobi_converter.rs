@@ -104,8 +104,5 @@ impl SpawnedKindleGen {
 
 /// Checks if KindleGen is available in the PATH
 fn is_kindlegen_available() -> bool {
-    match Command::new("kindlegen").arg("-version").output() {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    Command::new("kindlegen").arg("-version").output().is_ok()
 }

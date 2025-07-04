@@ -23,7 +23,7 @@ pub fn process_files(
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
-        .map(|(id, file)| {
+        .filter_map(|(id, file)| {
             let title = file
                 .file_stem()
                 .unwrap_or_default()
@@ -57,7 +57,6 @@ pub fn process_files(
                 }
             }
         })
-        .filter_map(|c| c)
         .collect();
 
     comics

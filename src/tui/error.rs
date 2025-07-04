@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use ratatui::{
     style::{Modifier, Style, Stylize},
@@ -16,7 +16,7 @@ pub struct ErrorInfo {
 }
 
 impl ErrorInfo {
-    pub fn no_files(dir: &PathBuf) -> Self {
+    pub fn no_files(dir: &Path) -> Self {
         let dir_str = dir.display().to_string();
         Self {
             title: "no files found".to_string(),
@@ -29,7 +29,7 @@ impl ErrorInfo {
         }
     }
 
-    pub fn directory_error(dir: &PathBuf, error: &str) -> Self {
+    pub fn directory_error(dir: &Path, error: &str) -> Self {
         let dir_str = dir.display().to_string();
         Self {
             title: "can't read dir".to_string(),

@@ -221,7 +221,7 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
     let successful = state
         .comics
         .iter()
-        .filter(|state| matches!(state.current_status(), ComicStatus::Success { .. }))
+        .filter(|state| matches!(state.current_status(), ComicStatus::Success))
         .count();
 
     let mut total_work = 0.0;
@@ -245,7 +245,7 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
                 };
                 completed_work += stage_weight * (progress / 100.0);
             }
-            ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed { .. } => {
+            ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed => {
                 total_work += 1.0;
                 // Image processing is weighted as 50% of the work
                 if comic.total_images > 0 {
@@ -253,7 +253,7 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
                     completed_work += 0.5 * image_progress;
                 }
             }
-            ComicStatus::Success { .. } => {
+            ComicStatus::Success => {
                 total_work += 1.0;
                 completed_work += 1.0;
             }
@@ -379,7 +379,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
 
             gauge.render(area, buf);
         }
-        ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed { .. } => {
+        ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed => {
             let elapsed = comic_state
                 .image_processing_start
                 .map(|s| s.elapsed())
@@ -569,7 +569,7 @@ impl<'a> Widget for StageTimingBar<'a> {
             for (stage, area) in self.timing.stages.iter().zip(stage_areas.iter()) {
                 let color = stage_color(stage.stage, self.theme);
 
-                buf.set_style(area.clone(), Style::default().bg(color));
+                buf.set_style(*area, Style::default().bg(color));
 
                 if area.width >= 10 {
                     let label = format!("{:.1}s", stage.duration.as_secs_f64());
@@ -577,7 +577,7 @@ impl<'a> Widget for StageTimingBar<'a> {
                     Paragraph::new(label)
                         .style(Style::default().fg(self.theme.gauge_label))
                         .alignment(ratatui::layout::Alignment::Center)
-                        .render(area.clone(), buf);
+                        .render(*area, buf);
                 }
             }
         }
