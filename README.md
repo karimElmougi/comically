@@ -1,32 +1,35 @@
 # comically
 
-blazing fast manga/comic optimizer. IMAGES IN YOUR TERMINAL.
+comically fast manga/comic optimizer for e-readers
 
 ![comically splash screen](assets/goku-splash-original.jpg)
 
 ## what's this?
 
-tired of washed out manga on your kindle? comics with huge margins? waiting forever for conversions?
+tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-comically is a futuristic tui that shows live previews RIGHT IN THE TERMINAL. watch your adjustments in real-time.
+comically optimizes manga/comics specifically for e-ink displays. live preview in the terminal shows exactly how it'll look on your device.
+
+**built for e-ink:**
+- deep blacks and proper contrast (not washed out lcd optimization)
+- perfectly sized for your device (clipping excess margin, smaller files)
+- tiny files that load instantly 
 
 **actually fast:**
-- 23 volumes of dorohedoro (4647 images, 2.5gb) → epub in 45 seconds
-- that's 100+ images per second
-- with full processing: splitting, rotation, optimization
-
-**fixes the annoying stuff:**
-- washed out blacks → deep contrast that looks good on e-ink
-- wasted margins → fullscreen pages
-- wrong resolution → uses all 2480 pixels on your scribe
-- broken spreads → perfect alignment
-- huge files → 312mb → 28mb (no quality loss)
+> with spread splitting and rotating enabled
+- 23 volumes of dorohedoro (4647 images, 2.5gb) 
+   - to epub → 45 seconds
+   - to awz3/mobi -> 105 seconds
+- 9 volumes of Alice in Borderland (3064 images, 4.5gb)
+   - to epub -> 55 seconds
+   - to awz3/mobi -> 77 seconds
 
 **features:**
-- see your comics in the terminal (seriously)
-- live preview as you adjust settings
+- see image previews in your terminal while you tweak settings
 - batch process entire series
-- remembers your settings
+- smart page splitting for double spreads
+- auto contrast 
+- remembers your settings for next time
 
 ## prerequisites
 
