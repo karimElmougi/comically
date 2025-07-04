@@ -30,6 +30,14 @@ comically is a blazing fast optimizer built specifically for e-ink displays. wat
 
 ## prerequisites
 
+#### terminal
+requires a terminal with:
+- 24-bit color support (truecolor)
+- unicode support
+- mouse support (optional but recommended)
+
+works great with: ghostty, wezterm, kitty, alacritty, iterm2, windows terminal
+
 #### rust
 see https://www.rust-lang.org/tools/install
 
