@@ -4,6 +4,7 @@ mod epub_builder;
 mod image_processor;
 mod mobi_converter;
 mod pipeline;
+mod splash;
 mod tui;
 
 use anyhow::Context;
@@ -77,13 +78,16 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: Viewport::Fullscreen,
     });
-    let dimensions = terminal.size()?;
 
     ratatui::crossterm::execute!(
         std::io::stderr(),
         event::EnableMouseCapture,
         ratatui::crossterm::terminal::EnterAlternateScreen
     )?;
+
+    splash::show_splash_screen(&mut terminal, theme.is_dark())?;
+
+    let dimensions = terminal.size()?;
 
     // need to call this after entering alternate screen, but before reading events
     let picker =

@@ -96,6 +96,10 @@ impl Theme {
         }
     }
 
+    pub fn is_dark(&self) -> bool {
+        self.mode == ThemeMode::Dark
+    }
+
     pub fn toggle(&mut self) {
         *self = match self.mode {
             ThemeMode::Dark => Self::light(),
