@@ -97,33 +97,42 @@ pub fn run(
 }
 
 // if true continue, else exit
-// TODO: clean this up, maybe make it recursive?
 fn show_splash_screen(
     terminal: &mut Terminal<impl Backend>,
     event_rx: &mut mpsc::Receiver<Event>,
     theme: Theme,
 ) -> anyhow::Result<bool> {
-    let mut splash = SplashScreen::new(10, theme.is_dark())?;
-
-    while !splash.is_complete() {
+    fn poll(
+        event_rx: &mut mpsc::Receiver<Event>,
+        terminal: &mut Terminal<impl Backend>,
+    ) -> anyhow::Result<Option<bool>> {
         while let Ok(event) = event_rx.try_recv() {
             match event {
-                Event::Key(key) => {
-                    if key.code == event::KeyCode::Char('q') || key.code == event::KeyCode::Esc {
-                        return Ok(false);
-                    } else {
-                        return Ok(true);
+                Event::Key(key) => match key.code {
+                    event::KeyCode::Char('q') | event::KeyCode::Esc => {
+                        return Ok(Some(false));
                     }
-                }
-                Event::Resize(_) => {
-                    terminal.autoresize()?;
-                }
+                    event::KeyCode::Char(' ') => {
+                        return Ok(Some(true));
+                    }
+                    _ => {}
+                },
+                Event::Resize(_) => terminal.autoresize()?,
                 _ => {}
             }
         }
+        Ok(None)
+    }
+
+    let mut splash = SplashScreen::new(10, theme.is_dark())?;
+
+    while !splash.is_complete() {
+        if let Some(should_continue) = poll(event_rx, terminal)? {
+            return Ok(should_continue);
+        }
+
         terminal.draw(|frame| {
-            let area = frame.area();
-            frame.render_widget(&splash, area);
+            frame.render_widget(&splash, frame.area());
         })?;
 
         splash.advance();
@@ -136,22 +145,9 @@ fn show_splash_screen(
     })?;
 
     let start = std::time::Instant::now();
-
     while start.elapsed() < Duration::from_secs(1) {
-        while let Ok(event) = event_rx.try_recv() {
-            match event {
-                Event::Key(key) => {
-                    if key.code == event::KeyCode::Char('q') || key.code == event::KeyCode::Esc {
-                        return Ok(false);
-                    } else {
-                        return Ok(true);
-                    }
-                }
-                Event::Resize(_) => {
-                    terminal.autoresize()?;
-                }
-                _ => {}
-            }
+        if let Some(should_continue) = poll(event_rx, terminal)? {
+            return Ok(should_continue);
         }
         std::thread::sleep(Duration::from_millis(100));
     }
