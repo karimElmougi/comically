@@ -37,8 +37,9 @@ requires a terminal with:
 - unicode support
 - mouse support (optional but recommended)
 
-works great with: ghostty, wezterm, kitty, iterm2, foot, konsole
-limited support: alacritty, windows terminal (no image previews)
+**works great with**: ghostty, wezterm, kitty, iterm2, foot, konsole
+
+**limited support**: alacritty, windows terminal (no image previews)
 
 #### rust
 see https://www.rust-lang.org/tools/install
@@ -62,9 +63,10 @@ defaults to current directory if no path provided. output defaults to `{director
 
 ### supported devices
 
-kindle - paperwhite 11/12, oasis, scribe, basic  
-kobo - clara hd/2e, libra 2, sage, elipsa  
-remarkable - 2, ipad mini/pro, onyx boox, pocketbook era
+**kindle** - paperwhite 11/12, oasis, scribe, basic  
+**kobo** - clara hd/2e, libra 2, sage, elipsa  
+**remarkable** - 2  
+**other** - ipad mini/pro, onyx boox, pocketbook era
 
 ### output formats
 
