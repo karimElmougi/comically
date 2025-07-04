@@ -4,7 +4,7 @@ use std::time::Duration;
 use imageproc::image::{self, GrayImage};
 use ratatui::layout::Constraint;
 use ratatui::prelude::*;
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::tui::Theme;
 
@@ -147,23 +147,30 @@ fn render_ascii(frame: &mut Frame, theme: Theme) {
 
     let large_width = max_line_width(TITLE_LARGE);
 
-    let title = if area.width < large_width {
+    let title = if area.width + 10 < large_width {
         TITLE_SMALL
     } else {
         TITLE_LARGE
     };
 
-    let height = title.trim().lines().count() as u16;
-    let width = max_line_width(title);
+    let height = title.trim().lines().count() as u16 + 2;
+    let width = max_line_width(title) + 2;
 
     let centered_area =
         super::utils::center(area, Constraint::Length(width), Constraint::Length(height));
 
-    let ascii_paragraph = Paragraph::new(title.trim()).style(
-        Style::default()
-            .fg(theme.secondary)
-            .add_modifier(Modifier::BOLD),
-    );
+    let ascii_paragraph = Paragraph::new(Text::from(title.trim()).fg(theme.secondary))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.secondary)
+                .border_type(BorderType::QuadrantOutside),
+        )
+        .bg(if theme.is_dark() {
+            Color::Rgb(0, 0, 0)
+        } else {
+            Color::Rgb(255, 255, 255)
+        });
 
     frame.render_widget(ascii_paragraph, centered_area);
 }
