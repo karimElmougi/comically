@@ -1,67 +1,66 @@
-# Comically
+# comically
 
-A minimal comic book converter for Kindle devices. Converts CBZ/CBR files to MOBI format.
+the fastest manga/comic optimizer for e-readers
 
-## Features
+![comically splash screen](assets/goku-splash-original.jpg)
 
-- Simple command-line interface
-- Extracts CBZ comic archives
-- Optimizes images for Kindle display
-- Creates EPUB from comic pages
-- Converts to MOBI using Amazon's KindleGen
+## what's this?
 
-## Prerequisites
+comically optimizes manga and comics for e-ink readers. it makes pages display fullscreen without margins, with proper fixed layout support.
 
-#### Rust
+why use this? e-ink screens need different processing than lcd screens. comically handles the annoying stuff:
+- fixes washed out blacks that make comics hard to read
+- removes unnecessary margins 
+- uses your device's full resolution
+- handles right-to-left manga properly
+- aligns two-page spreads correctly
+
+the result? way smaller file sizes (hundreds of mb saved per volume), faster page turns, better battery life. all without visible quality loss on e-ink. 
+
+features:
+- multi-threaded processing
+- live preview with adjustments
+- mouse support
+- device presets for e-readers
+- smart page splitting & rotation
+- saves your last config
+
+## prerequisites
+
+#### rust
 see https://www.rust-lang.org/tools/install
 
-#### KindleGen 
-On Windows and macOS, install [Kindle Previewer 3 (KP3)](https://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011). KindleGen is automatically included.
+#### kindlegen (for awz3/mobi output)
+on windows and macos, install [kindle previewer 3](https://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011). kindlegen is automatically included.
 
-## Installation
+## installation
 
 ```bash
-git clone https://github.com/nicoburniske/comically.git
-cd comically
-cargo build --release
+cargo install comically
 ```
 
-The executable will be available at `target/release/comically`.
+## usage
 
-## Usage
-
-#### CLI options
-
-```shell
-cargo run --release -- --help
-```
-
-```shell
-Usage: comically [OPTIONS] <INPUT>...
-
-Arguments:
-  <INPUT>...  the input files to process. can be a directory or a file. supports .cbz, .zip, .cbr, .rar files
-
-Options:
-  -p, --prefix <PREFIX>          the prefix to add to the title of the comics + the output file
-  -m, --manga [<MANGA>]          whether to read the comic from right to left [default: true] [possible values: true, false]
-  -q, --quality <QUALITY>        the jpg compression quality of the images, between 0 and 100 [default: 75]
-  -b, --brightness <BRIGHTNESS>  brighten the images positive values will brighten the images, negative values will darken them
-  -c, --contrast <CONTRAST>      the contrast of the images positive values will increase the contrast, negative values will decrease it
-  -t <THREADS>                   the number of threads to use for processing. defaults to the number of logical CPUs
-      --crop <CROP>              crop the dead space on each page [default: true] [possible values: true, false]
-      --split <SPLIT>            split double pages into two separate pages [default: true] [possible values: true, false]
-  -h, --help                     Print help
-  -V, --version                  Print version
-```
-
-#### Basic usage with file
 ```bash
-cargo run --release -- naruto-volume-1.cbz
+comically [directory] [--output path]
 ```
 
+defaults to current directory if no path provided. output defaults to `{directory}/comically/`.
 
-#### Basic usage with directory 
-```bash
-cargo run --release -- naruto-complete/
-```
+### supported devices
+
+kindle - paperwhite 11/12, oasis, scribe, basic  
+kobo - clara hd/2e, libra 2, sage, elipsa  
+remarkable - 2, ipad mini/pro, onyx boox, pocketbook era
+
+### output formats
+
+- **awz3/mobi** - amazon kindle format (REQUIRES KINDLEGEN)
+- **epub** - universal e-reader format
+- **cbz** - comic book archive (processed/optimized)
+
+## tips
+
+- gamma 1.8-2.2 works great for e-ink
+- brightness -10 to -20 for scanned comics
+- \"rotate & split\" for double-page spreads
