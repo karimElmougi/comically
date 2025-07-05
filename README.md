@@ -28,7 +28,7 @@ comically is a blazing fast optimizer built specifically for e-ink displays. pre
 | alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 page/s) | 77s (40 page/s) |
 | naruto | 72 | 12,849 | 17.5gb | 240s (54 page/s) | 334s (38 page/s) |
 
-> for comparison: kindle comic converter takes 8+ minutes for alice in borderland (~7x slower) 
+> for comparison: [kindle comic converter](https://github.com/ciromattia/kcc) takes 8+ minutes for alice in borderland and 29 minutes for naruto (5-6x slower) 
 
 ## prerequisites
 
