@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs::File;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::comic::Comic;
@@ -10,7 +10,7 @@ pub fn build_cbz(comic: &Comic) -> Result<()> {
     let file = File::create(&output_path)?;
     let mut zip = ZipWriter::new(file);
 
-    let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     // Add images in order
     for image in comic.processed_files.iter() {

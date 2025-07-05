@@ -1142,7 +1142,7 @@ fn load_and_process_preview(
     let idx = match page_index {
         None => {
             use rand::Rng;
-            rand::thread_rng().gen_range(0..archive_files.len())
+            rand::rng().random_range(0..archive_files.len())
         }
         Some(idx) => idx.clamp(0, archive_files.len() - 1),
     };

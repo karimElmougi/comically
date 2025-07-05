@@ -4,7 +4,10 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::{write::FileOptions, CompressionMethod, ZipWriter};
+use zip::{
+    write::{SimpleFileOptions, ZipWriter},
+    CompressionMethod,
+};
 
 use crate::comic::{Comic, ProcessedImage};
 
@@ -357,8 +360,9 @@ fn create_epub_file(
     let writer = BufWriter::new(file);
     let mut zip = ZipWriter::new(writer);
 
-    let options_stored = FileOptions::default().compression_method(CompressionMethod::Stored);
-    let options_deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options_stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let options_deflated =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add mimetype first (must not be compressed)
     let mimetype_path = epub_dir.join("mimetype");
