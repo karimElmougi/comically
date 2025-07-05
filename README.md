@@ -24,9 +24,11 @@ comically is a blazing fast optimizer built specifically for e-ink displays. wat
 
 | series | volumes | pages | size | epub | awz3/mobi |
 |--------|---------|-------|------|------|-----------|
-| dorohedoro | 23 | 4,647 | 2.5gb | 45s (103 p/s) | 105s (44 p/s) |
-| alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 p/s) | 77s (40 p/s) |
-| naruto | 72 | 12,849 | 17.5gb | 240s (54 p/s) | 334s (38 p/s) | 
+| dorohedoro | 23 | 4,647 | 2.5gb | 45s (103 page/s) | 105s (44 page/s) |
+| alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 page/s) | 77s (40 page/s) |
+| naruto | 72 | 12,849 | 17.5gb | 240s (54 page/s) | 334s (38 page/s) |
+
+> for comparison: kindle comic converter takes 8+ minutes for alice in borderland (~7x slower) 
 
 ## prerequisites
 
