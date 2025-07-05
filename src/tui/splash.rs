@@ -84,7 +84,7 @@ impl Widget for &SplashScreen {
     }
 }
 
-const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/goku-splash-processed.jpg");
+const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/splash.jpg");
 
 const TITLE_SMALL: &str = r#"
 ██████  ██████  ███    ███  ██  ██████   █████   ██       ██       ██    ██
@@ -132,7 +132,7 @@ pub fn splash_title(frame: &mut Frame, theme: Theme) {
 #[test]
 #[ignore]
 fn test_make_splash() {
-    let img = imageproc::image::open("assets/goku-splash-original.jpg").unwrap();
+    let img = imageproc::image::open("assets/goku-splash.jpg").unwrap();
     let img = img.to_luma8();
 
     let threshold_value = 155;
@@ -155,6 +155,6 @@ fn test_make_splash() {
         imageproc::image::imageops::FilterType::Lanczos3,
     );
 
-    let mut output_buffer = std::fs::File::create("assets/goku-splash-processed.jpg").unwrap();
+    let mut output_buffer = std::fs::File::create("assets/splash.jpg").unwrap();
     crate::image_processor::compress_to_jpeg(&img, &mut output_buffer, 90).unwrap();
 }
