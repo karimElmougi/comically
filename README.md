@@ -1,6 +1,6 @@
 # comically
 
-comically fast manga/comic optimizer for e-readers
+comically fast manga & comic optimizer for e-readers
 
 ![preview](assets/preview.png)
 
@@ -8,7 +8,7 @@ comically fast manga/comic optimizer for e-readers
 
 tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-comically is a blazing fast optimizer built specifically for e-ink displays. preview comics right in your terminal, tweak the settings, then convert entire series in minutes, not hours.
+comically is a blazing fast manga & comic optimizer built specifically for e-ink displays. preview pages right in your terminal, tweak the settings, then convert entire series in minutes, not hours.
 
 **features:**
 - live image previews in your terminal
