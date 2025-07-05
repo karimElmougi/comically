@@ -145,7 +145,7 @@ fn show_splash_screen(
     })?;
 
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(1) {
+    while start.elapsed() < Duration::from_millis(1500) {
         if let Some(should_continue) = poll(event_rx, terminal)? {
             return Ok(should_continue);
         }
