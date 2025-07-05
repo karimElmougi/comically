@@ -1,67 +1,77 @@
-# Comically
+# comically
 
-A minimal comic book converter for Kindle devices. Converts CBZ/CBR files to MOBI format.
+comically fast manga/comic optimizer for e-readers
 
-## Features
+![preview](assets/preview.png)
 
-- Simple command-line interface
-- Extracts CBZ comic archives
-- Optimizes images for Kindle display
-- Creates EPUB from comic pages
-- Converts to MOBI using Amazon's KindleGen
+## what's this?
 
-## Prerequisites
+tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-#### Rust
+comically is a blazing fast optimizer built specifically for e-ink displays. preview comics right in your terminal, tweak the settings, then convert entire series in minutes, not hours.
+
+**features:**
+- live image previews in your terminal
+- batch process entire series
+- smart page splitting for double spreads
+- auto contrast for e-ink displays
+- resizes to your exact screen (no wasted pixels = faster loads)
+- way smaller files without quality loss (more comics on device)
+- terminal UI with mouse support
+
+**actually fast:**
+> tested with spread splitting & rotation enabled on kindle pw 11 (1236x1648)
+
+| series | volumes | pages | size | epub | awz3/mobi |
+|--------|---------|-------|------|------|-----------|
+| dorohedoro | 23 | 4,647 | 2.5gb | 45s (103 page/s) | 105s (44 page/s) |
+| alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 page/s) | 77s (40 page/s) |
+| naruto | 72 | 12,849 | 17.5gb | 240s (54 page/s) | 334s (38 page/s) |
+
+> for comparison: [kindle comic converter](https://github.com/ciromattia/kcc) takes 8+ minutes for alice in borderland and 29 minutes for naruto (5-6x slower) 
+
+## prerequisites
+
+#### terminal
+requires a terminal with:
+- sixel or kitty graphics protocol (for image previews)
+- 24-bit color support (truecolor)
+- unicode support
+- mouse support (optional but recommended)
+
+**works great with**: ghostty, wezterm, kitty, iterm2, foot, konsole
+
+**limited support**: alacritty, windows terminal (no image previews)
+
+#### rust
 see https://www.rust-lang.org/tools/install
 
-#### KindleGen 
-On Windows and macOS, install [Kindle Previewer 3 (KP3)](https://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011). KindleGen is automatically included.
+#### kindlegen (for awz3/mobi output)
+on windows and macos, install [kindle previewer 3](https://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011). kindlegen is automatically included.
 
-## Installation
+## installation
 
 ```bash
-git clone https://github.com/nicoburniske/comically.git
-cd comically
-cargo build --release
+cargo install comically
 ```
 
-The executable will be available at `target/release/comically`.
+## usage
 
-## Usage
-
-#### CLI options
-
-```shell
-cargo run --release -- --help
-```
-
-```shell
-Usage: comically [OPTIONS] <INPUT>...
-
-Arguments:
-  <INPUT>...  the input files to process. can be a directory or a file. supports .cbz, .zip, .cbr, .rar files
-
-Options:
-  -p, --prefix <PREFIX>          the prefix to add to the title of the comics + the output file
-  -m, --manga [<MANGA>]          whether to read the comic from right to left [default: true] [possible values: true, false]
-  -q, --quality <QUALITY>        the jpg compression quality of the images, between 0 and 100 [default: 75]
-  -b, --brightness <BRIGHTNESS>  brighten the images positive values will brighten the images, negative values will darken them
-  -c, --contrast <CONTRAST>      the contrast of the images positive values will increase the contrast, negative values will decrease it
-  -t <THREADS>                   the number of threads to use for processing. defaults to the number of logical CPUs
-      --crop <CROP>              crop the dead space on each page [default: true] [possible values: true, false]
-      --split <SPLIT>            split double pages into two separate pages [default: true] [possible values: true, false]
-  -h, --help                     Print help
-  -V, --version                  Print version
-```
-
-#### Basic usage with file
 ```bash
-cargo run --release -- naruto-volume-1.cbz
+comically [directory] [--output path]
 ```
 
+defaults to current directory if no path provided. output defaults to `{directory}/comically/`.
 
-#### Basic usage with directory 
-```bash
-cargo run --release -- naruto-complete/
-```
+### supported devices
+
+**kindle** - paperwhite 11/12, oasis, scribe, basic  
+**kobo** - clara hd/2e, libra 2, sage, elipsa  
+**remarkable** - 2  
+**other** - ipad mini/pro, onyx boox, pocketbook era
+
+### output formats
+
+- **awz3/mobi** - amazon kindle format (REQUIRES KINDLEGEN)
+- **epub** - universal e-reader format
+- **cbz** - comic book archive (processed/optimized)

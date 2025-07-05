@@ -6,7 +6,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
-use crate::{Comic, ProcessedImage};
+use crate::comic::{Comic, ProcessedImage};
 
 /// Builds an EPUB file from the processed images
 pub fn build_epub(comic: &Comic) -> Result<()> {
@@ -25,29 +25,23 @@ pub fn build_epub(comic: &Comic) -> Result<()> {
     create_mimetype_file(&epub_dir)?;
     create_container_xml(&meta_inf_dir)?;
 
-    let cover_html_path = create_cover_page(&oebps_dir, &comic.processed_files)?;
-
     let mut image_map: Vec<(ProcessedImage, String)> = Vec::new();
     for (i, image) in comic.processed_files.iter().enumerate() {
         let filename = format!("image{:03}.jpg", i + 1);
         image_map.push((image.clone(), format!("Images/{}", filename)));
     }
 
+    let cover_html_path = create_cover_page(&oebps_dir, &image_map)?;
+
     // Generate HTML for each image
     let html_dir = oebps_dir.clone();
     let html_files = create_html_files(&html_dir, &image_map)?;
 
     // Create toc.ncx
-    create_toc_ncx(&comic, &oebps_dir, &cover_html_path, &html_files)?;
+    create_toc_ncx(comic, &oebps_dir, &cover_html_path, &html_files)?;
 
     // Create content.opf
-    create_content_opf(
-        &comic,
-        &oebps_dir,
-        &cover_html_path,
-        &html_files,
-        &image_map,
-    )?;
+    create_content_opf(comic, &oebps_dir, &cover_html_path, &html_files, &image_map)?;
 
     // Package as EPUB
     let epub_path = comic.epub_file();
@@ -80,16 +74,16 @@ fn create_container_xml(meta_inf_dir: &Path) -> Result<()> {
 }
 
 /// Creates a cover page using the first image
-fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<PathBuf> {
+fn create_cover_page(oebps_dir: &Path, image_map: &[(ProcessedImage, String)]) -> Result<PathBuf> {
     // If no images, return early
-    if images.is_empty() {
+    if image_map.is_empty() {
         return Err(anyhow::anyhow!("No images found to create cover page"));
     }
 
-    // Use first image as cover
-    let cover_img_path = &images[0].path;
+    // Use the first image from the map as cover
+    let (_, rel_path) = &image_map[0];
 
-    // Create cover HTML
+    // Create cover HTML with relative path from image_map
     let cover_html = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -98,13 +92,13 @@ fn create_cover_page(oebps_dir: &Path, images: &[ProcessedImage]) -> Result<Path
   <title>Cover</title>
   <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 </head>
-<body>
+<body style="background-color:#000000;">
   <div class="cover">
     <img src="{}" alt="Cover"/>
   </div>
 </body>
 </html>"#,
-        cover_img_path.display()
+        rel_path
     );
 
     let cover_html_path = oebps_dir.join("cover.html");
@@ -232,7 +226,7 @@ fn create_content_opf(
     // Add NCX
     manifest
         .push_str(r#"    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
-    manifest.push_str("\n");
+    manifest.push('\n');
 
     // Add cover HTML
     let cover_filename = cover_html_path.file_name().unwrap().to_string_lossy();
@@ -240,7 +234,7 @@ fn create_content_opf(
         r#"    <item id="cover-html" href="{}" media-type="application/xhtml+xml"/>"#,
         cover_filename
     ));
-    manifest.push_str("\n");
+    manifest.push('\n');
 
     // Add content HTML files
     for (i, html_file) in html_files.iter().enumerate() {
@@ -250,7 +244,7 @@ fn create_content_opf(
             i + 1,
             filename
         ));
-        manifest.push_str("\n");
+        manifest.push('\n');
     }
 
     // Add images
@@ -279,7 +273,7 @@ fn create_content_opf(
                 r#"    <item id="image{i}" href="{href}" media-type="{media_type}"/>"#,
             ));
         }
-        manifest.push_str("\n");
+        manifest.push('\n');
     }
 
     // Build spine items with page spread properties
@@ -287,10 +281,8 @@ fn create_content_opf(
 
     let progression_direction = if c.config.right_to_left { "rtl" } else { "ltr" };
     // Add cover as first item in spine (typically center spread)
-    spine.push_str(&format!(
-        r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#
-    ));
-    spine.push_str("\n");
+    spine.push_str(r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#);
+    spine.push('\n');
 
     // Add content pages with alternating spreads
     let mut right_to_left = c.config.right_to_left;
@@ -307,11 +299,13 @@ fn create_content_opf(
             i + 1,
             spread_property
         ));
-        spine.push_str("\n");
+        spine.push('\n');
 
         // Alternate page sides
         right_to_left = !right_to_left;
     }
+
+    let (width, height) = c.config.device_dimensions();
 
     // Create the OPF content with page-progression-direction
     let opf_content = format!(
@@ -329,7 +323,7 @@ fn create_content_opf(
             <meta name="primary-writing-mode" content="{writing_mode}"/>
             <meta name="zero-gutter" content="true"/>
             <meta name="zero-margin" content="true"/>
-            <meta name="ke-border-color" content="#FFFFFF"/>
+            <meta name="ke-border-color" content="#000000"/>
             <meta name="ke-border-width" content="0"/>
             <meta name="orientation-lock" content="none"/>
             <meta name="region-mag" content="true"/>
@@ -340,8 +334,6 @@ fn create_content_opf(
           <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
         title = &c.title,
-        width = c.config.device_dimensions.0,
-        height = c.config.device_dimensions.1,
         writing_mode = if c.config.right_to_left {
             "horizontal-rl"
         } else {

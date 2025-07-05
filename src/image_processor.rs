@@ -1,39 +1,28 @@
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, GrayImage, PixelWithColorType};
+use imageproc::image::{
+    imageops::{self, FilterType},
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+    PixelWithColorType, SubImage,
+};
+use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::mpsc;
 
+use crate::comic::{ComicConfig, ProcessedImage, SplitStrategy};
 use crate::comic_archive::ArchiveFile;
-use crate::{ComicConfig, ProcessedImage};
+use crate::Event;
 
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
     config: ComicConfig,
     output_dir: &Path,
+    comic_id: usize,
+    event_tx: &mpsc::Sender<Event>,
 ) -> Result<Vec<ProcessedImage>> {
-    let (saved_tx, saved_rx) = std::sync::mpsc::channel();
-    let (save_req_tx, save_req_rx) = std::sync::mpsc::channel::<(GrayImage, PathBuf, u8)>();
+    log::info!("Processing archive images");
 
-    std::thread::spawn(move || {
-        while let Ok((img, path, quality)) = save_req_rx.recv() {
-            match save_image(&img, &path, quality) {
-                Ok(_) => {
-                    saved_tx
-                        .send(ProcessedImage {
-                            path,
-                            dimensions: img.dimensions(),
-                        })
-                        .unwrap();
-                }
-                Err(e) => {
-                    log::warn!("Failed to save {}: {}", path.display(), e);
-                }
-            }
-        }
-    });
-
-    archive
+    let mut images = archive
         .par_bridge()
         .filter_map(|load| {
             if let Err(e) = &load {
@@ -42,33 +31,54 @@ pub fn process_archive_images(
             load.ok()
         })
         .filter_map(|archive_file| {
-            let Ok(img) = image::load_from_memory(&archive_file.data) else {
+            let Ok(img) = load_from_memory(&archive_file.data) else {
                 log::warn!("Failed to load image: {}", archive_file.file_name.display());
                 return None;
             };
-            let processed = process_image(img, &config);
 
-            Some((archive_file, processed))
+            Some((archive_file, process_image(img, &config)))
         })
-        .for_each(|(archive_file, images)| {
-            images.into_iter().enumerate().for_each(|(i, img)| {
-                let path = output_dir.join(format!(
-                    "{}_{}_{}.jpg",
-                    archive_file.parent().display(),
-                    archive_file.file_stem().to_string_lossy(),
-                    i + 1
-                ));
-                save_req_tx
-                    .send((img, path, config.compression_quality))
-                    .unwrap();
-            })
-        });
+        .flat_map(|(archive_file, images)| {
+            let result = images
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, img)| {
+                    let path = output_dir.join(format!(
+                        "{}_{}_{}.jpg",
+                        archive_file.parent().display(),
+                        archive_file.file_stem().display(),
+                        i + 1
+                    ));
+                    match save_image(&img, &path, config.compression_quality) {
+                        Ok(_) => {
+                            log::debug!("Saved image: {}", path.display());
+                            Some(ProcessedImage {
+                                path,
+                                dimensions: img.dimensions(),
+                            })
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save {}: {}", path.display(), e);
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<_>>();
 
-    drop(save_req_tx);
+            // Send progress update for each successfully processed image
+            if !result.is_empty() {
+                use crate::comic::{ComicStatus, ProgressEvent};
+                let _ = event_tx.send(Event::Progress(ProgressEvent::ComicUpdate {
+                    id: comic_id,
+                    status: ComicStatus::ImageProcessed,
+                }));
+            }
 
-    let mut images = saved_rx.iter().map(|p| p.clone()).collect::<Vec<_>>();
+            result
+        })
+        .collect::<Vec<_>>();
 
-    images.sort_by(|a, b| a.path.as_os_str().cmp(&b.path.as_os_str()));
+    images.sort_by(|a, b| a.path.as_os_str().cmp(b.path.as_os_str()));
     images.dedup_by_key(|i| i.path.as_os_str().to_owned());
 
     Ok(images)
@@ -76,8 +86,7 @@ pub fn process_archive_images(
 
 /// Process a single image file with Kindle-optimized transformations
 pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
-    let mut img = img.into_luma8();
-    auto_contrast(&mut img, config.brightness, config.contrast);
+    let img = transform(img.into_luma8(), config.brightness, config.gamma);
 
     if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
@@ -92,49 +101,154 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> 
 
 fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
 where
-    I: GenericImageView<Pixel = image::Luma<u8>> + Send + Sync,
+    I: GenericImageView<Pixel = Luma<u8>> + Send + Sync,
 {
+    let target = c.device_dimensions();
     let (width, height) = img.dimensions();
-    let processed_images = if c.split_double_page && width > height {
-        let (left, right) = split_double_pages(img);
+    let is_double_page = width > height;
 
-        let (left_resized, right_resized) = rayon::join(
-            || resize_image(&*left, c.device_dimensions),
-            || resize_image(&*right, c.device_dimensions),
-        );
+    match c.split {
+        SplitStrategy::None => {
+            // Just resize, no splitting or rotation
+            vec![resize_image(img, target)]
+        }
+        SplitStrategy::Split => {
+            if is_double_page {
+                // Split double pages
+                let (left, right) = split_double_pages(img);
 
-        // Determine order based on right_to_left setting
-        let (first, second) = if c.right_to_left {
-            (right_resized, left_resized)
-        } else {
-            (left_resized, right_resized)
-        };
+                let (left_resized, right_resized) = rayon::join(
+                    || resize_image(&*left, target),
+                    || resize_image(&*right, target),
+                );
 
-        vec![first, second]
-    } else {
-        let resized = resize_image(img, c.device_dimensions);
-        vec![resized]
-    };
+                // Determine order based on right_to_left setting
+                let (first, second) = if c.right_to_left {
+                    (right_resized, left_resized)
+                } else {
+                    (left_resized, right_resized)
+                };
 
-    processed_images
+                vec![first, second]
+            } else {
+                vec![resize_image(img, target)]
+            }
+        }
+        SplitStrategy::Rotate => {
+            if is_double_page {
+                let rotated = rotate_image_90(img, c.right_to_left);
+                vec![resize_image(&rotated, target)]
+            } else {
+                vec![resize_image(img, target)]
+            }
+        }
+        SplitStrategy::RotateAndSplit => {
+            if is_double_page {
+                let (left, right) = split_double_pages(img);
+
+                let mut rotated_resized = None;
+                let mut left_resized = None;
+                let mut right_resized = None;
+
+                rayon::scope(|s| {
+                    s.spawn(|_| {
+                        let rotated = rotate_image_90(img, c.right_to_left);
+                        rotated_resized = Some(resize_image(&rotated, target));
+                    });
+                    s.spawn(|_| {
+                        left_resized = Some(resize_image(&*left, target));
+                    });
+                    s.spawn(|_| {
+                        right_resized = Some(resize_image(&*right, target));
+                    });
+                });
+
+                let rotated_resized = rotated_resized.unwrap();
+                let left_resized = left_resized.unwrap();
+                let right_resized = right_resized.unwrap();
+
+                let (first, second) = if c.right_to_left {
+                    (right_resized, left_resized)
+                } else {
+                    (left_resized, right_resized)
+                };
+
+                vec![rotated_resized, first, second]
+            } else {
+                vec![resize_image(img, target)]
+            }
+        }
+    }
 }
 
-fn auto_contrast(img: &mut GrayImage, brightness: Option<i32>, contrast: Option<f32>) {
-    if let Some(brightness) = brightness {
-        image::imageops::colorops::brighten_in_place(img, brightness);
+/// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
+fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
+    let gamma = gamma.clamp(0.1, 3.0);
+    // only apply gamma if it's not 1.0
+    if (gamma - 1.0).abs() > 0.01 {
+        imageproc::map::map_colors_mut(&mut img, |pixel| {
+            let normalized = pixel[0] as f32 / 255.0;
+            let corrected = normalized.powf(gamma);
+            let new_value = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
+            Luma([new_value])
+        });
     }
-    if let Some(contrast) = contrast {
-        image::imageops::colorops::contrast_in_place(img, contrast);
+
+    // Apply autocontrast - find actual min/max and stretch to 0-255
+    let hist = histogram(&img);
+
+    let channel_hist = &hist.channels[0];
+
+    let min = channel_hist
+        .iter()
+        .position(|&count| count > 0)
+        .unwrap_or(0) as u8;
+    let max = channel_hist
+        .iter()
+        .rposition(|&count| count > 0)
+        .unwrap_or(255) as u8;
+
+    // Only stretch if there's a range to work with
+    if max > min {
+        img = imageproc::contrast::stretch_contrast(&img, min, max, 0, 255);
     }
+
+    // Only apply manual adjustments if explicitly set
+    if brightness != 0 {
+        imageops::colorops::brighten_in_place(&mut img, brightness);
+    }
+
+    img
 }
 
-fn split_double_pages<I: GenericImageView>(img: &I) -> (image::SubImage<&I>, image::SubImage<&I>) {
+fn split_double_pages<I: GenericImageView>(img: &I) -> (SubImage<&I>, SubImage<&I>) {
     let (width, height) = img.dimensions();
 
-    let left = image::imageops::crop_imm(img, 0, 0, width / 2, height);
-    let right = image::imageops::crop_imm(img, width / 2, 0, width / 2, height);
+    let left = imageops::crop_imm(img, 0, 0, width / 2, height);
+    let right = imageops::crop_imm(img, width / 2, 0, width / 2, height);
 
     (left, right)
+}
+
+fn rotate_image_90<I>(img: &I, clockwise: bool) -> GrayImage
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
+{
+    let (width, height) = img.dimensions();
+    let mut rotated = GrayImage::new(height, width);
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            if clockwise {
+                rotated.put_pixel(height - 1 - y, x, pixel);
+            } else {
+                rotated.put_pixel(y, width - 1 - x, pixel);
+            }
+        }
+    }
+
+    rotated
 }
 
 // Pixel values above this are considered "white"
@@ -145,7 +259,7 @@ const MIN_MARGIN_WIDTH: u32 = 10;
 const SAFETY_MARGIN: u32 = 2;
 
 /// Auto-crop white margins from all sides of the image
-fn auto_crop<'a>(img: &'a GrayImage) -> Option<image::SubImage<&'a GrayImage>> {
+fn auto_crop(img: &GrayImage) -> Option<SubImage<&GrayImage>> {
     let (width, height) = img.dimensions();
 
     // Left margin: scan from left to right
@@ -222,7 +336,7 @@ fn auto_crop<'a>(img: &'a GrayImage) -> Option<image::SubImage<&'a GrayImage>> {
         && crop_height < height;
 
     if should_crop_horizontal || should_crop_vertical {
-        return Some(image::imageops::crop_imm(
+        return Some(imageops::crop_imm(
             img,
             left_margin,
             top_margin,
@@ -256,14 +370,17 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
             let ny = y as i32 + dy;
 
             // Make sure coordinates are valid
-            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
-                if img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD {
-                    dark_neighbors += 1;
+            if nx >= 0
+                && ny >= 0
+                && nx < width as i32
+                && ny < height as i32
+                && img.get_pixel(nx as u32, ny as u32)[0] < WHITE_THRESHOLD
+            {
+                dark_neighbors += 1;
 
-                    // Early return if we have enough neighbors
-                    if dark_neighbors >= REQUIRED_NEIGHBORS {
-                        return true;
-                    }
+                // Early return if we have enough neighbors
+                if dark_neighbors >= REQUIRED_NEIGHBORS {
+                    return true;
                 }
             }
         }
@@ -275,7 +392,7 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
 fn resize_image<I>(
     img: &I,
     device_dimensions: (u32, u32),
-) -> image::ImageBuffer<I::Pixel, Vec<<I::Pixel as image::Pixel>::Subpixel>>
+) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
 where
     I: GenericImageView,
     <I as GenericImageView>::Pixel: 'static,
@@ -299,7 +416,24 @@ where
     let new_width = (width as f32 * ratio) as u32;
     let new_height = (height as f32 * ratio) as u32;
 
-    image::imageops::resize(img, new_width, new_height, filter)
+    imageops::resize(img, new_width, new_height, filter)
+}
+
+/// Compress an image to JPEG format with the specified quality
+pub fn compress_to_jpeg<I, W>(img: &I, writer: &mut W, quality: u8) -> Result<()>
+where
+    I: GenericImageView,
+    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
+    W: std::io::Write,
+{
+    let mut encoder =
+        imageproc::image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+
+    encoder
+        .encode_image(img)
+        .with_context(|| "Failed to compress image to JPEG")?;
+
+    Ok(())
 }
 
 fn save_image<I>(img: &I, path: &Path, quality: u8) -> Result<()>
@@ -317,11 +451,7 @@ where
     }
 
     let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
-    let mut encoder =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_buffer, quality);
-
-    encoder
-        .encode_image(img)
+    compress_to_jpeg(img, &mut output_buffer, quality)
         .with_context(|| format!("Failed to save processed image: {}", path.display()))?;
 
     Ok(())
@@ -330,7 +460,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{GrayImage, Luma};
+    use imageproc::image::{GrayImage, Luma};
 
     #[test]
     fn test_basic_cropping() {
