@@ -1,8 +1,13 @@
 [package]
 name = "comically"
+authors = ["nico burniske"]
 version = "0.1.0"
 edition = "2021"
-description = "A simple converter for comic book files to Kindle MOBI format"
+description = "comically fast manga & comic optimizer for e-readers"
+keywords = ["manga", "comic", "kindle", "epub", "ebook"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/nicoburniske/comically"
 
 [profile.release]
 incremental = true
@@ -15,9 +20,7 @@ anyhow = "1.0"
 tempfile = "3.10"
 uuid = { version = "1.8", features = ["v4"] }
 log = "0.4"
-regex = "1.10"
 walkdir = "2.4"
-chrono = "0.4"
 rayon = "1.10.0"
 ratatui = "0.29.0"
 tracing-error = "0.2.1"
@@ -25,10 +28,8 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-log = { version = "0.2.0" }
 unrar = "0.5.8"
-itertools = "0.14.0"
 ratatui-image = { version = "8.0.1", features = ["crossterm"] }
 termbg = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-dirs = "5.0"
 rand = "0.8"
