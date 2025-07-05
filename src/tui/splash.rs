@@ -84,7 +84,7 @@ impl Widget for &SplashScreen {
     }
 }
 
-const SPLASH_IMAGE: &[u8] = include_bytes!("../../assets/splash.jpg");
+const SPLASH_IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/splash.jpg"));
 
 const TITLE_SMALL: &str = r#"
 ██████  ██████  ███    ███  ██  ██████   █████   ██       ██       ██    ██
@@ -127,34 +127,4 @@ pub fn splash_title(frame: &mut Frame, theme: Theme) {
         });
 
     frame.render_widget(ascii_paragraph, centered_area);
-}
-
-#[test]
-#[ignore]
-fn test_make_splash() {
-    let img = imageproc::image::open("assets/goku-splash.jpg").unwrap();
-    let img = img.to_luma8();
-
-    let threshold_value = 155;
-
-    let img = imageproc::contrast::threshold(
-        &img,
-        threshold_value,
-        imageproc::contrast::ThresholdType::Binary,
-    );
-
-    let (width, height) = img.dimensions();
-    let factor = 0.2;
-    let width = (width as f32 * factor) as u32;
-    let height = (height as f32 * factor) as u32;
-
-    let img = image::imageops::resize(
-        &img,
-        width,
-        height,
-        imageproc::image::imageops::FilterType::Lanczos3,
-    );
-
-    let mut output_buffer = std::fs::File::create("assets/splash.jpg").unwrap();
-    crate::image_processor::compress_to_jpeg(&img, &mut output_buffer, 90).unwrap();
 }

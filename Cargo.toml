@@ -12,6 +12,9 @@ repository = "https://github.com/nicoburniske/comically"
 [profile.release]
 incremental = true
 
+[build-dependencies]
+imageproc = "0.25"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 imageproc = "0.25"
