@@ -8,15 +8,15 @@ comically fast manga/comic optimizer for e-readers
 
 tired of manga looking terrible on your kindle? waiting forever for conversions?
 
-comically is a blazing fast optimizer built specifically for e-ink displays. watch your comics transform in real-time with live terminal previews, then batch convert at 100+ pages per second.
+comically is a blazing fast optimizer built specifically for e-ink displays. preview comics right in your terminal, tweak the settings, then convert entire series in minutes, not hours.
 
 **features:**
 - live image previews in your terminal
 - batch process entire series
 - smart page splitting for double spreads
 - auto contrast for e-ink displays
-- perfectly sized for your device
-- smaller files, better performance
+- resizes to your exact screen (no wasted pixels = faster loads)
+- way smaller files without quality loss (more comics on device)
 - terminal UI with mouse support
 
 **actually fast:**
