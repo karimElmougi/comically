@@ -6,7 +6,7 @@
 
 <br>
 
-![preview](assets/preview.png)
+![preview](https://github.com/nicoburniske/comically/blob/main/assets/preview.png)
 
 <div align="center">
 
