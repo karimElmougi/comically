@@ -10,7 +10,7 @@ use anyhow::Context;
 use ratatui::{
     backend::Backend,
     crossterm::event,
-    style::{palette, Color, Modifier, Style},
+    style::{palette, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
     Terminal,
@@ -435,18 +435,18 @@ pub fn render_title(theme: &Theme) -> impl Widget {
 
     let (c1, c2, c3, c4, c5) = match theme.mode {
         ThemeMode::Dark => (
-            palette::tailwind::SLATE.c300,
-            palette::tailwind::SLATE.c400,
-            palette::tailwind::CYAN.c600,
-            palette::tailwind::CYAN.c500,
-            palette::tailwind::CYAN.c400,
+            theme.adapt_color(palette::tailwind::SLATE.c300),
+            theme.adapt_color(palette::tailwind::SLATE.c400),
+            theme.adapt_color(palette::tailwind::CYAN.c600),
+            theme.adapt_color(palette::tailwind::CYAN.c500),
+            theme.adapt_color(palette::tailwind::CYAN.c400),
         ),
         ThemeMode::Light => (
-            Color::Rgb(131, 148, 150), // Solarized base0
-            Color::Rgb(101, 123, 131), // Solarized base00
-            Color::Rgb(88, 110, 117),  // Solarized base01
-            Color::Rgb(38, 139, 210),  // Solarized blue
-            Color::Rgb(42, 161, 152),  // Solarized cyan
+            theme.adapt_color(palette::tailwind::STONE.c800),
+            theme.adapt_color(palette::tailwind::STONE.c600),
+            theme.adapt_color(palette::tailwind::CYAN.c800),
+            theme.adapt_color(palette::tailwind::CYAN.c700),
+            theme.adapt_color(palette::tailwind::CYAN.c600),
         ),
     };
 

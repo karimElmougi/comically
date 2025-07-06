@@ -110,9 +110,9 @@ impl SplashScreen {
         buf.set_style(
             area,
             Style::default().bg(if self.is_dark {
-                grayscale(0)
+                grayscale(0, theme)
             } else {
-                grayscale(255)
+                grayscale(255, theme)
             }),
         );
 
@@ -140,16 +140,16 @@ impl SplashScreen {
                         let cell = &mut buf[(term_x, term_y)];
 
                         if top > 245 && bottom > 245 {
-                            cell.set_char('█').set_fg(grayscale(255));
+                            cell.set_char('█').set_fg(grayscale(255, theme));
                         } else if top < 10 && bottom < 10 {
-                            cell.set_char('█').set_fg(grayscale(0));
+                            cell.set_char('█').set_fg(grayscale(0, theme));
                         } else {
                             let diff = (top as i16 - bottom as i16).abs();
 
                             if diff > 50 {
                                 // Significant difference - use half blocks
-                                let top_color = grayscale(top);
-                                let bottom_color = grayscale(bottom);
+                                let top_color = grayscale(top, theme);
+                                let bottom_color = grayscale(bottom, theme);
 
                                 if top > bottom {
                                     cell.set_char('▀').set_fg(top_color).set_bg(bottom_color);
@@ -162,9 +162,9 @@ impl SplashScreen {
 
                                 // For very light or very dark areas, use absolute black or white
                                 if gray < 30 {
-                                    cell.set_bg(grayscale(0)).set_char(' ');
+                                    cell.set_bg(grayscale(0, theme)).set_char(' ');
                                 } else if gray > 225 {
-                                    cell.set_bg(grayscale(255)).set_char(' ');
+                                    cell.set_bg(grayscale(255, theme)).set_char(' ');
                                 } else {
                                     // shading characters only for mid-tones
                                     let ch = match gray {
@@ -174,14 +174,14 @@ impl SplashScreen {
                                         181..=225 => '█',
                                         _ => ' ',
                                     };
-                                    let color = grayscale(gray);
+                                    let color = grayscale(gray, theme);
                                     cell.set_char(ch).set_fg(color);
                                 }
                             }
                         }
                     }
                     (Some(value), None) | (None, Some(value)) => {
-                        let color = grayscale(value);
+                        let color = grayscale(value, theme);
                         buf[(term_x, term_y)].set_bg(color).set_char(' ');
                     }
                     _ => {}
@@ -192,8 +192,8 @@ impl SplashScreen {
 }
 
 #[inline]
-fn grayscale(value: u8) -> Color {
-    Color::Rgb(value, value, value)
+fn grayscale(value: u8, theme: &Theme) -> Color {
+    theme.adapt_rgb(value, value, value)
 }
 
 const SPLASH_IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/splash.jpg"));
@@ -236,9 +236,9 @@ pub fn splash_title(frame: &mut Frame, theme: &Theme) {
         )
         .alignment(Alignment::Center)
         .bg(if theme.is_dark() {
-            Color::Rgb(0, 0, 0)
+            theme.adapt_rgb(0, 0, 0)
         } else {
-            Color::Rgb(255, 255, 255)
+            theme.adapt_rgb(255, 255, 255)
         });
 
     frame.render_widget(ascii_paragraph, centered_area);
