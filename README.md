@@ -32,7 +32,7 @@ comically is a blazing fast manga & comic optimizer built specifically for e-ink
 
 ## prerequisites
 
-#### terminal
+### terminal
 requires a terminal with: sixel or kitty graphics protocol (for image previews)
 
 - **works great with:**
@@ -45,13 +45,13 @@ requires a terminal with: sixel or kitty graphics protocol (for image previews)
 
 - **limited support :** (no image previews)
   - macOS terminal
-  - [alacritty](https://alacritty.org/)
   - windows terminal 
+  - [alacritty](https://alacritty.org/)
 
-#### rust
+### rust
 see https://www.rust-lang.org/tools/install
 
-#### kindlegen (for awz3/mobi output)
+### kindlegen (for awz3/mobi output)
 on windows and macos, install [kindle previewer 3](https://www.amazon.com/Kindle-Previewer/b?ie=UTF8&node=21381691011). kindlegen is automatically included.
 
 ## installation
