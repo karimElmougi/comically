@@ -141,7 +141,7 @@ fn show_splash_screen(
         Ok(PollResult::None)
     }
 
-    let mut splash = SplashScreen::new(10, font_size, &theme)?;
+    let mut splash = SplashScreen::new(10, font_size, theme)?;
 
     while !splash.is_complete() {
         match poll(event_rx, terminal, theme)? {
