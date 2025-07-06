@@ -24,24 +24,29 @@ comically is a blazing fast manga & comic optimizer built specifically for e-ink
 
 | series | volumes | pages | size | epub | awz3/mobi |
 |--------|---------|-------|------|------|-----------|
-| dorohedoro | 23 | 4,647 | 2.5gb | 45s (103 page/s) | 105s (44 page/s) |
-| alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 page/s) | 77s (40 page/s) |
-| naruto | 72 | 12,849 | 17.5gb | 240s (54 page/s) | 334s (38 page/s) |
+| dorohedoro | 23 | 4,647 | 2.5gb | 45s (103 page/s) | 1m 45s (44 page/s) |
+| alice in borderland | 9 | 3,064 | 4.5gb | 55s (56 page/s) | 1m 17s (40 page/s) |
+| naruto | 72 | 12,849 | 17.5gb | 4m (54 page/s) | 5m 34s (38 page/s) |
 
 > for comparison: [kindle comic converter](https://github.com/ciromattia/kcc) takes 8+ minutes for alice in borderland and 29 minutes for naruto (5-6x slower) 
 
 ## prerequisites
 
 #### terminal
-requires a terminal with:
-- sixel or kitty graphics protocol (for image previews)
-- 24-bit color support (truecolor)
-- unicode support
-- mouse support (optional but recommended)
+requires a terminal with: sixel or kitty graphics protocol (for image previews)
 
-**works great with**: ghostty, wezterm, kitty, iterm2, foot, konsole
+- **works great with:**
+  - [ghostty](https://ghostty.org)
+  - [wezterm](https://wezfurlong.org/wezterm/)
+  - [kitty](https://sw.kovidgoyal.net/kitty/)
+  - [iterm2](https://iterm2.com/)
+  - [foot](https://codeberg.org/dnkl/foot)
+  - [konsole](https://konsole.kde.org/)
 
-**limited support**: alacritty, windows terminal (no image previews)
+- **limited support :** (no image previews)
+  - macOS terminal
+  - [alacritty](https://alacritty.org/)
+  - windows terminal 
 
 #### rust
 see https://www.rust-lang.org/tools/install
