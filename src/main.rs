@@ -26,7 +26,7 @@ use crate::tui::config::ConfigEvent;
 #[derive(Parser, Debug)]
 #[command(
     name = "comically",
-    about = "A visual manga converter for Kindle MOBI format",
+    about = "comically fast manga & comic optimizer for e-readers",
     version
 )]
 struct Args {
