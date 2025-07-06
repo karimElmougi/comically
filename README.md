@@ -80,3 +80,7 @@ defaults to current directory if no path provided. output defaults to `{director
 - **awz3/mobi** - amazon kindle format (REQUIRES KINDLEGEN)
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
+
+---
+
+*inspired by the excellent work of [Kindle Comic Converter](https://github.com/ciromattia/kcc)*
