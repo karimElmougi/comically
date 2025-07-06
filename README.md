@@ -1,8 +1,19 @@
 # comically
 
-comically fast manga & comic optimizer for e-readers
+<div align="center">
+    <i>comically fast manga & comic optimizer for e-readers</i>
+</div>
+
+<br>
 
 ![preview](assets/preview.png)
+
+<div align="center">
+
+[![Crates.io](https://img.shields.io/crates/v/comically?style=flat-square)](https://crates.io/crates/comically)
+[![License](https://img.shields.io/crates/l/comically?style=flat-square)](https://github.com/nicoburniske/comically/blob/main/LICENSE)
+
+</div>
 
 ## what's this?
 
@@ -81,6 +92,6 @@ defaults to current directory if no path provided. output defaults to `{director
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
 
----
+## acknowledgements
 
 *inspired by the excellent work of [Kindle Comic Converter](https://github.com/ciromattia/kcc)*
