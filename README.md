@@ -57,7 +57,7 @@ on windows and macos, install [kindle previewer 3](https://www.amazon.com/Kindle
 ## installation
 
 ```bash
-cargo install comically
+cargo install --locked comically
 ```
 
 ## usage
@@ -77,7 +77,7 @@ defaults to current directory if no path provided. output defaults to `{director
 
 ### output formats
 
-- **awz3/mobi** - amazon kindle format (REQUIRES KINDLEGEN)
+- **awz3/mobi** - amazon kindle format [requires kindlegen](#kindlegen-for-awz3mobi-output)
 - **epub** - universal e-reader format
 - **cbz** - comic book archive (processed/optimized)
 
