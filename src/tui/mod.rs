@@ -51,7 +51,7 @@ pub fn run(
 
     terminal: &mut Terminal<impl Backend>,
     picker: ratatui_image::picker::Picker,
-    theme: Theme,
+    mut theme: Theme,
 
     event_tx: mpsc::Sender<Event>,
     mut event_rx: mpsc::Receiver<Event>,
@@ -68,7 +68,7 @@ pub fn run(
         }
     };
 
-    match show_splash_screen(terminal, &mut event_rx, theme) {
+    match show_splash_screen(terminal, picker.font_size(), &mut event_rx, &mut theme) {
         Ok(true) => {}
         Ok(false) => {
             return;
@@ -99,56 +99,92 @@ pub fn run(
 // if true continue, else exit
 fn show_splash_screen(
     terminal: &mut Terminal<impl Backend>,
+    font_size: (u16, u16),
     event_rx: &mut mpsc::Receiver<Event>,
-    theme: Theme,
+    theme: &mut Theme,
 ) -> anyhow::Result<bool> {
+    enum PollResult {
+        None,
+        Skip,
+        Quit,
+        Resize(ratatui_image::picker::Picker),
+    }
+
     fn poll(
         event_rx: &mut mpsc::Receiver<Event>,
         terminal: &mut Terminal<impl Backend>,
-    ) -> anyhow::Result<Option<bool>> {
+        theme: &mut Theme,
+    ) -> anyhow::Result<PollResult> {
         while let Ok(event) = event_rx.try_recv() {
             match event {
                 Event::Key(key) => match key.code {
                     event::KeyCode::Char('q') | event::KeyCode::Esc => {
-                        return Ok(Some(false));
+                        return Ok(PollResult::Quit);
                     }
                     event::KeyCode::Char(' ') => {
-                        return Ok(Some(true));
+                        return Ok(PollResult::Skip);
+                    }
+                    event::KeyCode::Char('t') => {
+                        theme.toggle();
                     }
                     _ => {}
                 },
-                Event::Resize(_) => terminal.autoresize()?,
+                Event::Resize(p) => {
+                    terminal.autoresize()?;
+                    if let Some(p) = p {
+                        return Ok(PollResult::Resize(p));
+                    }
+                }
                 _ => {}
             }
         }
-        Ok(None)
+        Ok(PollResult::None)
     }
 
-    let mut splash = SplashScreen::new(10, theme.is_dark())?;
+    let mut splash = SplashScreen::new(10, font_size, &theme)?;
 
     while !splash.is_complete() {
-        if let Some(should_continue) = poll(event_rx, terminal)? {
-            return Ok(should_continue);
+        match poll(event_rx, terminal, theme)? {
+            PollResult::Skip => {
+                return Ok(true);
+            }
+            PollResult::Quit => {
+                return Ok(false);
+            }
+            PollResult::Resize(p) => {
+                splash.set_font_size(p.font_size());
+            }
+            _ => {}
         }
 
         terminal.draw(|frame| {
-            frame.render_widget(&splash, frame.area());
+            splash.render(frame.area(), frame.buffer_mut(), theme);
         })?;
 
         splash.advance();
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    terminal.draw(|frame| {
-        frame.render_widget(&splash, frame.area());
-        splash_title(frame, theme);
-    })?;
-
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_millis(1500) {
-        if let Some(should_continue) = poll(event_rx, terminal)? {
-            return Ok(should_continue);
+        match poll(event_rx, terminal, theme)? {
+            PollResult::Skip => {
+                return Ok(true);
+            }
+            PollResult::Quit => {
+                return Ok(false);
+            }
+            PollResult::Resize(p) => {
+                splash.set_font_size(p.font_size());
+            }
+            PollResult::None => {}
         }
+
+        terminal.draw(|frame| {
+            splash.render(frame.area(), frame.buffer_mut(), theme);
+            splash_title(frame, theme);
+        })?;
+
         std::thread::sleep(Duration::from_millis(100));
     }
 

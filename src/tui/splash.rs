@@ -3,32 +3,40 @@ use std::io::Cursor;
 use imageproc::image::{self, GrayImage};
 use ratatui::layout::Constraint;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::tui::Theme;
 
 pub struct SplashScreen {
+    is_dark: bool,
     image: GrayImage,
+    font_size: (u16, u16),
     current_step: u32,
     total_steps: u32,
+    aspect_ratio: f32,
 }
 
 impl SplashScreen {
-    pub fn new(total_steps: u32, is_dark: bool) -> anyhow::Result<Self> {
+    pub fn new(total_steps: u32, font_size: (u16, u16), theme: &Theme) -> anyhow::Result<Self> {
         let cursor = Cursor::new(SPLASH_IMAGE);
         let img = image::ImageReader::new(cursor)
             .with_guessed_format()?
             .decode()?;
 
         let mut image = img.to_luma8();
-        if is_dark {
+        if theme.is_dark() {
             image::imageops::colorops::invert(&mut image);
         }
 
+        let aspect_ratio = image.width() as f32 / image.height() as f32;
+
         Ok(Self {
+            is_dark: theme.is_dark(),
+            font_size,
             image,
             current_step: 0,
             total_steps,
+            aspect_ratio,
         })
     }
 
@@ -40,6 +48,36 @@ impl SplashScreen {
         if self.current_step < self.total_steps {
             self.current_step += 1;
         }
+    }
+
+    pub fn set_font_size(&mut self, font_size: (u16, u16)) {
+        self.font_size = font_size;
+    }
+
+    fn calculate_render_area(&self, area: Rect) -> Rect {
+        let char_aspect_ratio = self.font_size.1 as f32 / self.font_size.0 as f32;
+
+        let aspect_ratio = self.aspect_ratio * char_aspect_ratio;
+
+        let term_aspect = area.width as f32 / area.height as f32;
+
+        let (width, height) = if aspect_ratio > term_aspect {
+            // image is wider - fit to width
+            let width = area.width;
+            let height = (width as f32 / aspect_ratio) as u16;
+            (width, height.min(area.height))
+        } else {
+            // image is taller - fit to height
+            let height = area.height;
+            let width = (height as f32 * aspect_ratio) as u16;
+            (width.min(area.width), height)
+        };
+
+        // center
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+
+        Rect::new(x, y, width, height)
     }
 
     #[inline(always)]
@@ -62,19 +100,35 @@ impl SplashScreen {
         let luma = self.image.get_pixel(x, y).0[0];
         Some((luma as f32 * brightness) as u8)
     }
-}
 
-impl Widget for &SplashScreen {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let term_x = area.left() + x;
-                let term_y = area.top() + y;
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        if theme.is_dark() != self.is_dark {
+            image::imageops::colorops::invert(&mut self.image);
+            self.is_dark = theme.is_dark();
+        }
 
-                let img_x = (x as f32 / area.width as f32 * self.image.width() as f32) as u32;
-                let img_y_top =
-                    (y as f32 * 2.0 / area.height as f32 * self.image.height() as f32 / 2.0) as u32;
-                let img_y_bottom = ((y as f32 * 2.0 + 1.0) / area.height as f32
+        buf.set_style(
+            area,
+            Style::default().bg(if self.is_dark {
+                grayscale(0)
+            } else {
+                grayscale(255)
+            }),
+        );
+
+        let render_area = self.calculate_render_area(area);
+
+        for y in 0..render_area.height {
+            for x in 0..render_area.width {
+                let term_x = render_area.left() + x;
+                let term_y = render_area.top() + y;
+
+                let img_x =
+                    (x as f32 / render_area.width as f32 * self.image.width() as f32) as u32;
+                let img_y_top = (y as f32 * 2.0 / render_area.height as f32
+                    * self.image.height() as f32
+                    / 2.0) as u32;
+                let img_y_bottom = ((y as f32 * 2.0 + 1.0) / render_area.height as f32
                     * self.image.height() as f32
                     / 2.0) as u32;
 
@@ -160,7 +214,7 @@ fn max_line_width(text: &str) -> u16 {
         .unwrap_or(0) as u16
 }
 
-pub fn splash_title(frame: &mut Frame, theme: Theme) {
+pub fn splash_title(frame: &mut Frame, theme: &Theme) {
     let area = frame.area();
 
     let title = TITLE;
