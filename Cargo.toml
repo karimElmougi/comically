@@ -1,7 +1,7 @@
 [package]
 name = "comically"
 authors = ["nico burniske"]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "comically fast manga & comic optimizer for e-readers"
 keywords = ["manga", "comic", "kindle", "epub", "ebook"]
