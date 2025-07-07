@@ -6,6 +6,8 @@ use zip::ZipWriter;
 use crate::comic::Comic;
 
 pub fn build_cbz(comic: &Comic) -> Result<()> {
+    log::info!("Building CBZ: {:?}", comic);
+
     let output_path = comic.output_path();
     let file = File::create(&output_path)?;
     let mut zip = ZipWriter::new(file);

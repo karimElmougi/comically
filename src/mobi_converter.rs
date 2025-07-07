@@ -7,6 +7,7 @@ use crate::comic::Comic;
 
 /// Converts an EPUB file to MOBI using Amazon's KindleGen
 pub fn create_mobi(comic: &Comic) -> Result<SpawnedKindleGen> {
+    log::info!("Creating MOBI: {:?}", comic);
     let epub_path = comic.epub_file();
     if !epub_path.exists() {
         anyhow::bail!("EPUB file does not exist: {}", epub_path.display());

@@ -172,6 +172,22 @@ pub struct Comic {
     pub config: ComicConfig,
 }
 
+impl std::fmt::Debug for Comic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Comic")
+            .field("id", &self.id)
+            .field("tx", &self.tx)
+            .field("temp_dir", &self.temp_dir)
+            .field("processed_dir", &self.processed_dir)
+            .field("processed_files", &self.processed_files.len())
+            .field("title", &self.title)
+            .field("output_dir", &self.output_dir)
+            .field("input", &self.input)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl Drop for Comic {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.temp_dir);
@@ -244,9 +260,8 @@ impl Comic {
             OutputFormat::Cbz => "cbz",
         };
 
-        self.output_dir
-            .join(filename.as_ref())
-            .with_extension(extension)
+        // don't use .with_extension() bc it replaces everything after the first dot
+        self.output_dir.join(format!("{}.{}", filename, extension))
     }
 
     pub fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {
@@ -305,4 +320,39 @@ impl Comic {
     fn notify(&self, event: ProgressEvent) {
         let _ = self.tx.send(Event::Progress(event));
     }
+}
+
+#[test]
+fn output_path_with_dots() {
+    use std::sync::mpsc;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("output");
+    let (tx, _rx) = mpsc::channel();
+
+    let mut config = ComicConfig::default();
+    config.output_format = OutputFormat::Cbz;
+
+    let comic = Comic::new(
+        0,
+        PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"),
+        output_dir.clone(),
+        "Dr. STONE v01 (2018) (Digital) (1r0n)".to_string(),
+        config,
+        tx,
+    )
+    .unwrap();
+
+    let output_path = comic.output_path();
+    assert_eq!(
+        output_path,
+        output_dir.join("Dr. STONE v01 (2018) (Digital) (1r0n).cbz")
+    );
+
+    assert_eq!(
+        output_path.file_name().unwrap().to_str().unwrap(),
+        "Dr. STONE v01 (2018) (Digital) (1r0n).cbz",
+        "filename is preserved"
+    );
 }
