@@ -259,10 +259,10 @@ impl ConfigState {
                 ));
             }
             KeyCode::Char('o') => {
-                self.config.margin_color = if self.config.margin_color == 255 {
-                    0
-                } else {
-                    255
+                self.config.margin_color = match self.config.margin_color {
+                    None => Some(0),
+                    Some(0) => Some(255),
+                    Some(_) => None,
                 };
             }
             KeyCode::Char('p') => {
@@ -764,10 +764,13 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(1)
                 .areas(row1);
 
-        let [auto_crop_area, output_format_area, margin_color_area] =
-            Layout::horizontal([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(34)])
-                .spacing(1)
-                .areas(row2);
+        let [auto_crop_area, output_format_area, margin_color_area] = Layout::horizontal([
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+        ])
+        .spacing(1)
+        .areas(row2);
 
         base_button(
             if self.state.config.right_to_left {
@@ -840,20 +843,20 @@ impl<'a> Widget for SettingsWidget<'a> {
         .render(output_format_area, buf);
 
         base_button(
-            if self.state.config.margin_color == 255 {
-                "white"
-            } else {
-                "black"
+            match self.state.config.margin_color {
+                None => "none",
+                Some(0) => "black",
+                Some(_) => "white",
             },
             self.state,
         )
         .label("margin color")
         .hint("[o]")
         .on_click(|| {
-            self.state.config.margin_color = if self.state.config.margin_color == 255 {
-                0
-            } else {
-                255
+            self.state.config.margin_color = match self.state.config.margin_color {
+                None => Some(0),      // none -> black
+                Some(0) => Some(255), // black -> white
+                Some(_) => None,      // white -> none
             };
         })
         .render(margin_color_area, buf);
@@ -1363,7 +1366,7 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "(default: white)",
+                "(default: none)",
                 Style::default()
                     .fg(theme.content)
                     .add_modifier(Modifier::DIM),
@@ -1372,13 +1375,18 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
         Line::from("  fills empty space when centering images"),
         Line::from(vec![
             Span::raw("  • "),
-            Span::styled("white", Style::default().fg(theme.primary)),
-            Span::raw(": white margins (255)"),
+            Span::styled("none", Style::default().fg(theme.primary)),
+            Span::raw(": no margins, keep original aspect ratio"),
         ]),
         Line::from(vec![
             Span::raw("  • "),
             Span::styled("black", Style::default().fg(theme.primary)),
             Span::raw(": black margins (0)"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("white", Style::default().fg(theme.primary)),
+            Span::raw(": white margins (255)"),
         ]),
         Line::from(""),
         Line::from(vec![

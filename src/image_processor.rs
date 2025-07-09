@@ -107,7 +107,7 @@ where
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
 
-    let margin = Luma([c.margin_color]);
+    let margin = c.margin_color.map(|color| Luma([color]));
 
     match c.split {
         SplitStrategy::None => {
@@ -394,7 +394,7 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
 fn resize_image<I>(
     img: &I,
     device_dimensions: (u32, u32),
-    margin_color: I::Pixel,
+    margin_color: Option<I::Pixel>,
 ) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
 where
     I: GenericImageView,
@@ -403,7 +403,6 @@ where
     let (target_width, target_height) = device_dimensions;
     let (width, height) = img.dimensions();
 
-    // Choose resize method based on whether we're upscaling or downscaling
     let filter = if width <= target_width && height <= target_height {
         // For upscaling, Bicubic gives smoother results for manga
         FilterType::CatmullRom
@@ -424,6 +423,11 @@ where
     if new_width == target_width && new_height == target_height {
         return resized;
     }
+
+    let margin_color = match margin_color {
+        Some(color) => color,
+        None => return resized,
+    };
 
     let mut img = ImageBuffer::from_pixel(target_width, target_height, margin_color);
 
