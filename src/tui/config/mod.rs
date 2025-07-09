@@ -258,6 +258,13 @@ impl ConfigState {
                     self.config.device.clone(),
                 ));
             }
+            KeyCode::Char('o') => {
+                self.config.margin_color = if self.config.margin_color == 255 {
+                    0
+                } else {
+                    255
+                };
+            }
             KeyCode::Char('p') => {
                 self.load_preview();
             }
@@ -757,8 +764,8 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(1)
                 .areas(row1);
 
-        let [auto_crop_area, output_format_area] =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        let [auto_crop_area, output_format_area, margin_color_area] =
+            Layout::horizontal([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(34)])
                 .spacing(1)
                 .areas(row2);
 
@@ -831,6 +838,25 @@ impl<'a> Widget for SettingsWidget<'a> {
             };
         })
         .render(output_format_area, buf);
+
+        base_button(
+            if self.state.config.margin_color == 255 {
+                "white"
+            } else {
+                "black"
+            },
+            self.state,
+        )
+        .label("margin color")
+        .hint("[o]")
+        .on_click(|| {
+            self.state.config.margin_color = if self.state.config.margin_color == 255 {
+                0
+            } else {
+                255
+            };
+        })
+        .render(margin_color_area, buf);
 
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] =
@@ -1328,6 +1354,32 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
             ),
         ]),
         Line::from("  removes blank space for better fit"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "margin color ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(default: white)",
+                Style::default()
+                    .fg(theme.content)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from("  fills empty space when centering images"),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("white", Style::default().fg(theme.primary)),
+            Span::raw(": white margins (255)"),
+        ]),
+        Line::from(vec![
+            Span::raw("  • "),
+            Span::styled("black", Style::default().fg(theme.primary)),
+            Span::raw(": black margins (0)"),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::styled(

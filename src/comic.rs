@@ -104,6 +104,7 @@ pub struct ComicConfig {
     // Gamma correction: 0.0-3.0
     pub gamma: f32,
     pub output_format: OutputFormat,
+    pub margin_color: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -126,6 +127,7 @@ impl Default for ComicConfig {
             brightness: -10,
             gamma: 1.8,
             output_format: OutputFormat::Mobi,
+            margin_color: 255,
         }
     }
 }

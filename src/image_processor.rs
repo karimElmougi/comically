@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
-    PixelWithColorType, SubImage,
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, Luma, PixelWithColorType,
+    SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -110,7 +110,7 @@ where
     match c.split {
         SplitStrategy::None => {
             // Just resize, no splitting or rotation
-            vec![resize_image(img, target)]
+            vec![resize_image(img, target, c.margin_color)]
         }
         SplitStrategy::Split => {
             if is_double_page {
@@ -118,8 +118,8 @@ where
                 let (left, right) = split_double_pages(img);
 
                 let (left_resized, right_resized) = rayon::join(
-                    || resize_image(&*left, target),
-                    || resize_image(&*right, target),
+                    || resize_image(&*left, target, c.margin_color),
+                    || resize_image(&*right, target, c.margin_color),
                 );
 
                 // Determine order based on right_to_left setting
@@ -131,15 +131,15 @@ where
 
                 vec![first, second]
             } else {
-                vec![resize_image(img, target)]
+                vec![resize_image(img, target, c.margin_color)]
             }
         }
         SplitStrategy::Rotate => {
             if is_double_page {
                 let rotated = rotate_image_90(img, c.right_to_left);
-                vec![resize_image(&rotated, target)]
+                vec![resize_image(&rotated, target, c.margin_color)]
             } else {
-                vec![resize_image(img, target)]
+                vec![resize_image(img, target, c.margin_color)]
             }
         }
         SplitStrategy::RotateAndSplit => {
@@ -153,13 +153,13 @@ where
                 rayon::scope(|s| {
                     s.spawn(|_| {
                         let rotated = rotate_image_90(img, c.right_to_left);
-                        rotated_resized = Some(resize_image(&rotated, target));
+                        rotated_resized = Some(resize_image(&rotated, target, c.margin_color));
                     });
                     s.spawn(|_| {
-                        left_resized = Some(resize_image(&*left, target));
+                        left_resized = Some(resize_image(&*left, target, c.margin_color));
                     });
                     s.spawn(|_| {
-                        right_resized = Some(resize_image(&*right, target));
+                        right_resized = Some(resize_image(&*right, target, c.margin_color));
                     });
                 });
 
@@ -175,7 +175,7 @@ where
 
                 vec![rotated_resized, first, second]
             } else {
-                vec![resize_image(img, target)]
+                vec![resize_image(img, target, c.margin_color)]
             }
         }
     }
@@ -389,13 +389,9 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
     dark_neighbors >= REQUIRED_NEIGHBORS
 }
 
-fn resize_image<I>(
-    img: &I,
-    device_dimensions: (u32, u32),
-) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
+fn resize_image<I>(img: &I, device_dimensions: (u32, u32), margin_color: u8) -> GrayImage
 where
-    I: GenericImageView,
-    <I as GenericImageView>::Pixel: 'static,
+    I: GenericImageView<Pixel = Luma<u8>>,
 {
     let (target_width, target_height) = device_dimensions;
     let (width, height) = img.dimensions();
@@ -416,7 +412,22 @@ where
     let new_width = (width as f32 * ratio) as u32;
     let new_height = (height as f32 * ratio) as u32;
 
-    imageops::resize(img, new_width, new_height, filter)
+    let resized = imageops::resize(img, new_width, new_height, filter);
+
+    if new_width == target_width && new_height == target_height {
+        return resized;
+    }
+
+    let mut img = GrayImage::from_pixel(target_width, target_height, Luma([margin_color]));
+
+    // Calculate centering offsets
+    let x_offset = (target_width - new_width) / 2;
+    let y_offset = (target_height - new_height) / 2;
+
+    // Copy the resized image to the center of the final image
+    imageops::overlay(&mut img, &resized, x_offset.into(), y_offset.into());
+
+    img
 }
 
 /// Compress an image to JPEG format with the specified quality
