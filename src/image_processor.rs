@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, Luma, PixelWithColorType,
-    SubImage,
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+    PixelWithColorType, SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -107,10 +107,12 @@ where
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
 
+    let margin = Luma([c.margin_color]);
+
     match c.split {
         SplitStrategy::None => {
             // Just resize, no splitting or rotation
-            vec![resize_image(img, target, c.margin_color)]
+            vec![resize_image(img, target, margin)]
         }
         SplitStrategy::Split => {
             if is_double_page {
@@ -118,8 +120,8 @@ where
                 let (left, right) = split_double_pages(img);
 
                 let (left_resized, right_resized) = rayon::join(
-                    || resize_image(&*left, target, c.margin_color),
-                    || resize_image(&*right, target, c.margin_color),
+                    || resize_image(&*left, target, margin),
+                    || resize_image(&*right, target, margin),
                 );
 
                 // Determine order based on right_to_left setting
@@ -131,15 +133,15 @@ where
 
                 vec![first, second]
             } else {
-                vec![resize_image(img, target, c.margin_color)]
+                vec![resize_image(img, target, margin)]
             }
         }
         SplitStrategy::Rotate => {
             if is_double_page {
                 let rotated = rotate_image_90(img, c.right_to_left);
-                vec![resize_image(&rotated, target, c.margin_color)]
+                vec![resize_image(&rotated, target, margin)]
             } else {
-                vec![resize_image(img, target, c.margin_color)]
+                vec![resize_image(img, target, margin)]
             }
         }
         SplitStrategy::RotateAndSplit => {
@@ -153,13 +155,13 @@ where
                 rayon::scope(|s| {
                     s.spawn(|_| {
                         let rotated = rotate_image_90(img, c.right_to_left);
-                        rotated_resized = Some(resize_image(&rotated, target, c.margin_color));
+                        rotated_resized = Some(resize_image(&rotated, target, margin));
                     });
                     s.spawn(|_| {
-                        left_resized = Some(resize_image(&*left, target, c.margin_color));
+                        left_resized = Some(resize_image(&*left, target, margin));
                     });
                     s.spawn(|_| {
-                        right_resized = Some(resize_image(&*right, target, c.margin_color));
+                        right_resized = Some(resize_image(&*right, target, margin));
                     });
                 });
 
@@ -175,7 +177,7 @@ where
 
                 vec![rotated_resized, first, second]
             } else {
-                vec![resize_image(img, target, c.margin_color)]
+                vec![resize_image(img, target, margin)]
             }
         }
     }
@@ -389,9 +391,14 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
     dark_neighbors >= REQUIRED_NEIGHBORS
 }
 
-fn resize_image<I>(img: &I, device_dimensions: (u32, u32), margin_color: u8) -> GrayImage
+fn resize_image<I>(
+    img: &I,
+    device_dimensions: (u32, u32),
+    margin_color: I::Pixel,
+) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
 where
-    I: GenericImageView<Pixel = Luma<u8>>,
+    I: GenericImageView,
+    <I as GenericImageView>::Pixel: 'static,
 {
     let (target_width, target_height) = device_dimensions;
     let (width, height) = img.dimensions();
@@ -418,7 +425,7 @@ where
         return resized;
     }
 
-    let mut img = GrayImage::from_pixel(target_width, target_height, Luma([margin_color]));
+    let mut img = ImageBuffer::from_pixel(target_width, target_height, margin_color);
 
     // Calculate centering offsets
     let x_offset = (target_width - new_width) / 2;
