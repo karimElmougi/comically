@@ -99,7 +99,7 @@ pub const DEVICE_PRESETS: &[DevicePreset] = &[
     },
     DevicePreset {
         name: Cow::Borrowed("Kindle Basic"),
-        dimensions: (800, 600),
+        dimensions: (600, 800),
     },
     DevicePreset {
         name: Cow::Borrowed("Kindle 11"),
