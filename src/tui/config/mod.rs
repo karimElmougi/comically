@@ -693,8 +693,20 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.state.theme.accent))
             .render(shortcut_area, buf);
 
-        let [minus_area, value_area, plus_area] =
-            Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(buttons_area);
+        let total_width = buttons_area.width;
+        let third = total_width / 3;
+        let button_width = if third % 2 == 0 && third > 1 {
+            third - 1
+        } else {
+            third
+        };
+
+        let [minus_area, value_area, plus_area] = Layout::horizontal([
+            Constraint::Length(button_width),
+            Constraint::Min(0),
+            Constraint::Length(button_width),
+        ])
+        .areas(buttons_area);
 
         // Render [-] button
         base_button("-", self.state)
@@ -750,33 +762,27 @@ impl<'a> Widget for SettingsWidget<'a> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let [toggles_area, buttons_area, device_selector_area, process_button_area] =
+        let [row1, row2, buttons_area, device_selector_area, process_button_area] =
             Layout::vertical([
-                Constraint::Length(9),  // Two rows of toggle buttons
-                Constraint::Length(4),  // Buttons (quality, brightness, contrast)
-                Constraint::Length(4),  // Device selector button
-                Constraint::Min(3),     // bottom button
+                Constraint::Length(4), // toggle buttons 1
+                Constraint::Length(4), // toggle buttons 2
+                Constraint::Length(4), // buttons (quality, brightness, contrast)
+                Constraint::Length(4), // device selector button
+                Constraint::Min(3),    // bottom button
             ])
             .flex(Flex::Start)
             .spacing(1)
             .areas(padding(inner, Constraint::Length(1), Side::Top));
 
-        let [row1, row2] = Layout::vertical([
-            Constraint::Length(4),
-            Constraint::Length(4),
-        ])
-        .spacing(1)
-        .areas(toggles_area);
-
-        let [reading_direction_area, split_double_pages_area, auto_crop_area] = 
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] =
             Layout::horizontal([Constraint::Ratio(1, 3); 3])
-                .spacing(1)
+                .spacing(2)
                 .areas(row1);
 
         // Second row: output format, image format, margin color
-        let [output_format_area, image_format_area, margin_color_area] = 
+        let [output_format_area, image_format_area, margin_color_area] =
             Layout::horizontal([Constraint::Ratio(1, 3); 3])
-                .spacing(1)
+                .spacing(2)
                 .areas(row2);
 
         base_button(
