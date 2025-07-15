@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
-    comic::{ComicConfig, ImageFormat, OutputFormat, SplitStrategy},
+    comic::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy},
     comic_archive,
     tui::{
         button::{Button, ButtonVariant},
@@ -61,7 +61,6 @@ pub enum SelectedField {
     Quality,
     Brightness,
     Gamma,
-    ImageFormat,
 }
 
 enum PreviewProtocolState {
@@ -246,7 +245,12 @@ impl ConfigState {
                 };
                 // Reset to JPEG when switching to Mobi
                 if self.config.output_format == OutputFormat::Mobi {
-                    self.config.image_format = ImageFormat::Jpeg { quality: self.config.compression_quality };
+                    // Get current quality from existing format if it's JPEG/WebP
+                    let quality = match self.config.image_format {
+                        ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+                        _ => 85, // Default quality
+                    };
+                    self.config.image_format = ImageFormat::Jpeg { quality };
                 }
             }
             KeyCode::Char('u') => {
@@ -272,7 +276,7 @@ impl ConfigState {
             }
             KeyCode::Char('i') => {
                 if self.config.output_format != OutputFormat::Mobi {
-                    self.selected_field = Some(SelectedField::ImageFormat);
+                    self.config.image_format = self.config.image_format.cycle();
                 }
             }
             KeyCode::Char('p') => {
@@ -461,15 +465,7 @@ impl ConfigState {
     fn adjust_setting(&mut self, field: SelectedField, increase: bool, is_fine: bool) {
         match field {
             SelectedField::Quality => {
-                let step = if is_fine { 1 } else { 5 };
-                self.config.compression_quality = if increase {
-                    self.config
-                        .compression_quality
-                        .saturating_add(step)
-                        .min(100)
-                } else {
-                    self.config.compression_quality.saturating_sub(step)
-                };
+                self.config.image_format.adjust_quality(increase, is_fine);
             }
             SelectedField::Brightness => {
                 let step = if is_fine { 1 } else { 5 };
@@ -488,9 +484,6 @@ impl ConfigState {
                 } else {
                     (current - step).max(0.1)
                 };
-            }
-            SelectedField::ImageFormat => {
-                self.config.image_format.adjust_quality(increase, is_fine);
             }
         };
     }
@@ -759,18 +752,22 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         let [toggles_area, buttons_area, device_selector_area, process_button_area] =
             Layout::vertical([
-                Constraint::Length(13), // Toggles ( reading direction, split double pages, auto crop, image format)
-                Constraint::Length(4), // Buttons (quality, brightness, contrast)
-                Constraint::Length(4), // Device selector button
-                Constraint::Min(3),    // bottom button
+                Constraint::Length(15), // Toggles ( reading direction, split double pages, auto crop, image format)
+                Constraint::Length(4),  // Buttons (quality, brightness, contrast)
+                Constraint::Length(4),  // Device selector button
+                Constraint::Min(3),     // bottom button
             ])
             .flex(Flex::Start)
             .spacing(1)
             .areas(padding(inner, Constraint::Length(1), Side::Top));
 
-        let [row1, row2, row3] = Layout::vertical([Constraint::Length(4), Constraint::Length(4), Constraint::Length(4)])
-            .spacing(1)
-            .areas(toggles_area);
+        let [row1, row2, row3] = Layout::vertical([
+            Constraint::Length(4),
+            Constraint::Length(4),
+            Constraint::Length(4),
+        ])
+        .spacing(1)
+        .areas(toggles_area);
 
         let [reading_direction_area, split_double_pages_area] =
             Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -854,7 +851,12 @@ impl<'a> Widget for SettingsWidget<'a> {
             };
             // Reset to JPEG when switching to Mobi
             if self.state.config.output_format == OutputFormat::Mobi {
-                self.state.config.image_format = ImageFormat::Jpeg { quality: self.state.config.compression_quality };
+                // Get current quality from existing format if it's JPEG/WebP
+                let quality = match self.state.config.image_format {
+                    ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+                    _ => 85, // Default quality
+                };
+                self.state.config.image_format = ImageFormat::Jpeg { quality };
             }
         })
         .render(output_format_area, buf);
@@ -878,40 +880,20 @@ impl<'a> Widget for SettingsWidget<'a> {
         })
         .render(margin_color_area, buf);
 
-        // Image format button (only visible for non-mobi formats)
-        if self.state.config.output_format != OutputFormat::Mobi {
-            use crate::comic::{ImageFormat, PngCompression};
-            
-            let (format_name, value_text) = match self.state.config.image_format {
-                ImageFormat::Jpeg { quality } => ("JPEG", format!("{:3}", quality)),
-                ImageFormat::Png { compression } => {
-                    let comp_text = match compression {
-                        PngCompression::Fast => "Fast",
-                        PngCompression::Default => "Default",
-                        PngCompression::Best => "Best",
-                    };
-                    ("PNG", comp_text.to_string())
-                }
-                ImageFormat::WebP { quality } => ("WebP", format!("{:3}", quality)),
-            };
+        let format_text = match self.state.config.image_format {
+            ImageFormat::Jpeg { .. } => "JPEG",
+            ImageFormat::Png { .. } => "PNG",
+            ImageFormat::WebP { .. } => "WebP",
+        };
 
-            self.render_adjustable_setting(
-                &format!("image: {}", format_name),
-                &value_text,
-                "[i]",
-                row3,
-                buf,
-                self.state.selected_field == Some(SelectedField::ImageFormat),
-                |state| {
-                    state.selected_field = Some(SelectedField::ImageFormat);
-                },
-                |state, increase| {
-                    if let Some(SelectedField::ImageFormat) = state.selected_field {
-                        state.adjust_setting(SelectedField::ImageFormat, increase, false);
-                    }
-                },
-            );
-        }
+        base_button(format_text, self.state)
+            .label("image format")
+            .hint("[i]")
+            .on_click(|| {
+                self.state.config.image_format = self.state.config.image_format.cycle();
+            })
+            .enabled(self.state.config.output_format != OutputFormat::Mobi)
+            .render(row3, buf);
 
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] =
@@ -920,9 +902,23 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(2)
                 .areas(buttons_area);
 
+        // Quality/Compression adjuster based on image format
+        let (quality_label, quality_value) = match self.state.config.image_format {
+            ImageFormat::Jpeg { quality } => ("quality", format!("{:3}", quality)),
+            ImageFormat::Png { compression } => {
+                let comp_text = match compression {
+                    PngCompression::Fast => "Fast",
+                    PngCompression::Default => "Default",
+                    PngCompression::Best => "Best",
+                };
+                ("compression", comp_text.to_string())
+            }
+            ImageFormat::WebP { quality } => ("quality", format!("{:3}", quality)),
+        };
+
         self.render_adjustable_setting(
-            "quality",
-            &format!("{:3}", self.state.config.compression_quality),
+            quality_label,
+            &quality_value,
             "[u]",
             quality_area,
             buf,
@@ -932,7 +928,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
             |state, increase| {
                 if let Some(SelectedField::Quality) = state.selected_field {
-                    state.adjust_setting(SelectedField::Quality, increase, false);
+                    state.config.image_format.adjust_quality(increase, false);
                 }
             },
         );
@@ -1240,11 +1236,11 @@ fn load_and_process_preview(
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
 
     let mut compressed_buffer = Vec::new();
-    crate::image_processor::compress_to_jpeg(
-        &first_image,
-        &mut compressed_buffer,
-        config.compression_quality,
-    )?;
+    let quality = match config.image_format {
+        ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+        _ => 85, // Default quality for preview
+    };
+    crate::image_processor::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 

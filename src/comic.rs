@@ -171,7 +171,6 @@ pub struct ComicConfig {
     pub right_to_left: bool,
     pub split: SplitStrategy,
     pub auto_crop: bool,
-    pub compression_quality: u8,
     pub brightness: i32,
     // Gamma correction: 0.0-3.0
     pub gamma: f32,
@@ -196,7 +195,6 @@ impl Default for ComicConfig {
             right_to_left: true,
             split: SplitStrategy::RotateAndSplit,
             auto_crop: true,
-            compression_quality: 85,
             brightness: -10,
             gamma: 1.8,
             output_format: OutputFormat::Mobi,
@@ -276,11 +274,9 @@ impl Comic {
         file: PathBuf,
         output_dir: PathBuf,
         title: String,
-        mut config: ComicConfig,
+        config: ComicConfig,
         tx: mpsc::Sender<Event>,
     ) -> anyhow::Result<Self> {
-        config.compression_quality = config.compression_quality.clamp(0, 100);
-
         let temp_dir = tempfile::tempdir()?;
 
         let comic = Comic {

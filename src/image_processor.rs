@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma,
-    Pixel, SubImage,
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
+    SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 use std::sync::mpsc;
+use webp::WebPMemory;
 
 use crate::comic::{ComicConfig, ImageFormat, PngCompression, ProcessedImage, SplitStrategy};
 use crate::comic_archive::ArchiveFile;
@@ -55,10 +56,7 @@ pub fn process_archive_images(
                     match save_image(&img, &path, &config.image_format) {
                         Ok(_) => {
                             log::trace!("Saved image: {}", path.display());
-                            Some(ProcessedImage {
-                                path,
-                                dimensions,
-                            })
+                            Some(ProcessedImage { path, dimensions })
                         }
                         Err(e) => {
                             log::warn!("Failed to save {}: {}", path.display(), e);
@@ -102,7 +100,8 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImag
     };
 
     // Convert GrayImage to DynamicImage
-    gray_images.into_iter()
+    gray_images
+        .into_iter()
         .map(DynamicImage::ImageLuma8)
         .collect()
 }
@@ -465,7 +464,11 @@ where
 }
 
 /// Compress an image to PNG format with the specified compression level
-pub fn compress_to_png<W>(img: &DynamicImage, writer: &mut W, compression: PngCompression) -> Result<()>
+pub fn compress_to_png<W>(
+    img: &DynamicImage,
+    writer: &mut W,
+    compression: PngCompression,
+) -> Result<()>
 where
     W: std::io::Write,
 {
@@ -478,7 +481,11 @@ where
         PngCompression::Best => CompressionType::Best,
     };
 
-    let encoder = PngEncoder::new_with_quality(writer, compression_type, imageproc::image::codecs::png::FilterType::Adaptive);
+    let encoder = PngEncoder::new_with_quality(
+        writer,
+        compression_type,
+        imageproc::image::codecs::png::FilterType::Adaptive,
+    );
 
     encoder
         .write_image(
@@ -493,17 +500,15 @@ where
 }
 
 /// Compress an image to WebP format with the specified quality
-pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<Vec<u8>>
-{
-    let encoder = webp::Encoder::from_image(img)
+pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<WebPMemory> {
+    let img = DynamicImage::from(img.to_rgb8());
+    let encoder = webp::Encoder::from_image(&img)
         .map_err(|e| anyhow::anyhow!("Failed to create WebP encoder: {}", e))?;
     let webp_data = encoder.encode(quality as f32);
-    
-    Ok(webp_data.to_vec())
+    Ok(webp_data)
 }
 
-fn save_image(img: &DynamicImage, path: &Path, format: &ImageFormat) -> Result<()>
-{
+fn save_image(img: &DynamicImage, path: &Path, format: &ImageFormat) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -527,7 +532,7 @@ fn save_image(img: &DynamicImage, path: &Path, format: &ImageFormat) -> Result<(
         ImageFormat::WebP { quality } => {
             let webp_data = compress_to_webp(img, *quality)
                 .with_context(|| format!("Failed to encode WebP image: {}", path.display()))?;
-            std::fs::write(path, webp_data)
+            std::fs::write(path, &*webp_data)
                 .with_context(|| format!("Failed to save WebP image: {}", path.display()))?;
         }
     }
