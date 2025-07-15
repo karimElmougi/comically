@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
-    SubImage,
+    load_from_memory, ColorType, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma,
+    Pixel, SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -472,7 +472,7 @@ pub fn compress_to_png<W>(
 where
     W: std::io::Write,
 {
-    use imageproc::image::codecs::png::{CompressionType, PngEncoder};
+    use imageproc::image::codecs::png::{CompressionType, FilterType, PngEncoder};
     use imageproc::image::ImageEncoder;
 
     let compression_type = match compression {
@@ -481,10 +481,16 @@ where
         PngCompression::Best => CompressionType::Best,
     };
 
+    let is_grayscale = img.color() == ColorType::L8 || img.color() == ColorType::La8;
+
     let encoder = PngEncoder::new_with_quality(
         writer,
         compression_type,
-        imageproc::image::codecs::png::FilterType::Adaptive,
+        if is_grayscale {
+            FilterType::NoFilter
+        } else {
+            FilterType::Adaptive
+        },
     );
 
     encoder
