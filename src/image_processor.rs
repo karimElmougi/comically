@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel,
-    PixelWithColorType, SubImage,
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, ImageEncoder, Luma,
+    Pixel, PixelWithColorType, SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::comic::{ComicConfig, ProcessedImage, SplitStrategy};
+use crate::comic::{ComicConfig, ImageFormat, PngCompression, ProcessedImage, SplitStrategy};
 use crate::comic_archive::ArchiveFile;
 use crate::Event;
 
@@ -43,13 +43,15 @@ pub fn process_archive_images(
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, img)| {
+                    let extension = config.image_format.extension();
                     let path = output_dir.join(format!(
-                        "{}_{}_{}.jpg",
+                        "{}_{}_{}.{}",
                         archive_file.parent().display(),
                         archive_file.file_stem().display(),
-                        i + 1
+                        i + 1,
+                        extension
                     ));
-                    match save_image(&img, &path, config.compression_quality) {
+                    match save_image(&img, &path, &config.image_format) {
                         Ok(_) => {
                             log::trace!("Saved image: {}", path.display());
                             Some(ProcessedImage {
@@ -458,9 +460,63 @@ where
     Ok(())
 }
 
-fn save_image<I>(img: &I, path: &Path, quality: u8) -> Result<()>
+/// Compress an image to PNG format with the specified compression level
+pub fn compress_to_png<I, W>(img: &I, writer: &mut W, compression: PngCompression) -> Result<()>
 where
     I: GenericImageView,
+    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
+    W: std::io::Write,
+{
+    use imageproc::image::codecs::png::{CompressionType, PngEncoder};
+
+    let compression_type = match compression {
+        PngCompression::Fast => CompressionType::Fast,
+        PngCompression::Default => CompressionType::Default,
+        PngCompression::Best => CompressionType::Best,
+    };
+
+    let encoder = PngEncoder::new_with_quality(
+        writer,
+        compression_type,
+        imageproc::image::codecs::png::FilterType::Adaptive,
+    );
+
+    encoder
+        .write_image(
+            img.as_bytes(),
+            img.width(),
+            img.height(),
+            <I::Pixel as PixelWithColorType>::COLOR_TYPE,
+        )
+        .with_context(|| "Failed to compress image to PNG")?;
+
+    Ok(())
+}
+
+/// Compress an image to WebP format with the specified quality
+pub fn compress_to_webp<I>(img: &I, quality: u8) -> Result<Vec<u8>>
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
+{
+    let (width, height) = img.dimensions();
+    let mut raw_data = Vec::with_capacity((width * height) as usize);
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            raw_data.push(pixel[0]);
+        }
+    }
+
+    let encoder = webp::Encoder::from_rgb(&raw_data, width, height);
+    let webp_data = encoder.encode(quality as f32);
+
+    Ok(webp_data.to_vec())
+}
+
+fn save_image<I>(img: &I, path: &Path, format: &ImageFormat) -> Result<()>
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
     <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
 {
     if let Some(parent) = path.parent() {
@@ -472,9 +528,24 @@ where
         })?;
     }
 
-    let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
-    compress_to_jpeg(img, &mut output_buffer, quality)
-        .with_context(|| format!("Failed to save processed image: {}", path.display()))?;
+    match format {
+        ImageFormat::Jpeg { quality } => {
+            let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
+            compress_to_jpeg(img, &mut output_buffer, *quality)
+                .with_context(|| format!("Failed to save JPEG image: {}", path.display()))?;
+        }
+        ImageFormat::Png { compression } => {
+            let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
+            compress_to_png(img, &mut output_buffer, *compression)
+                .with_context(|| format!("Failed to save PNG image: {}", path.display()))?;
+        }
+        ImageFormat::WebP { quality } => {
+            let webp_data = compress_to_webp(img, *quality)
+                .with_context(|| format!("Failed to encode WebP image: {}", path.display()))?;
+            std::fs::write(path, webp_data)
+                .with_context(|| format!("Failed to save WebP image: {}", path.display()))?;
+        }
+    }
 
     Ok(())
 }
