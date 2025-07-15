@@ -752,7 +752,7 @@ impl<'a> Widget for SettingsWidget<'a> {
 
         let [toggles_area, buttons_area, device_selector_area, process_button_area] =
             Layout::vertical([
-                Constraint::Length(15), // Toggles ( reading direction, split double pages, auto crop, image format)
+                Constraint::Length(9),  // Two rows of toggle buttons
                 Constraint::Length(4),  // Buttons (quality, brightness, contrast)
                 Constraint::Length(4),  // Device selector button
                 Constraint::Min(3),     // bottom button
@@ -761,26 +761,23 @@ impl<'a> Widget for SettingsWidget<'a> {
             .spacing(1)
             .areas(padding(inner, Constraint::Length(1), Side::Top));
 
-        let [row1, row2, row3] = Layout::vertical([
-            Constraint::Length(4),
+        let [row1, row2] = Layout::vertical([
             Constraint::Length(4),
             Constraint::Length(4),
         ])
         .spacing(1)
         .areas(toggles_area);
 
-        let [reading_direction_area, split_double_pages_area] =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] = 
+            Layout::horizontal([Constraint::Ratio(1, 3); 3])
                 .spacing(1)
                 .areas(row1);
 
-        let [auto_crop_area, output_format_area, margin_color_area] = Layout::horizontal([
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-        ])
-        .spacing(1)
-        .areas(row2);
+        // Second row: output format, image format, margin color
+        let [output_format_area, image_format_area, margin_color_area] = 
+            Layout::horizontal([Constraint::Ratio(1, 3); 3])
+                .spacing(1)
+                .areas(row2);
 
         base_button(
             if self.state.config.right_to_left {
@@ -833,6 +830,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         })
         .render(auto_crop_area, buf);
 
+        // Second row buttons
         base_button(
             match self.state.config.output_format {
                 OutputFormat::Mobi => "AZW3/MOBI",
@@ -861,6 +859,21 @@ impl<'a> Widget for SettingsWidget<'a> {
         })
         .render(output_format_area, buf);
 
+        let format_text = match self.state.config.image_format {
+            ImageFormat::Jpeg { .. } => "JPEG",
+            ImageFormat::Png { .. } => "PNG",
+            ImageFormat::WebP { .. } => "WebP",
+        };
+
+        base_button(format_text, self.state)
+            .label("image format")
+            .hint("[i]")
+            .on_click(|| {
+                self.state.config.image_format = self.state.config.image_format.cycle();
+            })
+            .enabled(self.state.config.output_format != OutputFormat::Mobi)
+            .render(image_format_area, buf);
+
         base_button(
             match self.state.config.margin_color {
                 None => "none",
@@ -879,21 +892,6 @@ impl<'a> Widget for SettingsWidget<'a> {
             };
         })
         .render(margin_color_area, buf);
-
-        let format_text = match self.state.config.image_format {
-            ImageFormat::Jpeg { .. } => "JPEG",
-            ImageFormat::Png { .. } => "PNG",
-            ImageFormat::WebP { .. } => "WebP",
-        };
-
-        base_button(format_text, self.state)
-            .label("image format")
-            .hint("[i]")
-            .on_click(|| {
-                self.state.config.image_format = self.state.config.image_format.cycle();
-            })
-            .enabled(self.state.config.output_format != OutputFormat::Mobi)
-            .render(row3, buf);
 
         // Create a horizontal layout for the three adjustable settings
         let [quality_area, brightness_area, contrast_area] =
