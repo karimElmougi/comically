@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use imageproc::image::{
     imageops::{self, FilterType},
-    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, ImageEncoder, Luma,
-    Pixel, PixelWithColorType, SubImage,
+    load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma,
+    Pixel, SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -51,12 +51,13 @@ pub fn process_archive_images(
                         i + 1,
                         extension
                     ));
+                    let dimensions = img.dimensions();
                     match save_image(&img, &path, &config.image_format) {
                         Ok(_) => {
                             log::trace!("Saved image: {}", path.display());
                             Some(ProcessedImage {
                                 path,
-                                dimensions: img.dimensions(),
+                                dimensions,
                             })
                         }
                         Err(e) => {
@@ -87,10 +88,10 @@ pub fn process_archive_images(
 }
 
 /// Process a single image file with Kindle-optimized transformations
-pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> {
+pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
     let img = transform(img.into_luma8(), config.brightness, config.gamma);
 
-    if config.auto_crop {
+    let gray_images = if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
             process_image_view(&*cropped, config)
         } else {
@@ -98,7 +99,12 @@ pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<GrayImage> 
         }
     } else {
         process_image_view(&img, config)
-    }
+    };
+
+    // Convert GrayImage to DynamicImage
+    gray_images.into_iter()
+        .map(DynamicImage::ImageLuma8)
+        .collect()
 }
 
 fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
@@ -444,10 +450,8 @@ where
 }
 
 /// Compress an image to JPEG format with the specified quality
-pub fn compress_to_jpeg<I, W>(img: &I, writer: &mut W, quality: u8) -> Result<()>
+pub fn compress_to_jpeg<W>(img: &DynamicImage, writer: &mut W, quality: u8) -> Result<()>
 where
-    I: GenericImageView,
-    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
     W: std::io::Write,
 {
     let mut encoder =
@@ -461,13 +465,12 @@ where
 }
 
 /// Compress an image to PNG format with the specified compression level
-pub fn compress_to_png<I, W>(img: &I, writer: &mut W, compression: PngCompression) -> Result<()>
+pub fn compress_to_png<W>(img: &DynamicImage, writer: &mut W, compression: PngCompression) -> Result<()>
 where
-    I: GenericImageView,
-    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
     W: std::io::Write,
 {
     use imageproc::image::codecs::png::{CompressionType, PngEncoder};
+    use imageproc::image::ImageEncoder;
 
     let compression_type = match compression {
         PngCompression::Fast => CompressionType::Fast,
@@ -475,18 +478,14 @@ where
         PngCompression::Best => CompressionType::Best,
     };
 
-    let encoder = PngEncoder::new_with_quality(
-        writer,
-        compression_type,
-        imageproc::image::codecs::png::FilterType::Adaptive,
-    );
+    let encoder = PngEncoder::new_with_quality(writer, compression_type, imageproc::image::codecs::png::FilterType::Adaptive);
 
     encoder
         .write_image(
             img.as_bytes(),
             img.width(),
             img.height(),
-            <I::Pixel as PixelWithColorType>::COLOR_TYPE,
+            img.color().into(),
         )
         .with_context(|| "Failed to compress image to PNG")?;
 
@@ -494,30 +493,16 @@ where
 }
 
 /// Compress an image to WebP format with the specified quality
-pub fn compress_to_webp<I>(img: &I, quality: u8) -> Result<Vec<u8>>
-where
-    I: GenericImageView<Pixel = Luma<u8>>,
+pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<Vec<u8>>
 {
-    let (width, height) = img.dimensions();
-    let mut raw_data = Vec::with_capacity((width * height) as usize);
-
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = img.get_pixel(x, y);
-            raw_data.push(pixel[0]);
-        }
-    }
-
-    let encoder = webp::Encoder::from_rgb(&raw_data, width, height);
+    let encoder = webp::Encoder::from_image(img)
+        .map_err(|e| anyhow::anyhow!("Failed to create WebP encoder: {}", e))?;
     let webp_data = encoder.encode(quality as f32);
-
+    
     Ok(webp_data.to_vec())
 }
 
-fn save_image<I>(img: &I, path: &Path, format: &ImageFormat) -> Result<()>
-where
-    I: GenericImageView<Pixel = Luma<u8>>,
-    <I as GenericImageView>::Pixel: PixelWithColorType + 'static,
+fn save_image(img: &DynamicImage, path: &Path, format: &ImageFormat) -> Result<()>
 {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
