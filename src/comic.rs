@@ -205,10 +205,8 @@ impl Default for ComicConfig {
 }
 
 impl ComicConfig {
-    const CONFIG_PATH: &str = ".comically.config";
-
     pub fn load() -> Option<Self> {
-        let config_path = std::env::home_dir()?.join(Self::CONFIG_PATH);
+        let config_path = Self::config_path()?;
 
         fs::read_to_string(&config_path)
             .ok()
@@ -216,11 +214,21 @@ impl ComicConfig {
     }
 
     pub fn save(&self) -> Option<()> {
-        let config_path = std::env::home_dir()?.join(Self::CONFIG_PATH);
+        let config_path = Self::config_path()?;
+
+        // Create config directory if it doesn't exist
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent).ok()?;
+        }
 
         serde_json::to_string_pretty(self)
             .ok()
             .and_then(|json| fs::write(&config_path, json).ok())
+    }
+
+    fn config_path() -> Option<PathBuf> {
+        let home = std::env::home_dir()?;
+        Some(home.join(".config").join("comically").join("config.json"))
     }
 
     pub fn device_dimensions(&self) -> (u32, u32) {
