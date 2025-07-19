@@ -6,7 +6,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    text::{Line, Span, Text},
+    text::{Line, Text},
     widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
@@ -46,8 +46,162 @@ pub struct ConfigState {
 
 pub enum ModalState {
     None,
-    Help,
+    Help(HelpState),
     DeviceSelector(DeviceSelectorState),
+}
+
+pub struct Keybinding {
+    pub key: &'static str,
+    pub action: &'static str,
+    pub docs: &'static str,
+}
+
+pub struct HelpState {
+    pub keybindings: Vec<Keybinding>,
+    pub list_state: ListState,
+}
+
+impl HelpState {
+    pub fn new() -> Self {
+        let keybindings = vec![
+            Keybinding {
+                key: "↑/↓/j/k",
+                action: "navigate files",
+                docs: "move up and down through the file list in the left pane. arrow keys or vim-style navigation both work",
+            },
+            Keybinding {
+                key: "space",
+                action: "toggle file selection",
+                docs: "select or deselect the current focused file in the left pane. selected files show [✓] and will be processed when you press enter",
+            },
+            Keybinding {
+                key: "a",
+                action: "toggle all files",
+                docs: "select or deselect all files at once. if all files are currently selected, this deselects all. otherwise selects all",
+            },
+            Keybinding {
+                key: "m",
+                action: "reading direction",
+                docs: "toggle between reading modes:\n\n• left to right: standard western comics\n• right to left: manga style\n\naffects page order in output files",
+            },
+            Keybinding {
+                key: "s",
+                action: "spread splitter",
+                docs: "cycle through double-page handling:\n\n• none: keep spreads as-is\n• split: cut spreads into separate pages\n• rotate: rotate spreads 90° for vertical viewing\n• rotate & split: show twice - rotated then split",
+            },
+            Keybinding {
+                key: "c",
+                action: "auto crop",
+                docs: "toggle automatic margin removal. when enabled, detects and removes blank space around page content for better screen fit",
+            },
+            Keybinding {
+                key: "o",
+                action: "margin color",
+                docs: "cycle margin fill when image doesn't fill screen (useful with @auto-crop setting):\n\n• none: preserve original aspect ratio\n• black: fill empty space with black\n• white: fill empty space with white",
+            },
+            Keybinding {
+                key: "f",
+                action: "output format",
+                docs: "cycle through output formats:\n\n• azw3/mobi: amazon kindle format\n• epub: standard e-book format\n• cbz: comic book archive (zip)\n\nnote: mobi forces jpeg image format",
+            },
+            Keybinding {
+                key: "i",
+                action: "image format",
+                docs: "cycle compression formats:\n\n• jpeg: lossy, smaller files\n• png: lossless, larger files\n• webp: modern, good compression\n\ndisabled for mobi output",
+            },
+            Keybinding {
+                key: "u",
+                action: "quality/compression",
+                docs: "select quality setting for adjustment\n\n• jpeg/webp: quality 0-100\n• png: fast/default/best compression\n\nuse ←/→ arrows to adjust value",
+            },
+            Keybinding {
+                key: "b",
+                action: "brightness",
+                docs: "select brightness for adjustment\n\nrange: -100 to +100\n• negative values: darker image\n• positive values: brighter image\n\nuse ←/→ arrows to adjust",
+            },
+            Keybinding {
+                key: "g",
+                action: "gamma",
+                docs: "select gamma correction for adjustment\n\nrange: 0.1 to 3.0\n• < 1.0: lower contrast, lifted shadows\n• > 1.0: higher contrast, deeper blacks\n• = 1.0: no adjustment\n\nuse ←/→ arrows to adjust",
+            },
+            Keybinding {
+                key: "←/→",
+                action: "adjust values",
+                docs: "decrease/increase selected setting (quality, brightness, or gamma)\n\nhold shift for fine adjustments:\n• quality: ±1 instead of ±5\n• brightness: ±1 instead of ±5\n• gamma: ±0.05 instead of ±0.1",
+            },
+            Keybinding {
+                key: "d",
+                action: "device presets",
+                docs: "open device selector to choose from common e-reader presets. automatically sets optimal dimensions for your target device",
+            },
+            Keybinding {
+                key: "p",
+                action: "load preview",
+                docs: "load preview of selected file with current settings applied. updates when settings change. useful for testing before batch processing",
+            },
+            Keybinding {
+                key: "enter",
+                action: "start processing",
+                docs: "begin converting all selected files with current settings. files are saved to the output directory with the chosen format",
+            },
+            Keybinding {
+                key: "h",
+                action: "toggle help",
+                docs: "show or hide this help menu. press h or esc to close",
+            },
+            Keybinding {
+                key: "t",
+                action: "toggle theme",
+                docs: "switch between light and dark color themes",
+            },
+            Keybinding {
+                key: "q",
+                action: "quit",
+                docs: "exit the application",
+            },
+            Keybinding {
+                key: "esc",
+                action: "cancel/close",
+                docs: "context sensitive:\n• close modal dialogs\n• deselect adjustment fields\n• cancel current operation",
+            },
+        ];
+
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+
+        Self {
+            keybindings,
+            list_state,
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        let i = match self.list_state.selected() {
+            Some(i) => {
+                if i >= self.keybindings.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.list_state.select(Some(i));
+    }
+
+    pub fn select_previous(&mut self) {
+        let i = match self.list_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.keybindings.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.list_state.select(Some(i));
+    }
 }
 
 #[derive(Debug)]
@@ -186,18 +340,25 @@ impl ConfigState {
                     return;
                 }
             }
-            ModalState::Help => {
-                if key.code == KeyCode::Char('h') {
+            ModalState::Help(help_state) => match key.code {
+                KeyCode::Char('h') => {
                     self.modal_state = ModalState::None;
                     return;
                 }
-            }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    help_state.select_previous();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    help_state.select_next();
+                }
+                _ => {}
+            },
             ModalState::None => {}
         }
 
         match key.code {
             KeyCode::Char('h') => {
-                self.modal_state = ModalState::Help;
+                self.modal_state = ModalState::Help(HelpState::new());
             }
             KeyCode::Enter => {
                 self.send_start_processing();
@@ -329,7 +490,9 @@ impl ConfigState {
                 ModalState::DeviceSelector(s) => {
                     s.select_previous();
                 }
-                ModalState::Help => {}
+                ModalState::Help(help_state) => {
+                    help_state.select_previous();
+                }
                 ModalState::None => {
                     self.select_previous();
                 }
@@ -338,7 +501,9 @@ impl ConfigState {
                 ModalState::DeviceSelector(s) => {
                     s.select_next();
                 }
-                ModalState::Help => {}
+                ModalState::Help(help_state) => {
+                    help_state.select_next();
+                }
                 ModalState::None => {
                     self.select_next();
                 }
@@ -588,8 +753,10 @@ impl<'a> Widget for ConfigScreen<'a> {
             .block(themed_block(None, &self.state.theme));
         footer.render(footer_area, buf);
 
-        match &self.state.modal_state {
-            ModalState::Help => render_help_popup(area, buf, &self.state.theme),
+        match &mut self.state.modal_state {
+            ModalState::Help(help_state) => {
+                render_help_popup(area, buf, &self.state.theme, help_state)
+            }
             ModalState::DeviceSelector(_) => {
                 device_selector::render_device_selector_popup(area, buf, self.state);
             }
@@ -1322,8 +1489,8 @@ fn render_image_placeholder(area: Rect, buf: &mut Buffer, theme: &Theme) {
         .render(Rect::new(text_x, text_y, text_width, 1), buf);
 }
 
-fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
-    let popup_width = (area.width * 4 / 5).min(80);
+fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme, help_state: &mut HelpState) {
+    let popup_width = (area.width * 4 / 5).min(100);
     let popup_height = (area.height * 9 / 10).min(40);
 
     let popup_x = area.left() + (area.width.saturating_sub(popup_width)) / 2;
@@ -1333,194 +1500,48 @@ fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
 
     Clear.render(popup_area, buf);
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                "reading direction ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: right to left)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("left to right", Style::default().fg(theme.primary)),
-            Span::raw(": standard western comic/book order"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("right to left", Style::default().fg(theme.primary)),
-            Span::raw(": manga order - pages flow right to left"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "spread splitter ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: rotate & split)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("none", Style::default().fg(theme.primary)),
-            Span::raw(": keep spreads as-is"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("split", Style::default().fg(theme.primary)),
-            Span::raw(": cut spreads into separate pages"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("rotate", Style::default().fg(theme.primary)),
-            Span::raw(": rotate spreads 90° for better viewing"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("rotate & split", Style::default().fg(theme.primary)),
-            Span::raw(": show twice - rotated then split"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "auto crop ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: yes)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  removes blank space for better fit"),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "margin color ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: none)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  fills empty space when centering images"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("none", Style::default().fg(theme.primary)),
-            Span::raw(": no margins, keep original aspect ratio"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("black", Style::default().fg(theme.primary)),
-            Span::raw(": black margins (0)"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("white", Style::default().fg(theme.primary)),
-            Span::raw(": white margins (255)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "quality ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: 85, range: 0-100)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  jpeg compression quality"),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "brightness ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: -10, range: -100 to 100)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  adjusts overall lightness/darkness"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("+", Style::default().fg(theme.primary)),
-            Span::raw(" values: brighter"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("−", Style::default().fg(theme.primary)),
-            Span::raw(" values: darker"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "gamma ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: 1.8, range: 0.1-3.0)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  controls contrast and tone curve"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("< 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": lower contrast, lifted shadows"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("> 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": higher contrast, deeper shadows"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("= 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": no adjustment"),
-        ]),
-        Line::from(""),
-    ];
+    let block = popup_block("help", theme).title(Line::from("[esc/h to close]").right_aligned());
+    let inner = block.inner(popup_area);
+    block.render(popup_area, buf);
 
-    let help_text = Text::from(lines);
-    let help_paragraph = Paragraph::new(help_text)
-        .style(Style::default().fg(theme.content))
-        .block(popup_block("help", theme).title(Line::from("[esc/h]").right_aligned()))
-        .alignment(Alignment::Left);
+    // Split the area into left (keybindings list) and right (documentation)
+    let [list_area, docs_area] =
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(inner);
 
-    help_paragraph.render(popup_area, buf);
+    // Render keybindings list
+    let items: Vec<ListItem> = help_state
+        .keybindings
+        .iter()
+        .map(|kb| {
+            let content = format!("{:<12} {}", kb.key, kb.action);
+            ListItem::new(content).style(theme.content)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(themed_block(Some("keybindings"), theme))
+        .highlight_style(
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::REVERSED),
+        )
+        .highlight_symbol("> ");
+
+    StatefulWidget::render(list, list_area, buf, &mut help_state.list_state);
+
+    // Render documentation for selected keybinding
+    if let Some(selected) = help_state.list_state.selected() {
+        if let Some(keybinding) = help_state.keybindings.get(selected) {
+            let docs_block = themed_block(Some(&keybinding.action), theme);
+            let docs_inner = docs_block.inner(docs_area);
+            docs_block.render(docs_area, buf);
+
+            let docs_text = Text::from(keybinding.docs);
+            let docs_paragraph = Paragraph::new(docs_text)
+                .style(Style::default().fg(theme.content))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+
+            docs_paragraph.render(docs_inner, buf);
+        }
+    }
 }
