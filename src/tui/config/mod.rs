@@ -1,4 +1,5 @@
 pub mod device_selector;
+pub mod help;
 
 use imageproc::image::DynamicImage;
 use ratatui::{
@@ -6,8 +7,8 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Modifier, Style, Stylize},
-    text::{Line, Span, Text},
-    widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
+    text::Line,
+    widgets::{List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{
     picker::Picker,
@@ -19,12 +20,13 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::{
-    comic::{ComicConfig, OutputFormat, SplitStrategy},
+    comic::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy},
     comic_archive,
     tui::{
         button::{Button, ButtonVariant},
         config::device_selector::DeviceSelectorState,
-        utils::{padding, popup_block, themed_block, Side},
+        config::help::{render_help_popup, HelpState},
+        utils::{padding, themed_block, Side},
         Theme,
     },
 };
@@ -46,7 +48,7 @@ pub struct ConfigState {
 
 pub enum ModalState {
     None,
-    Help,
+    Help(HelpState),
     DeviceSelector(DeviceSelectorState),
 }
 
@@ -186,18 +188,25 @@ impl ConfigState {
                     return;
                 }
             }
-            ModalState::Help => {
-                if key.code == KeyCode::Char('h') {
+            ModalState::Help(help_state) => match key.code {
+                KeyCode::Char('h') => {
                     self.modal_state = ModalState::None;
                     return;
                 }
-            }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    help_state.select_previous();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    help_state.select_next();
+                }
+                _ => {}
+            },
             ModalState::None => {}
         }
 
         match key.code {
             KeyCode::Char('h') => {
-                self.modal_state = ModalState::Help;
+                self.modal_state = ModalState::Help(HelpState::new());
             }
             KeyCode::Enter => {
                 self.send_start_processing();
@@ -243,6 +252,15 @@ impl ConfigState {
                     OutputFormat::Epub => OutputFormat::Cbz,
                     OutputFormat::Cbz => OutputFormat::Mobi,
                 };
+                // Reset to JPEG when switching to Mobi
+                if self.config.output_format == OutputFormat::Mobi {
+                    // Get current quality from existing format if it's JPEG/WebP
+                    let quality = match self.config.image_format {
+                        ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+                        _ => 85, // Default quality
+                    };
+                    self.config.image_format = ImageFormat::Jpeg { quality };
+                }
             }
             KeyCode::Char('u') => {
                 self.selected_field = Some(SelectedField::Quality);
@@ -264,6 +282,11 @@ impl ConfigState {
                     Some(0) => Some(255),
                     Some(_) => None,
                 };
+            }
+            KeyCode::Char('i') => {
+                if self.config.output_format != OutputFormat::Mobi {
+                    self.config.image_format = self.config.image_format.cycle();
+                }
             }
             KeyCode::Char('p') => {
                 self.load_preview();
@@ -315,7 +338,9 @@ impl ConfigState {
                 ModalState::DeviceSelector(s) => {
                     s.select_previous();
                 }
-                ModalState::Help => {}
+                ModalState::Help(help_state) => {
+                    help_state.select_previous();
+                }
                 ModalState::None => {
                     self.select_previous();
                 }
@@ -324,7 +349,9 @@ impl ConfigState {
                 ModalState::DeviceSelector(s) => {
                     s.select_next();
                 }
-                ModalState::Help => {}
+                ModalState::Help(help_state) => {
+                    help_state.select_next();
+                }
                 ModalState::None => {
                     self.select_next();
                 }
@@ -451,15 +478,7 @@ impl ConfigState {
     fn adjust_setting(&mut self, field: SelectedField, increase: bool, is_fine: bool) {
         match field {
             SelectedField::Quality => {
-                let step = if is_fine { 1 } else { 5 };
-                self.config.compression_quality = if increase {
-                    self.config
-                        .compression_quality
-                        .saturating_add(step)
-                        .min(100)
-                } else {
-                    self.config.compression_quality.saturating_sub(step)
-                };
+                self.config.image_format.adjust_quality(increase, is_fine);
             }
             SelectedField::Brightness => {
                 let step = if is_fine { 1 } else { 5 };
@@ -582,8 +601,10 @@ impl<'a> Widget for ConfigScreen<'a> {
             .block(themed_block(None, &self.state.theme));
         footer.render(footer_area, buf);
 
-        match &self.state.modal_state {
-            ModalState::Help => render_help_popup(area, buf, &self.state.theme),
+        match &mut self.state.modal_state {
+            ModalState::Help(help_state) => {
+                render_help_popup(area, buf, &self.state.theme, help_state)
+            }
             ModalState::DeviceSelector(_) => {
                 device_selector::render_device_selector_popup(area, buf, self.state);
             }
@@ -687,8 +708,20 @@ impl<'a> SettingsWidget<'a> {
             .style(Style::default().fg(self.state.theme.accent))
             .render(shortcut_area, buf);
 
-        let [minus_area, value_area, plus_area] =
-            Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(buttons_area);
+        let total_width = buttons_area.width;
+        let third = total_width / 3;
+        let button_width = if third % 2 == 0 && third > 1 {
+            third - 1
+        } else {
+            third
+        };
+
+        let [minus_area, value_area, plus_area] = Layout::horizontal([
+            Constraint::Length(button_width),
+            Constraint::Min(0),
+            Constraint::Length(button_width),
+        ])
+        .areas(buttons_area);
 
         // Render [-] button
         base_button("-", self.state)
@@ -744,33 +777,28 @@ impl<'a> Widget for SettingsWidget<'a> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let [toggles_area, buttons_area, device_selector_area, process_button_area] =
+        let [row1, row2, buttons_area, device_selector_area, process_button_area] =
             Layout::vertical([
-                Constraint::Length(9), // Toggles ( reading direction, split double pages, auto crop)
-                Constraint::Length(4), // Buttons (quality, brightness, contrast)
-                Constraint::Length(4), // Device selector button
+                Constraint::Length(4), // toggle buttons 1
+                Constraint::Length(4), // toggle buttons 2
+                Constraint::Length(4), // buttons (quality, brightness, contrast)
+                Constraint::Length(4), // device selector button
                 Constraint::Min(3),    // bottom button
             ])
             .flex(Flex::Start)
             .spacing(1)
             .areas(padding(inner, Constraint::Length(1), Side::Top));
 
-        let [row1, row2] = Layout::vertical([Constraint::Length(4), Constraint::Length(4)])
-            .spacing(1)
-            .areas(toggles_area);
-
-        let [reading_direction_area, split_double_pages_area] =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .spacing(1)
+        let [reading_direction_area, split_double_pages_area, auto_crop_area] =
+            Layout::horizontal([Constraint::Ratio(1, 3); 3])
+                .spacing(2)
                 .areas(row1);
 
-        let [auto_crop_area, output_format_area, margin_color_area] = Layout::horizontal([
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-        ])
-        .spacing(1)
-        .areas(row2);
+        // Second row: output format, image format, margin color
+        let [output_format_area, image_format_area, margin_color_area] =
+            Layout::horizontal([Constraint::Ratio(1, 3); 3])
+                .spacing(2)
+                .areas(row2);
 
         base_button(
             if self.state.config.right_to_left {
@@ -823,6 +851,7 @@ impl<'a> Widget for SettingsWidget<'a> {
         })
         .render(auto_crop_area, buf);
 
+        // Second row buttons
         base_button(
             match self.state.config.output_format {
                 OutputFormat::Mobi => "AZW3/MOBI",
@@ -839,8 +868,32 @@ impl<'a> Widget for SettingsWidget<'a> {
                 OutputFormat::Epub => OutputFormat::Cbz,
                 OutputFormat::Cbz => OutputFormat::Mobi,
             };
+            // Reset to JPEG when switching to Mobi
+            if self.state.config.output_format == OutputFormat::Mobi {
+                // Get current quality from existing format if it's JPEG/WebP
+                let quality = match self.state.config.image_format {
+                    ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+                    _ => 85, // Default quality
+                };
+                self.state.config.image_format = ImageFormat::Jpeg { quality };
+            }
         })
         .render(output_format_area, buf);
+
+        let format_text = match self.state.config.image_format {
+            ImageFormat::Jpeg { .. } => "JPEG",
+            ImageFormat::Png { .. } => "PNG",
+            ImageFormat::WebP { .. } => "WebP",
+        };
+
+        base_button(format_text, self.state)
+            .label("image format")
+            .hint("[i]")
+            .on_click(|| {
+                self.state.config.image_format = self.state.config.image_format.cycle();
+            })
+            .enabled(self.state.config.output_format != OutputFormat::Mobi)
+            .render(image_format_area, buf);
 
         base_button(
             match self.state.config.margin_color {
@@ -868,9 +921,23 @@ impl<'a> Widget for SettingsWidget<'a> {
                 .spacing(2)
                 .areas(buttons_area);
 
+        // Quality/Compression adjuster based on image format
+        let (quality_label, quality_value) = match self.state.config.image_format {
+            ImageFormat::Jpeg { quality } => ("quality", format!("{:3}", quality)),
+            ImageFormat::Png { compression } => {
+                let comp_text = match compression {
+                    PngCompression::Fast => "Fast",
+                    PngCompression::Default => "Default",
+                    PngCompression::Best => "Best",
+                };
+                ("compression", comp_text.to_string())
+            }
+            ImageFormat::WebP { quality } => ("quality", format!("{:3}", quality)),
+        };
+
         self.render_adjustable_setting(
-            "quality",
-            &format!("{:3}", self.state.config.compression_quality),
+            quality_label,
+            &quality_value,
             "[u]",
             quality_area,
             buf,
@@ -880,7 +947,7 @@ impl<'a> Widget for SettingsWidget<'a> {
             },
             |state, increase| {
                 if let Some(SelectedField::Quality) = state.selected_field {
-                    state.adjust_setting(SelectedField::Quality, increase, false);
+                    state.config.image_format.adjust_quality(increase, false);
                 }
             },
         );
@@ -1188,11 +1255,11 @@ fn load_and_process_preview(
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
 
     let mut compressed_buffer = Vec::new();
-    crate::image_processor::compress_to_jpeg(
-        &first_image,
-        &mut compressed_buffer,
-        config.compression_quality,
-    )?;
+    let quality = match config.image_format {
+        ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
+        _ => 85, // Default quality for preview
+    };
+    crate::image_processor::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 
@@ -1268,207 +1335,4 @@ fn render_image_placeholder(area: Rect, buf: &mut Buffer, theme: &Theme) {
     Paragraph::new(loading_text)
         .style(Style::default().fg(theme.content))
         .render(Rect::new(text_x, text_y, text_width, 1), buf);
-}
-
-fn render_help_popup(area: Rect, buf: &mut Buffer, theme: &Theme) {
-    let popup_width = (area.width * 4 / 5).min(80);
-    let popup_height = (area.height * 9 / 10).min(40);
-
-    let popup_x = area.left() + (area.width.saturating_sub(popup_width)) / 2;
-    let popup_y = area.top() + (area.height.saturating_sub(popup_height)) / 2;
-
-    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-
-    Clear.render(popup_area, buf);
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                "reading direction ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: right to left)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("left to right", Style::default().fg(theme.primary)),
-            Span::raw(": standard western comic/book order"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("right to left", Style::default().fg(theme.primary)),
-            Span::raw(": manga order - pages flow right to left"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "spread splitter ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: rotate & split)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("none", Style::default().fg(theme.primary)),
-            Span::raw(": keep spreads as-is"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("split", Style::default().fg(theme.primary)),
-            Span::raw(": cut spreads into separate pages"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("rotate", Style::default().fg(theme.primary)),
-            Span::raw(": rotate spreads 90° for better viewing"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("rotate & split", Style::default().fg(theme.primary)),
-            Span::raw(": show twice - rotated then split"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "auto crop ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: yes)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  removes blank space for better fit"),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "margin color ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: none)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  fills empty space when centering images"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("none", Style::default().fg(theme.primary)),
-            Span::raw(": no margins, keep original aspect ratio"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("black", Style::default().fg(theme.primary)),
-            Span::raw(": black margins (0)"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("white", Style::default().fg(theme.primary)),
-            Span::raw(": white margins (255)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "quality ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: 85, range: 0-100)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  jpeg compression quality"),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "brightness ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: -10, range: -100 to 100)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  adjusts overall lightness/darkness"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("+", Style::default().fg(theme.primary)),
-            Span::raw(" values: brighter"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("−", Style::default().fg(theme.primary)),
-            Span::raw(" values: darker"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "gamma ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "(default: 1.8, range: 0.1-3.0)",
-                Style::default()
-                    .fg(theme.content)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]),
-        Line::from("  controls contrast and tone curve"),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("< 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": lower contrast, lifted shadows"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("> 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": higher contrast, deeper shadows"),
-        ]),
-        Line::from(vec![
-            Span::raw("  • "),
-            Span::styled("= 1.0", Style::default().fg(theme.primary)),
-            Span::raw(": no adjustment"),
-        ]),
-        Line::from(""),
-    ];
-
-    let help_text = Text::from(lines);
-    let help_paragraph = Paragraph::new(help_text)
-        .style(Style::default().fg(theme.content))
-        .block(popup_block("help", theme).title(Line::from("[esc/h]").right_aligned()))
-        .alignment(Alignment::Left);
-
-    help_paragraph.render(popup_area, buf);
 }
