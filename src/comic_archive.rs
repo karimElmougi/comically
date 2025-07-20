@@ -1,5 +1,4 @@
 use anyhow::Context;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -14,7 +13,7 @@ pub struct ArchiveFile {
 }
 
 impl ArchiveFile {
-    pub fn file_stem(&self) -> &OsStr {
+    pub fn file_stem(&self) -> &std::ffi::OsStr {
         self.file_name.file_stem().unwrap()
     }
     pub fn parent(&self) -> &Path {

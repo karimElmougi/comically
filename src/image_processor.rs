@@ -43,15 +43,13 @@ pub fn process_archive_images(
             let result = images
                 .into_iter()
                 .enumerate()
-                .filter_map(|(i, img)| {
-                    let extension = config.image_format.extension();
-                    let path = output_dir.join(format!(
-                        "{}_{}_{}.{}",
-                        archive_file.parent().display(),
-                        archive_file.file_stem().display(),
-                        i + 1,
-                        extension
-                    ));
+                .filter_map(|(ii, img)| {
+                    let path = {
+                        let file = archive_file.parent().display();
+                        let stem = archive_file.file_stem().to_string_lossy();
+                        let extension = config.image_format.extension();
+                        output_dir.join(format!("{file}_{stem}_{ii}.{extension}",))
+                    };
                     let dimensions = img.dimensions();
                     match save_image(&img, &path, &config.image_format) {
                         Ok(_) => {
