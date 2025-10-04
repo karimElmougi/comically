@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
-use std::fs::File;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+
+use std::fs::File;
 
 use crate::comic::Comic;
 

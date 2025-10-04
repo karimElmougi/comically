@@ -1,9 +1,10 @@
 use anyhow::Context;
+use unrar::Archive;
+use zip::ZipArchive;
+
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use unrar::Archive;
-use zip::ZipArchive;
 
 #[derive(Debug, Clone)]
 pub struct ArchiveFile {

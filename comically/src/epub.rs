@@ -1,13 +1,14 @@
 use anyhow::Result;
-use std::fs::{self, create_dir_all, File};
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{
     write::{SimpleFileOptions, ZipWriter},
     CompressionMethod,
 };
+
+use std::fs::{self, create_dir_all, File};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use crate::comic::{Comic, ProcessedImage};
 

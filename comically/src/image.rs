@@ -6,8 +6,9 @@ use imageproc::image::{
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::path::Path;
 use webp::WebPMemory;
+
+use std::path::Path;
 
 use crate::archive::ArchiveFile;
 use crate::comic::{ComicConfig, ImageFormat, PngCompression, ProcessedImage, SplitStrategy};
