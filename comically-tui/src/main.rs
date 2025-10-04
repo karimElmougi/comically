@@ -1,3 +1,5 @@
+mod pipeline;
+mod progress;
 mod tui;
 
 use anyhow::Context;
@@ -13,7 +15,8 @@ use std::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use comically::{ComicConfig, ProgressEvent};
+use comically::ComicConfig;
+use crate::progress::ProgressEvent;
 use crate::tui::config::ConfigEvent;
 
 #[derive(Parser, Debug)]

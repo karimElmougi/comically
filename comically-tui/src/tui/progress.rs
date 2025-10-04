@@ -8,7 +8,8 @@ use ratatui::{
 };
 use std::time::{Duration, Instant};
 
-use comically::{ComicStage, ComicStatus, OutputFormat, ProgressEvent};
+use comically::OutputFormat;
+use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
 use crate::tui::{
     render_title,
     utils::{themed_block, themed_block_title},
@@ -237,7 +238,7 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
             } => {
                 total_work += 1.0;
                 // Each stage contributes a portion based on output format
-                let stage_weight = state.output_format.stage_weight(*stage);
+                let stage_weight = crate::progress::stage_weight(state.output_format, *stage);
                 completed_work += stage_weight * (progress / 100.0);
             }
             ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed => {

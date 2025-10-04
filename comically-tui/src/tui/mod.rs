@@ -363,14 +363,7 @@ fn process_events(
 
                 let event_tx = event_tx.clone();
                 rayon::spawn(move || {
-                    // Wrap ProgressEvent in Event::Progress
-                    let (progress_tx, progress_rx) = mpsc::channel();
-                    std::thread::spawn(move || {
-                        while let Ok(progress_event) = progress_rx.recv() {
-                            let _ = event_tx.send(Event::Progress(progress_event));
-                        }
-                    });
-                    comically::process_files(files, config, output_dir, progress_tx);
+                    crate::pipeline::process_files(files, config, output_dir, event_tx);
                 });
             }
         }

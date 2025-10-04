@@ -2,79 +2,7 @@ use std::{
     borrow::Cow,
     fs,
     path::PathBuf,
-    sync::mpsc,
-    time::{Duration, Instant},
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum ComicStage {
-    Process,
-    Package, // Building the output format (EPUB/CBZ)
-    Convert, // Converting EPUB to MOBI (only for MOBI output)
-}
-
-impl std::fmt::Display for ComicStage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ComicStage::Process => write!(f, "process"),
-            ComicStage::Package => write!(f, "package"),
-            ComicStage::Convert => write!(f, "convert"),
-        }
-    }
-}
-
-impl OutputFormat {
-    pub fn stage_weight(&self, stage: ComicStage) -> f64 {
-        match (self, stage) {
-            // MOBI format weights
-            (OutputFormat::Mobi, ComicStage::Process) => 0.5,
-            (OutputFormat::Mobi, ComicStage::Package) => 0.05, // EPUB building
-            (OutputFormat::Mobi, ComicStage::Convert) => 0.4,  // EPUB to MOBI conversion
-
-            // EPUB format weights
-            (OutputFormat::Epub, ComicStage::Process) => 0.8,
-            (OutputFormat::Epub, ComicStage::Package) => 0.1, // EPUB building
-            (OutputFormat::Epub, ComicStage::Convert) => 0.0, // Not used
-
-            // CBZ format weights
-            (OutputFormat::Cbz, ComicStage::Process) => 0.85,
-            (OutputFormat::Cbz, ComicStage::Package) => 0.05, // CBZ building
-            (OutputFormat::Cbz, ComicStage::Convert) => 0.0,  // Not used
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ComicStatus {
-    Waiting,
-    Progress {
-        stage: ComicStage,
-        progress: f64,
-        start: Instant,
-    },
-    ImageProcessingStart {
-        total_images: usize,
-        start: Instant,
-    },
-    ImageProcessed,
-    ImageProcessingComplete {
-        duration: Duration,
-    },
-    StageCompleted {
-        stage: ComicStage,
-        duration: Duration,
-    },
-    Success,
-    Failed {
-        error: anyhow::Error,
-    },
-}
-
-pub enum ProgressEvent {
-    RegisterComic { id: usize, file_name: String },
-    ComicUpdate { id: usize, status: ComicStatus },
-    ProcessingComplete,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SplitStrategy {
@@ -241,8 +169,6 @@ pub struct ProcessedImage {
 }
 
 pub struct Comic {
-    pub id: usize,
-    pub tx: mpsc::Sender<ProgressEvent>,
     pub temp_dir: tempfile::TempDir,
     pub processed_dir: PathBuf,
     pub processed_files: Vec<ProcessedImage>,
@@ -255,8 +181,6 @@ pub struct Comic {
 impl std::fmt::Debug for Comic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Comic")
-            .field("id", &self.id)
-            .field("tx", &self.tx)
             .field("temp_dir", &self.temp_dir)
             .field("processed_dir", &self.processed_dir)
             .field("processed_files", &self.processed_files.len())
@@ -276,18 +200,14 @@ impl Drop for Comic {
 
 impl Comic {
     pub fn new(
-        id: usize,
         file: PathBuf,
         output_dir: PathBuf,
         title: String,
         config: ComicConfig,
-        tx: mpsc::Sender<ProgressEvent>,
     ) -> anyhow::Result<Self> {
         let temp_dir = tempfile::tempdir()?;
 
         let comic = Comic {
-            id,
-            tx,
             processed_dir: temp_dir.path().join("Processed"),
             temp_dir,
             processed_files: Vec::new(),
@@ -300,21 +220,6 @@ impl Comic {
         std::fs::create_dir_all(comic.processed_dir())?;
 
         Ok(comic)
-    }
-
-    pub fn with_try<F, T>(&mut self, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut Comic) -> anyhow::Result<T>,
-    {
-        let result = f(self);
-        match result {
-            Ok(t) => Some(t),
-            Err(e) => {
-                log::error!("Error in comic: {} {e}", self.title);
-                self.failed(e);
-                None
-            }
-        }
     }
 
     pub fn processed_dir(&self) -> &std::path::Path {
@@ -341,84 +246,23 @@ impl Comic {
         // don't use .with_extension() bc it replaces everything after the first dot
         self.output_dir.join(format!("{}.{}", filename, extension))
     }
-
-    pub fn update_status(&self, stage: ComicStage, progress: f64) -> Instant {
-        let start = Instant::now();
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::Progress {
-                stage,
-                progress,
-                start,
-            },
-        });
-        start
-    }
-
-    pub fn stage_completed(&self, stage: ComicStage, duration: Duration) {
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::StageCompleted { stage, duration },
-        });
-    }
-
-    pub fn success(&self) {
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::Success,
-        });
-    }
-
-    pub fn failed(&self, error: anyhow::Error) {
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::Failed { error },
-        });
-    }
-
-    pub fn image_processing_start(&self, total_images: usize) -> Instant {
-        let start = Instant::now();
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::ImageProcessingStart {
-                total_images,
-                start,
-            },
-        });
-        start
-    }
-
-    pub fn image_processing_complete(&self, duration: Duration) {
-        self.notify(ProgressEvent::ComicUpdate {
-            id: self.id,
-            status: ComicStatus::ImageProcessingComplete { duration },
-        });
-    }
-
-    fn notify(&self, event: ProgressEvent) {
-        let _ = self.tx.send(event);
-    }
 }
 
 #[test]
 fn output_path_with_dots() {
-    use std::sync::mpsc;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
-    let (tx, _rx) = mpsc::channel();
 
     let mut config = ComicConfig::default();
     config.output_format = OutputFormat::Cbz;
 
     let comic = Comic::new(
-        0,
         PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"),
         output_dir.clone(),
         "Dr. STONE v01 (2018) (Digital) (1r0n)".to_string(),
         config,
-        tx,
     )
     .unwrap();
 
