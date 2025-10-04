@@ -672,6 +672,7 @@ impl<'a> SettingsWidget<'a> {
         Self { state }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_adjustable_setting(
         &mut self,
         label: &str,
@@ -1219,7 +1220,7 @@ fn load_and_process_preview(
     config: &ComicConfig,
     page_index: Option<usize>,
 ) -> anyhow::Result<(DynamicImage, usize, usize)> {
-    let mut archive_files: Vec<_> = comically::comic_archive::unarchive_comic_iter(path)?
+    let mut archive_files: Vec<_> = comically::archive::unarchive_comic_iter(path)?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -1244,7 +1245,7 @@ fn load_and_process_preview(
 
     let img = imageproc::image::load_from_memory(&archive_file.data)?;
 
-    let processed_images = comically::image_processor::process_image(img, config);
+    let processed_images = comically::image::process(img, config);
 
     let first_image = processed_images
         .into_iter()
@@ -1256,7 +1257,7 @@ fn load_and_process_preview(
         ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
         _ => 85, // Default quality for preview
     };
-    comically::image_processor::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
+    comically::image::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 

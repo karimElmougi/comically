@@ -12,7 +12,7 @@ use zip::{
 use crate::comic::{Comic, ProcessedImage};
 
 /// Builds an EPUB file from the processed images
-pub fn build_epub(comic: &Comic) -> Result<()> {
+pub fn build(comic: &Comic) -> Result<()> {
     log::info!("Building EPUB: {:?}", comic);
 
     // Create EPUB working directory

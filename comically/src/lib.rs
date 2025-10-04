@@ -1,13 +1,13 @@
-pub mod cbz_builder;
+pub mod archive;
+pub mod cbz;
 pub mod comic;
-pub mod comic_archive;
-pub mod epub_builder;
-pub mod image_processor;
-pub mod mobi_converter;
+pub mod epub;
+pub mod image;
+pub mod mobi;
 
 // Re-export commonly used types
 pub use comic::{
     Comic, ComicConfig, DevicePreset, ImageFormat, OutputFormat, PngCompression, ProcessedImage,
     SplitStrategy,
 };
-pub use mobi_converter::is_kindlegen_available;
+pub use mobi::is_kindlegen_available;

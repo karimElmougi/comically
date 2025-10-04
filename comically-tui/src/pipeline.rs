@@ -75,7 +75,7 @@ pub fn process_files(
         .filter_map(|(id, mut comic)| {
             // Process images
             let start = Instant::now();
-            let archive_iter = match comically::comic_archive::unarchive_comic_iter(&comic.input) {
+            let archive_iter = match comically::archive::unarchive_comic_iter(&comic.input) {
                 Ok(iter) => iter,
                 Err(e) => {
                     log::error!("Error in comic: {} {e}", comic.title);
@@ -100,7 +100,7 @@ pub fn process_files(
                 }))
                 .ok();
             
-            let images = match comically::image_processor::process_archive_images(
+            let images = match comically::image::process_archive_images(
                 archive_iter,
                 &config,
                 comic.processed_dir(),
@@ -145,9 +145,9 @@ pub fn process_files(
                 .ok();
             
             let build_result = match config.output_format {
-                OutputFormat::Cbz => comically::cbz_builder::build_cbz(&comic),
+                OutputFormat::Cbz => comically::cbz::build(&comic),
                 OutputFormat::Epub => {
-                    comically::epub_builder::build_epub(&comic).and_then(|_| {
+                    comically::epub::build(&comic).and_then(|_| {
                         // Move EPUB to final destination
                         let output_path = comic.output_path();
                         std::fs::rename(comic.epub_file(), &output_path).with_context(|| {
@@ -156,7 +156,7 @@ pub fn process_files(
                     })
                 }
                 OutputFormat::Mobi => {
-                    match comically::epub_builder::build_epub(&comic) {
+                    match comically::epub::build(&comic) {
                         Ok(_) => {
                             kindlegen_tx.send((id, comic, event_tx.clone())).ok();
                             return Some(());
@@ -213,7 +213,7 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
     struct KindleGenStatus {
         id: usize,
         comic: Comic,
-        spawned: comically::mobi_converter::SpawnedKindleGen,
+        spawned: comically::mobi::SpawnedKindleGen,
         start: Instant,
         event_tx: mpsc::Sender<Event>,
     }
@@ -238,7 +238,7 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
                         }))
                         .ok();
                     
-                    match comically::mobi_converter::create_mobi(&comic) {
+                    match comically::mobi::create(&comic) {
                         Ok(spawned) => {
                             pending.push(Some(KindleGenStatus {
                                 id,

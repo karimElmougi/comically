@@ -9,8 +9,8 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::path::Path;
 use webp::WebPMemory;
 
+use crate::archive::ArchiveFile;
 use crate::comic::{ComicConfig, ImageFormat, PngCompression, ProcessedImage, SplitStrategy};
-use crate::comic_archive::ArchiveFile;
 
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
@@ -33,7 +33,7 @@ pub fn process_archive_images(
                 return None;
             };
 
-            Some((archive_file, process_image(img, &config)))
+            Some((archive_file, process(img, config)))
         })
         .flat_map(|(archive_file, images)| {
             let result = images
@@ -71,7 +71,7 @@ pub fn process_archive_images(
 }
 
 /// Process a single image file with Kindle-optimized transformations
-pub fn process_image(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
+pub fn process(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
     let img = transform(img.into_luma8(), config.brightness, config.gamma);
 
     let gray_images = if config.auto_crop {

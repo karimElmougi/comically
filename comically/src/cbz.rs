@@ -5,7 +5,7 @@ use zip::ZipWriter;
 
 use crate::comic::Comic;
 
-pub fn build_cbz(comic: &Comic) -> Result<()> {
+pub fn build(comic: &Comic) -> Result<()> {
     log::info!("Building CBZ: {:?}", comic);
 
     let output_path = comic.output_path();
