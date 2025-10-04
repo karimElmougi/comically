@@ -6,8 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::Event;
-
 #[derive(Debug, Clone, Copy)]
 pub enum ComicStage {
     Process,
@@ -244,7 +242,7 @@ pub struct ProcessedImage {
 
 pub struct Comic {
     pub id: usize,
-    pub tx: mpsc::Sender<Event>,
+    pub tx: mpsc::Sender<ProgressEvent>,
     pub temp_dir: tempfile::TempDir,
     pub processed_dir: PathBuf,
     pub processed_files: Vec<ProcessedImage>,
@@ -283,7 +281,7 @@ impl Comic {
         output_dir: PathBuf,
         title: String,
         config: ComicConfig,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<ProgressEvent>,
     ) -> anyhow::Result<Self> {
         let temp_dir = tempfile::tempdir()?;
 
@@ -398,7 +396,7 @@ impl Comic {
     }
 
     fn notify(&self, event: ProgressEvent) {
-        let _ = self.tx.send(Event::Progress(event));
+        let _ = self.tx.send(event);
     }
 }
 

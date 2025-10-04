@@ -19,16 +19,13 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::{
-    comic::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy},
-    comic_archive,
-    tui::{
-        button::{Button, ButtonVariant},
-        config::device_selector::DeviceSelectorState,
-        config::help::{render_help_popup, HelpState},
-        utils::{padding, themed_block, Side},
-        Theme,
-    },
+use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
+use crate::tui::{
+    button::{Button, ButtonVariant},
+    config::device_selector::DeviceSelectorState,
+    config::help::{render_help_popup, HelpState},
+    utils::{padding, themed_block, Side},
+    Theme,
 };
 
 pub struct ConfigState {
@@ -235,7 +232,7 @@ impl ConfigState {
                 self.config.right_to_left = !self.config.right_to_left;
             }
             KeyCode::Char('s') => {
-                use crate::comic::SplitStrategy;
+                use comically::comic::SplitStrategy;
                 self.config.split = match self.config.split {
                     SplitStrategy::None => SplitStrategy::Split,
                     SplitStrategy::Split => SplitStrategy::Rotate,
@@ -1222,7 +1219,7 @@ fn load_and_process_preview(
     config: &ComicConfig,
     page_index: Option<usize>,
 ) -> anyhow::Result<(DynamicImage, usize, usize)> {
-    let mut archive_files: Vec<_> = comic_archive::unarchive_comic_iter(path)?
+    let mut archive_files: Vec<_> = comically::comic_archive::unarchive_comic_iter(path)?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -1247,7 +1244,7 @@ fn load_and_process_preview(
 
     let img = imageproc::image::load_from_memory(&archive_file.data)?;
 
-    let processed_images = crate::image_processor::process_image(img, config);
+    let processed_images = comically::image_processor::process_image(img, config);
 
     let first_image = processed_images
         .into_iter()
@@ -1259,7 +1256,7 @@ fn load_and_process_preview(
         ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
         _ => 85, // Default quality for preview
     };
-    crate::image_processor::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
+    comically::image_processor::compress_to_jpeg(&first_image, &mut compressed_buffer, quality)?;
 
     let compressed_img = imageproc::image::load_from_memory(&compressed_buffer)?;
 

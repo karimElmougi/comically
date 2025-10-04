@@ -1,10 +1,3 @@
-mod cbz_builder;
-mod comic;
-mod comic_archive;
-mod epub_builder;
-mod image_processor;
-mod mobi_converter;
-mod pipeline;
 mod tui;
 
 use anyhow::Context;
@@ -20,7 +13,7 @@ use std::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use crate::comic::{ComicConfig, ProgressEvent};
+use comically::{ComicConfig, ProgressEvent};
 use crate::tui::config::ConfigEvent;
 
 #[derive(Parser, Debug)]

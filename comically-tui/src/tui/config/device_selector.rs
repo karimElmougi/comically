@@ -8,8 +8,8 @@ use ratatui::{
     widgets::{Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
+use comically::comic::DevicePreset;
 use crate::{
-    comic::DevicePreset,
     tui::{
         button::{Button, ButtonVariant},
         config::{ConfigState, ModalState},

@@ -1,7 +1,7 @@
 use crate::{
     cbz_builder,
     comic::{Comic, ComicConfig, ComicStage, ComicStatus, OutputFormat, ProgressEvent},
-    comic_archive, epub_builder, image_processor, mobi_converter, Event,
+    comic_archive, epub_builder, image_processor, mobi_converter,
 };
 use anyhow::Context;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -16,7 +16,7 @@ pub fn process_files(
     files: Vec<PathBuf>,
     config: ComicConfig,
     output_dir: PathBuf,
-    event_tx: mpsc::Sender<Event>,
+    event_tx: mpsc::Sender<ProgressEvent>,
 ) {
     log::info!("processing with config: {:?}", config);
     log::info!("processing {} files", files.len());
@@ -29,7 +29,7 @@ pub fn process_files(
             poll_kindlegen(kindlegen_rx);
             // after all the comics have finished conversion to mobi, send the complete event
             event_tx
-                .send(Event::Progress(ProgressEvent::ProcessingComplete))
+                .send(ProgressEvent::ProcessingComplete)
                 .unwrap();
         });
     }
@@ -45,10 +45,10 @@ pub fn process_files(
                 .to_string();
 
             event_tx
-                .send(Event::Progress(ProgressEvent::RegisterComic {
+                .send(ProgressEvent::RegisterComic {
                     id,
                     file_name: title.clone(),
-                }))
+                })
                 .unwrap();
 
             match Comic::new(
@@ -62,10 +62,10 @@ pub fn process_files(
                 Ok(comic) => Some(comic),
                 Err(e) => {
                     event_tx
-                        .send(Event::Progress(ProgressEvent::ComicUpdate {
+                        .send(ProgressEvent::ComicUpdate {
                             id,
                             status: ComicStatus::Failed { error: e },
-                        }))
+                        })
                         .unwrap();
                     None
                 }
@@ -140,7 +140,7 @@ pub fn process_files(
     match config.output_format {
         OutputFormat::Epub | OutputFormat::Cbz => {
             event_tx
-                .send(Event::Progress(ProgressEvent::ProcessingComplete))
+                .send(ProgressEvent::ProcessingComplete)
                 .unwrap();
         }
         _ => {}

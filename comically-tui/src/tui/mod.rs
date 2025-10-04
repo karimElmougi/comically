@@ -22,9 +22,8 @@ use std::{
     time::Duration,
 };
 
+use comically::OutputFormat;
 use crate::{
-    comic::OutputFormat,
-    pipeline::process_files,
     tui::{
         config::MangaFile,
         error::ErrorInfo,
@@ -347,7 +346,7 @@ fn process_events(
                 output_dir,
             } => {
                 if config.output_format == OutputFormat::Mobi
-                    && !crate::mobi_converter::is_kindlegen_available()
+                    && !comically::is_kindlegen_available()
                 {
                     return Err(ErrorInfo::error(
                             "KindleGen not installed",
@@ -364,7 +363,14 @@ fn process_events(
 
                 let event_tx = event_tx.clone();
                 rayon::spawn(move || {
-                    process_files(files, config, output_dir, event_tx);
+                    // Wrap ProgressEvent in Event::Progress
+                    let (progress_tx, progress_rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        while let Ok(progress_event) = progress_rx.recv() {
+                            let _ = event_tx.send(Event::Progress(progress_event));
+                        }
+                    });
+                    comically::process_files(files, config, output_dir, progress_tx);
                 });
             }
         }

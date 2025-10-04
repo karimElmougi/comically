@@ -375,9 +375,29 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 name = "comically"
 version = "0.1.5"
 dependencies = [
+ "anyhow",
+ "imageproc",
+ "log",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "unrar",
+ "uuid",
+ "walkdir",
+ "webp",
+ "zip",
+]
+
+[[package]]
+name = "comically-tui"
+version = "0.1.5"
+dependencies = [
  "ansi_colours",
  "anyhow",
  "clap",
+ "comically",
  "imageproc",
  "log",
  "rand 0.9.1",
@@ -387,17 +407,11 @@ dependencies = [
  "serde",
  "serde_json",
  "supports-color",
- "tempfile",
  "termbg",
  "tracing",
  "tracing-error",
  "tracing-log",
  "tracing-subscriber",
- "unrar",
- "uuid",
- "walkdir",
- "webp",
- "zip",
 ]
 
 [[package]]
