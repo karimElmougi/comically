@@ -193,8 +193,8 @@ pub fn process_archive_images(
 pub fn process(img: DynamicImage, config: &ComicConfig) -> Split<DynamicImage> {
     let img = transform::Image::from(img.into_luma8())
         .gamma(config.gamma)
-        .brightness(config.brightness)
-        .autocontrast();
+        .autocontrast()
+        .brightness(config.brightness);
 
     if config.auto_crop {
         transform::split_rotate(img.auto_crop(), config)

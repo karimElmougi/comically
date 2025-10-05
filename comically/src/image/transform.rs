@@ -93,9 +93,13 @@ impl Image {
     /// brightness - -255 to 255, where 0 = no change, <0 = darker, >0 = brighter
     #[inline(always)]
     pub fn brightness(self, brightness: i32) -> Image {
-        let mut img = GrayImage::from(self);
-        imageops::colorops::brighten_in_place(&mut img, brightness);
-        img.into()
+        if brightness == 0 {
+            self
+        } else {
+            let mut img = GrayImage::from(self);
+            imageops::colorops::brighten_in_place(&mut img, brightness);
+            img.into()
+        }
     }
 
     /// Apply autocontrast to an image
