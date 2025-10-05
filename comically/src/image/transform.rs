@@ -127,68 +127,18 @@ impl Image {
     pub fn auto_crop(&self) -> CroppedImage<'_> {
         let (width, height) = self.dimensions();
 
-        // Left margin: scan from left to right
-        let mut left_margin = 0;
-        'left: for x in 0..width {
-            for y in 0..height {
-                if self.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(self, x, y) {
-                    left_margin = x;
-                    break 'left;
-                }
-            }
-        }
-
-        // Right margin: scan from right to left
-        let mut right_margin = width - 1;
-        'right: for x in (0..width).rev() {
-            for y in 0..height {
-                if self.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(self, x, y) {
-                    right_margin = x;
-                    break 'right;
-                }
-            }
-        }
-
-        // Top margin: scan from top to bottom
-        let mut top_margin = 0;
-        'top: for y in 0..height {
-            for x in 0..width {
-                if self.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(self, x, y) {
-                    top_margin = y;
-                    break 'top;
-                }
-            }
-        }
-
-        // Bottom margin: scan from bottom to top
-        let mut bottom_margin = height - 1;
-        'bottom: for y in (0..height).rev() {
-            for x in 0..width {
-                if self.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(self, x, y) {
-                    bottom_margin = y;
-                    break 'bottom;
-                }
-            }
-        }
-
-        // If we didn't find any content, return None
-        if left_margin >= right_margin || top_margin >= bottom_margin {
+        let Some(margins) = find_margins(self) else {
+            // If we didn't find any content, return the original image
             return self.crop(0, 0, width, height);
-        }
+        };
 
-        // Apply safety margin
-        left_margin = left_margin.saturating_sub(SAFETY_MARGIN);
-        right_margin = (right_margin + SAFETY_MARGIN).min(width - 1);
-        top_margin = top_margin.saturating_sub(SAFETY_MARGIN);
-        bottom_margin = (bottom_margin + SAFETY_MARGIN).min(height - 1);
+        let crop_width = margins.right.saturating_sub(margins.left).saturating_add(1);
+        let crop_height = margins.bottom.saturating_sub(margins.top).saturating_add(1);
 
-        let crop_width = right_margin.saturating_sub(left_margin).saturating_add(1);
-        let crop_height = bottom_margin.saturating_sub(top_margin).saturating_add(1);
-
-        let left_margin_size = left_margin;
-        let right_margin_size = width.saturating_sub(right_margin).saturating_sub(1);
-        let top_margin_size = top_margin;
-        let bottom_margin_size = height.saturating_sub(bottom_margin).saturating_sub(1);
+        let left_margin_size = margins.left;
+        let right_margin_size = width.saturating_sub(margins.right).saturating_sub(1);
+        let top_margin_size = margins.top;
+        let bottom_margin_size = height.saturating_sub(margins.bottom).saturating_sub(1);
 
         // Only crop if at least one margin is wide enough AND we have positive crop dimensions
         let should_crop_horizontal = (left_margin_size >= MIN_MARGIN_WIDTH
@@ -201,7 +151,7 @@ impl Image {
             && crop_height < height;
 
         if should_crop_horizontal || should_crop_vertical {
-            self.crop(left_margin, top_margin, crop_width, crop_height)
+            self.crop(margins.left, margins.top, crop_width, crop_height)
         } else {
             self.crop(0, 0, width, height)
         }
@@ -316,48 +266,131 @@ impl Img for CroppedImage<'_> {
     }
 }
 
-/// Checks if a pixel is likely to be content rather than noise.
+/// Process image with split and rotation strategies.
 ///
-/// Examines neighboring pixels within a 4-pixel radius. A pixel is considered
-/// content (not noise) if at least 3 neighbors are also dark (below threshold).
-#[inline]
-fn is_not_noise(img: &Image, x: u32, y: u32) -> bool {
-    // how many neighbors need to be dark to consider the pixel content
-    const REQUIRED_NEIGHBORS: i32 = 3;
-    // Look a bit farther for connected pixels
-    const DISTANCE: i32 = 4;
-
+/// Applies the configured split strategy (none, split, rotate, or rotate+split)
+/// and resizes the resulting images to fit the target device dimensions.
+///
+/// # Returns
+/// A [`Split`] containing 1-3 processed images depending on the strategy.
+pub fn split_rotate<I: Img + Send + Sync>(img: I, c: &ComicConfig) -> Split<Image> {
+    let target = c.device_dimensions();
     let (width, height) = img.dimensions();
-    let mut dark_neighbors = 0;
+    let is_double_page = width > height;
 
-    for dy in -DISTANCE..=DISTANCE {
-        for dx in -DISTANCE..=DISTANCE {
-            // skip center
-            if dx == 0 && dy == 0 {
-                continue;
+    let margin = c.margin_color;
+
+    match c.split {
+        SplitStrategy::None => {
+            // Just resize, no splitting or rotation
+            Split::one(resize(img, target, margin))
+        }
+        SplitStrategy::Split => {
+            if is_double_page {
+                split(&img, c)
+            } else {
+                Split::one(resize(img, target, margin))
             }
+        }
+        SplitStrategy::Rotate => {
+            if is_double_page {
+                let rotated = rotate_image_90(&img, c.right_to_left);
+                Split::one(resize(rotated, target, margin))
+            } else {
+                Split::one(resize(img, target, margin))
+            }
+        }
+        SplitStrategy::RotateAndSplit => {
+            if is_double_page {
+                split_rotate_inner(&img, c)
+            } else {
+                Split::one(resize(img, target, margin))
+            }
+        }
+    }
+}
 
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
+fn split<I: Img>(img: &I, c: &ComicConfig) -> Split<Image> {
+    // Split double pages
+    let (left, right) = split_double_pages(img);
 
-            // Make sure coordinates are valid
-            if nx >= 0
-                && ny >= 0
-                && nx < width as i32
-                && ny < height as i32
-                && img.get_pixel(nx as u32, ny as u32) < WHITE_THRESHOLD
-            {
-                dark_neighbors += 1;
+    let (left_resized, right_resized) = rayon::join(
+        || resize(left, c.device_dimensions(), c.margin_color),
+        || resize(right, c.device_dimensions(), c.margin_color),
+    );
 
-                // Early return if we have enough neighbors
-                if dark_neighbors >= REQUIRED_NEIGHBORS {
-                    return true;
-                }
+    // Determine order based on right_to_left setting
+    let (first, second) = if c.right_to_left {
+        (right_resized, left_resized)
+    } else {
+        (left_resized, right_resized)
+    };
+
+    Split::two(first, second)
+}
+
+fn split_rotate_inner<I: Img + Send + Sync>(img: &I, c: &ComicConfig) -> Split<Image> {
+    let (left, right) = split_double_pages(img);
+
+    let mut rotated_resized = None;
+    let mut left_resized = None;
+    let mut right_resized = None;
+
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            let rotated = rotate_image_90(img, c.right_to_left);
+            rotated_resized = Some(resize(rotated, c.device_dimensions(), c.margin_color));
+        });
+        s.spawn(|_| {
+            left_resized = Some(resize(left, c.device_dimensions(), c.margin_color));
+        });
+        s.spawn(|_| {
+            right_resized = Some(resize(right, c.device_dimensions(), c.margin_color));
+        });
+    });
+
+    let rotated_resized = rotated_resized.unwrap();
+    let left_resized = left_resized.unwrap();
+    let right_resized = right_resized.unwrap();
+
+    let (first, second) = if c.right_to_left {
+        (right_resized, left_resized)
+    } else {
+        (left_resized, right_resized)
+    };
+
+    Split::three(rotated_resized, first, second)
+}
+
+/// Splits a double-page spread into left and right halves (zero-copy).
+fn split_double_pages<I: Img>(img: &I) -> (CroppedImage<'_>, CroppedImage<'_>) {
+    let (width, height) = img.dimensions();
+
+    let left = img.crop(0, 0, width / 2, height);
+    let right = img.crop(width / 2, 0, width / 2, height);
+
+    (left, right)
+}
+
+/// Rotates an image 90 degrees clockwise or counter-clockwise.
+///
+/// Note: This operation requires copying pixels into a new buffer.
+fn rotate_image_90<I: Img>(img: &I, clockwise: bool) -> Image {
+    let (width, height) = img.dimensions();
+    let mut rotated = GrayImage::new(height, width);
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            if clockwise {
+                rotated.put_pixel(height - 1 - y, x, Luma([pixel]));
+            } else {
+                rotated.put_pixel(y, width - 1 - x, Luma([pixel]));
             }
         }
     }
 
-    dark_neighbors >= REQUIRED_NEIGHBORS
+    rotated.into()
 }
 
 /// Resizes image to fit device dimensions with optional margins.
@@ -423,121 +456,119 @@ fn resize<I: Img>(img: I, device_dimensions: (u32, u32), margin_color: Option<u8
     .into()
 }
 
-/// Process image with split and rotation strategies.
-///
-/// Applies the configured split strategy (none, split, rotate, or rotate+split)
-/// and resizes the resulting images to fit the target device dimensions.
-///
-/// # Returns
-/// A [`Split`] containing 1-3 processed images depending on the strategy.
-pub fn split_rotate<I: Img + Send + Sync>(img: I, c: &ComicConfig) -> Split<Image> {
-    let target = c.device_dimensions();
+struct Margins {
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+}
+
+fn find_margins(img: &Image) -> Option<Margins> {
     let (width, height) = img.dimensions();
-    let is_double_page = width > height;
 
-    let margin = c.margin_color;
-
-    match c.split {
-        SplitStrategy::None => {
-            // Just resize, no splitting or rotation
-            Split::one(resize(img, target, margin))
-        }
-        SplitStrategy::Split => {
-            if is_double_page {
-                // Split double pages
-                let (left, right) = split_double_pages(&img);
-
-                let (left_resized, right_resized) = rayon::join(
-                    || resize(left, target, margin),
-                    || resize(right, target, margin),
-                );
-
-                // Determine order based on right_to_left setting
-                let (first, second) = if c.right_to_left {
-                    (right_resized, left_resized)
-                } else {
-                    (left_resized, right_resized)
-                };
-
-                Split::two(first, second)
-            } else {
-                Split::one(resize(img, target, margin))
-            }
-        }
-        SplitStrategy::Rotate => {
-            if is_double_page {
-                let rotated = rotate_image_90(&img, c.right_to_left);
-                Split::one(resize(rotated, target, margin))
-            } else {
-                Split::one(resize(img, target, margin))
-            }
-        }
-        SplitStrategy::RotateAndSplit => {
-            if is_double_page {
-                let (left, right) = split_double_pages(&img);
-
-                let mut rotated_resized = None;
-                let mut left_resized = None;
-                let mut right_resized = None;
-
-                rayon::scope(|s| {
-                    s.spawn(|_| {
-                        let rotated = rotate_image_90(&img, c.right_to_left);
-                        rotated_resized = Some(resize(rotated, target, margin));
-                    });
-                    s.spawn(|_| {
-                        left_resized = Some(resize(left, target, margin));
-                    });
-                    s.spawn(|_| {
-                        right_resized = Some(resize(right, target, margin));
-                    });
-                });
-
-                let rotated_resized = rotated_resized.unwrap();
-                let left_resized = left_resized.unwrap();
-                let right_resized = right_resized.unwrap();
-
-                let (first, second) = if c.right_to_left {
-                    (right_resized, left_resized)
-                } else {
-                    (left_resized, right_resized)
-                };
-
-                Split::three(rotated_resized, first, second)
-            } else {
-                Split::one(resize(img, target, margin))
+    // Left margin: scan from left to right
+    let mut left_margin = 0;
+    'left: for x in 0..width {
+        for y in 0..height {
+            if img.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                left_margin = x;
+                break 'left;
             }
         }
     }
-}
 
-/// Splits a double-page spread into left and right halves (zero-copy).
-fn split_double_pages<I: Img>(img: &I) -> (CroppedImage<'_>, CroppedImage<'_>) {
-    let (width, height) = img.dimensions();
+    // Right margin: scan from right to left
+    let mut right_margin = width - 1;
+    'right: for x in (0..width).rev() {
+        for y in 0..height {
+            if img.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                right_margin = x;
+                break 'right;
+            }
+        }
+    }
 
-    let left = img.crop(0, 0, width / 2, height);
-    let right = img.crop(width / 2, 0, width / 2, height);
-
-    (left, right)
-}
-
-/// Rotates an image 90 degrees clockwise or counter-clockwise.
-///
-/// Note: This operation requires copying pixels into a new buffer.
-fn rotate_image_90<I: Img>(img: &I, clockwise: bool) -> Image {
-    let (width, height) = img.dimensions();
-    let mut rotated = GrayImage::new(height, width);
-
-    for y in 0..height {
+    // Top margin: scan from top to bottom
+    let mut top_margin = 0;
+    'top: for y in 0..height {
         for x in 0..width {
-            let pixel = img.get_pixel(x, y);
-            if clockwise {
-                rotated.put_pixel(height - 1 - y, x, Luma([pixel]));
-            } else {
-                rotated.put_pixel(y, width - 1 - x, Luma([pixel]));
+            if img.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                top_margin = y;
+                break 'top;
             }
         }
     }
 
-    rotated.into()
+    // Bottom margin: scan from bottom to top
+    let mut bottom_margin = height - 1;
+    'bottom: for y in (0..height).rev() {
+        for x in 0..width {
+            if img.get_pixel(x, y) < WHITE_THRESHOLD && is_not_noise(img, x, y) {
+                bottom_margin = y;
+                break 'bottom;
+            }
+        }
+    }
+
+    // If we didn't find any content, return None
+    if left_margin >= right_margin || top_margin >= bottom_margin {
+        return None;
+    }
+
+    // Apply safety margin
+    left_margin = left_margin.saturating_sub(SAFETY_MARGIN);
+    right_margin = (right_margin + SAFETY_MARGIN).min(width - 1);
+    top_margin = top_margin.saturating_sub(SAFETY_MARGIN);
+    bottom_margin = (bottom_margin + SAFETY_MARGIN).min(height - 1);
+
+    Some(Margins {
+        top: top_margin,
+        bottom: bottom_margin,
+        left: left_margin,
+        right: right_margin,
+    })
+}
+
+/// Checks if a pixel is likely to be content rather than noise.
+///
+/// Examines neighboring pixels within a 4-pixel radius. A pixel is considered
+/// content (not noise) if at least 3 neighbors are also dark (below threshold).
+#[inline]
+fn is_not_noise(img: &Image, x: u32, y: u32) -> bool {
+    // how many neighbors need to be dark to consider the pixel content
+    const REQUIRED_NEIGHBORS: i32 = 3;
+    // Look a bit farther for connected pixels
+    const DISTANCE: i32 = 4;
+
+    let (width, height) = img.dimensions();
+    let mut dark_neighbors = 0;
+
+    for dy in -DISTANCE..=DISTANCE {
+        for dx in -DISTANCE..=DISTANCE {
+            // skip center
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+
+            // Make sure coordinates are valid
+            if nx >= 0
+                && ny >= 0
+                && nx < width as i32
+                && ny < height as i32
+                && img.get_pixel(nx as u32, ny as u32) < WHITE_THRESHOLD
+            {
+                dark_neighbors += 1;
+
+                // Early return if we have enough neighbors
+                if dark_neighbors >= REQUIRED_NEIGHBORS {
+                    return true;
+                }
+            }
+        }
+    }
+
+    dark_neighbors >= REQUIRED_NEIGHBORS
 }
