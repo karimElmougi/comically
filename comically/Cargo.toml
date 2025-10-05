@@ -13,7 +13,9 @@ repository = "https://github.com/nicoburniske/comically"
 anyhow = { workspace = true }
 imageproc = { workspace = true }
 log = { workspace = true }
+num_enum = { version = "0.7" }
 rayon = { workspace = true }
+strum = { version = "0.27", features = ["derive"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

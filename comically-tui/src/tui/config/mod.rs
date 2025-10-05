@@ -15,9 +15,12 @@ use ratatui_image::{
     thread::{ResizeRequest, ResizeResponse, ThreadProtocol},
     FilterType, Resize, ResizeEncodeRender, StatefulImage,
 };
+
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
+
+use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 use crate::tui::{
     button::{Button, ButtonVariant},
@@ -26,7 +29,6 @@ use crate::tui::{
     utils::{padding, themed_block, Side},
     Theme,
 };
-use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 pub struct ConfigState {
     pub files: Vec<(MangaFile, bool)>,
@@ -181,7 +183,7 @@ impl ConfigState {
 
                 if let Some(preset) = selector.handle_key(key) {
                     self.modal_state = ModalState::None;
-                    self.config.device = preset;
+                    self.config.device = preset.into();
                     return;
                 }
             }
@@ -270,7 +272,11 @@ impl ConfigState {
             }
             KeyCode::Char('d') => {
                 self.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
-                    self.config.device.clone(),
+                    self.config
+                        .device
+                        .clone()
+                        .try_as_preset()
+                        .unwrap_or(comically::device::Preset::KindlePw11),
                 ));
             }
             KeyCode::Char('o') => {
@@ -752,15 +758,20 @@ impl<'a> SettingsWidget<'a> {
 
     fn render_device_selector_button(&mut self, area: Rect, buf: &mut Buffer) {
         let current_preset = &self.state.config.device;
-        let (width, height) = current_preset.dimensions;
-        let button_text = format!("{} ({}x{})", current_preset.name, width, height);
+        let (width, height) = current_preset.dimensions();
+        let button_text = format!("{} ({}x{})", current_preset.name(), width, height);
 
         base_button(button_text, self.state)
             .on_click(|| {
                 // make sure the mouse click is not used in the popup layer
                 self.state.last_mouse_click = None;
                 self.state.modal_state = ModalState::DeviceSelector(DeviceSelectorState::new(
-                    self.state.config.device.clone(),
+                    self.state
+                        .config
+                        .device
+                        .clone()
+                        .try_as_preset()
+                        .unwrap_or(comically::device::Preset::KindlePw11),
                 ));
             })
             .label("device")

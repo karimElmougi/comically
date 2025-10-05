@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use comically::{
-    Comic, ComicConfig, DevicePreset, ImageFormat, OutputFormat, PngCompression, SplitStrategy,
-};
+
 use std::path::PathBuf;
+
+use comically::device::Device;
+use comically::{Comic, ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 #[derive(Parser)]
 #[command(name = "comically-cli")]
@@ -23,8 +24,13 @@ struct Args {
     format: OutputFormatArg,
 
     /// Device preset
-    #[arg(short, long, value_enum, default_value = "kindle-paperwhite")]
-    device: DevicePresetArg,
+    #[arg(
+        short,
+        long,
+        value_name = "DEVICE",
+        default_value = "kindle-paperwhite"
+    )]
+    device: String,
 
     /// Custom device width (requires --device custom)
     #[arg(long, value_name = "PIXELS")]
@@ -84,6 +90,27 @@ struct Args {
     quiet: bool,
 }
 
+impl Args {
+    fn parse_device(&self) -> Result<Device> {
+        if self.device == "custom" {
+            let w = self
+                .width
+                .context("--width is required when using --device custom")?;
+            let h = self
+                .height
+                .context("--height is required when using --device custom")?;
+            return Ok(Device::Custom {
+                width: w,
+                height: h,
+            });
+        }
+
+        comically::device::Preset::try_from(self.device.as_str())
+            .map(Into::into)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum OutputFormatArg {
     Cbz,
@@ -97,51 +124,6 @@ impl From<OutputFormatArg> for OutputFormat {
             OutputFormatArg::Cbz => OutputFormat::Cbz,
             OutputFormatArg::Epub => OutputFormat::Epub,
             OutputFormatArg::Mobi => OutputFormat::Mobi,
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
-enum DevicePresetArg {
-    KindlePaperwhite,
-    KindleScribe,
-    KoboLibra,
-    KoboClara,
-    RemarkablePaper,
-    Custom,
-}
-
-impl DevicePresetArg {
-    fn to_preset(self, width: Option<u32>, height: Option<u32>) -> Result<DevicePreset> {
-        match self {
-            DevicePresetArg::KindlePaperwhite => Ok(DevicePreset {
-                name: "Kindle Paperwhite".into(),
-                dimensions: (1236, 1648),
-            }),
-            DevicePresetArg::KindleScribe => Ok(DevicePreset {
-                name: "Kindle Scribe".into(),
-                dimensions: (1860, 2480),
-            }),
-            DevicePresetArg::KoboLibra => Ok(DevicePreset {
-                name: "Kobo Libra".into(),
-                dimensions: (1264, 1680),
-            }),
-            DevicePresetArg::KoboClara => Ok(DevicePreset {
-                name: "Kobo Clara".into(),
-                dimensions: (1072, 1448),
-            }),
-            DevicePresetArg::RemarkablePaper => Ok(DevicePreset {
-                name: "reMarkable Paper".into(),
-                dimensions: (1404, 1872),
-            }),
-            DevicePresetArg::Custom => {
-                let w = width.context("--width is required when using --device custom")?;
-                let h = height.context("--height is required when using --device custom")?;
-                Ok(DevicePreset {
-                    name: format!("Custom {}x{}", w, h).into(),
-                    dimensions: (w, h),
-                })
-            }
         }
     }
 }
@@ -331,7 +313,7 @@ fn build_config(args: &Args) -> Result<ComicConfig> {
     }
 
     // Build device preset
-    let device = args.device.to_preset(args.width, args.height)?;
+    let device = args.parse_device()?;
 
     // Build image format
     let image_format = match args.image_format {

@@ -1,5 +1,6 @@
-use std::{borrow::Cow, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
+use crate::device::Device;
 use crate::image::ImageFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -19,7 +20,7 @@ pub enum OutputFormat {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComicConfig {
-    pub device: DevicePreset,
+    pub device: Device,
     pub right_to_left: bool,
     pub split: SplitStrategy,
     pub auto_crop: bool,
@@ -31,19 +32,10 @@ pub struct ComicConfig {
     pub image_format: ImageFormat,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct DevicePreset {
-    pub name: Cow<'static, str>,
-    pub dimensions: (u32, u32),
-}
-
 impl Default for ComicConfig {
     fn default() -> Self {
         Self {
-            device: DevicePreset {
-                name: Cow::Borrowed("Kindle PW 11"),
-                dimensions: (1236, 1648),
-            },
+            device: crate::device::Preset::KindlePw11.into(),
             right_to_left: true,
             split: SplitStrategy::RotateAndSplit,
             auto_crop: true,
@@ -84,7 +76,7 @@ impl ComicConfig {
     }
 
     pub fn device_dimensions(&self) -> (u32, u32) {
-        self.device.dimensions
+        self.device.dimensions()
     }
 }
 
