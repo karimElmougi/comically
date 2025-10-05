@@ -112,35 +112,18 @@ impl<T> IntoIterator for Split<T> {
 }
 
 pub fn process_archive_images(
-    archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
+    files: Vec<ArchiveFile>,
     config: &ComicConfig,
 ) -> Result<Vec<ProcessedImage>> {
-    log::info!("Processing archive images");
+    log::info!("Processing {} archive images", files.len());
 
-    // 1. Collect archive files (serial, fast - no parallelism overhead)
-    let files: Vec<ArchiveFile> = archive
-        .filter_map(|result| {
-            result
-                .map_err(|e| log::warn!("Failed to load archive file: {}", e))
-                .ok()
-        })
-        .collect();
-
-    log::debug!("Loaded {} files from archive", files.len());
-
-    // Calculate chunk size to minimize rayon overhead
     // Use larger chunks to reduce coordination overhead
     let num_threads = rayon::current_num_threads();
     let chunk_size = (files.len() / num_threads).max(1);
 
-    log::debug!(
-        "Processing {} files with {} threads, chunk size: {}",
-        files.len(),
-        num_threads,
-        chunk_size
-    );
+    log::debug!("Using {} threads, chunk size: {}", num_threads, chunk_size);
 
-    // 2. Single parallel stage: decode + process + encode
+    // Parallel stage: decode + process + encode
     // This eliminates intermediate Vec allocation and keeps data hot in cache
     let mut images: Vec<ProcessedImage> = files
         .par_chunks(chunk_size)
@@ -182,7 +165,7 @@ pub fn process_archive_images(
         })
         .collect();
 
-    // 4. Serial sort + dedup (fast, no benefit from parallelism)
+    // Serial sort + dedup (fast, no benefit from parallelism)
     images.sort_unstable_by(|a, b| a.file_name.cmp(&b.file_name));
     images.dedup_by(|a, b| a.file_name == b.file_name);
 

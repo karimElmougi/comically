@@ -97,7 +97,16 @@ pub fn process_files(
                 }))
                 .ok();
 
-            let images = match comically::image::process_archive_images(archive_iter, &config) {
+            // Collect archive files
+            let files: Vec<_> = archive_iter
+                .filter_map(|result| {
+                    result
+                        .map_err(|e| log::warn!("Failed to load archive file: {}", e))
+                        .ok()
+                })
+                .collect();
+
+            let images = match comically::image::process_archive_images(files, &config) {
                 Ok(imgs) => imgs,
                 Err(e) => {
                     log::error!("Error processing images for {}: {e}", comic.title);

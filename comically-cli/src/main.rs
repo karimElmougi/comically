@@ -222,9 +222,15 @@ fn main() -> Result<()> {
     }
 
     // Open archive
-    let archive = comically::archive::unarchive_comic_iter(&comic.input)
-        .context("Failed to open comic archive")?;
-    let num_images = archive.num_images();
+    let archive: Vec<_> = comically::archive::unarchive_comic_iter(&comic.input)
+        .context("Failed to open comic archive")?
+        .filter_map(|result| {
+            result
+                .map_err(|e| log::warn!("Failed to load archive file: {}", e))
+                .ok()
+        })
+        .collect();
+    let num_images = archive.len();
 
     if !args.quiet {
         log::info!("Found {num_images} images");
