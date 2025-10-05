@@ -22,7 +22,6 @@ use std::{
     time::Duration,
 };
 
-use comically::OutputFormat;
 use crate::{
     tui::{
         config::MangaFile,
@@ -31,6 +30,7 @@ use crate::{
     },
     Event,
 };
+use comically::OutputFormat;
 
 pub use theme::{Theme, ThemeMode};
 

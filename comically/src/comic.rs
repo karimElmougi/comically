@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    fs,
-    path::PathBuf,
-};
+use std::{borrow::Cow, fs, path::PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SplitStrategy {
@@ -167,7 +163,7 @@ pub struct ProcessedImage {
     pub file_name: String,
     pub data: Vec<u8>,
     pub dimensions: (u32, u32),
-    pub format: ImageFormat
+    pub format: ImageFormat,
 }
 
 pub struct Comic {

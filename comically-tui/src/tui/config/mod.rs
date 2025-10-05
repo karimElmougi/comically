@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 use crate::tui::{
     button::{Button, ButtonVariant},
     config::device_selector::DeviceSelectorState,
@@ -27,6 +26,7 @@ use crate::tui::{
     utils::{padding, themed_block, Side},
     Theme,
 };
+use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 pub struct ConfigState {
     pub files: Vec<(MangaFile, bool)>,

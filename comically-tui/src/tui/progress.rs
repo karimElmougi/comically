@@ -8,13 +8,13 @@ use ratatui::{
 };
 use std::time::{Duration, Instant};
 
-use comically::OutputFormat;
 use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
 use crate::tui::{
     render_title,
     utils::{themed_block, themed_block_title},
     Theme,
 };
+use comically::OutputFormat;
 
 pub struct ProgressState {
     start: Instant,

@@ -9,7 +9,7 @@ use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
 use crate::comic::{Comic, ProcessedImage};
-use crate::{ImageFormat};
+use crate::ImageFormat;
 
 /// Builds an EPUB file from the processed images, returns the path to the created file
 pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
@@ -20,7 +20,8 @@ pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
     let mut zip = ZipWriter::new(cursor);
 
     let options_stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    let options_deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options_deflated =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // 1. Add mimetype (must be first and uncompressed)
     zip.start_file("mimetype", options_stored)?;
@@ -33,7 +34,7 @@ pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
     // 3. Prepare image map
     let mut image_map: Vec<(&ProcessedImage, String)> = Vec::new();
     for (i, image) in comic.processed_files.iter().enumerate() {
-        image_map.push((image, format!("Images/image{:03}.jpg", i+1)));
+        image_map.push((image, format!("Images/image{:03}.jpg", i + 1)));
     }
 
     // 4. Add cover.html
@@ -117,11 +118,11 @@ fn page_html(img_path: &str, page_num: usize, dimensions: (u32, u32)) -> String 
   </div>
 </body>
 </html>"#,
-dimensions.0,dimensions.1
+        dimensions.0, dimensions.1
     )
 }
 
-fn toc_ncx(comic: &Comic, num_pages:usize, ) -> String {
+fn toc_ncx(comic: &Comic, num_pages: usize) -> String {
     let uuid = Uuid::new_v4().to_string();
     let mut nav_points = String::new();
 
@@ -170,11 +171,14 @@ fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String
     let mut manifest = String::new();
 
     // Add NCX
-    manifest.push_str(r#"    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
+    manifest
+        .push_str(r#"    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
     manifest.push('\n');
 
     // Add cover HTML
-    manifest.push_str(r#"    <item id="cover-html" href="cover.html" media-type="application/xhtml+xml"/>"#);
+    manifest.push_str(
+        r#"    <item id="cover-html" href="cover.html" media-type="application/xhtml+xml"/>"#,
+    );
     manifest.push('\n');
 
     // Add content HTML files
@@ -210,8 +214,12 @@ fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String
 
     // Build spine items with page spread properties
     let mut spine = String::new();
-    let progression_direction = if comic.config.right_to_left { "rtl" } else { "ltr" };
-    
+    let progression_direction = if comic.config.right_to_left {
+        "rtl"
+    } else {
+        "ltr"
+    };
+
     // Add cover as first item in spine (typically center spread)
     spine.push_str(r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#);
     spine.push('\n');

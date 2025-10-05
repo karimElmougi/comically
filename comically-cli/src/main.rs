@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use comically::{Comic, ComicConfig, DevicePreset, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
+use comically::{
+    Comic, ComicConfig, DevicePreset, ImageFormat, OutputFormat, PngCompression, SplitStrategy,
+};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -45,7 +47,12 @@ struct Args {
     png_compression: PngCompressionArg,
 
     /// Brightness adjustment (-100 to +100)
-    #[arg(long, value_name = "VALUE", default_value = "0", allow_hyphen_values = true)]
+    #[arg(
+        long,
+        value_name = "VALUE",
+        default_value = "0",
+        allow_hyphen_values = true
+    )]
     brightness: i32,
 
     /// Gamma correction (0.1 to 3.0)
@@ -202,8 +209,7 @@ fn main() -> Result<()> {
 
     // Create output directory if it doesn't exist
     if !args.output_dir.exists() {
-        std::fs::create_dir_all(&args.output_dir)
-            .context("Failed to create output directory")?;
+        std::fs::create_dir_all(&args.output_dir).context("Failed to create output directory")?;
     }
 
     // Build config
@@ -219,10 +225,18 @@ fn main() -> Result<()> {
         .to_string();
 
     // Create comic
-    let mut comic = Comic::new(args.input.clone(), args.output_dir.clone(), title.clone(), config.clone())?;
+    let mut comic = Comic::new(
+        args.input.clone(),
+        args.output_dir.clone(),
+        title.clone(),
+        config.clone(),
+    )?;
 
     if !args.quiet {
-        log::info!("Converting: `{}` to {output_format:?}", args.input.display());
+        log::info!(
+            "Converting: `{}` to {output_format:?}",
+            args.input.display()
+        );
     }
 
     // Open archive
@@ -231,7 +245,7 @@ fn main() -> Result<()> {
     let num_images = archive.num_images();
 
     if !args.quiet {
-        log::info!("Found {num_images} images" );
+        log::info!("Found {num_images} images");
     }
 
     // Process images
@@ -249,7 +263,7 @@ fn main() -> Result<()> {
 
     // Build output
     if !args.quiet {
-        log::info!("Building {output_format:?}..." );
+        log::info!("Building {output_format:?}...");
     }
 
     match output_format {
@@ -261,7 +275,9 @@ fn main() -> Result<()> {
         }
         OutputFormat::Mobi => {
             if !comically::is_kindlegen_available() {
-                anyhow::bail!("KindleGen is not available. Please install it to create MOBI files.");
+                anyhow::bail!(
+                    "KindleGen is not available. Please install it to create MOBI files."
+                );
             }
             let epub_path = comically::epub::build(&comic, &comic.output_dir)
                 .context("Failed to build EPUB for MOBI conversion")?;

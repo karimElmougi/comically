@@ -8,14 +8,12 @@ use ratatui::{
     widgets::{Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
-use comically::comic::DevicePreset;
-use crate::{
-    tui::{
-        button::{Button, ButtonVariant},
-        config::{ConfigState, ModalState},
-        utils::popup_block,
-    },
+use crate::tui::{
+    button::{Button, ButtonVariant},
+    config::{ConfigState, ModalState},
+    utils::popup_block,
 };
+use comically::comic::DevicePreset;
 
 pub struct DeviceSelectorState {
     pub list_state: ListState,

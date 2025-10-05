@@ -15,9 +15,9 @@ use std::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use comically::ComicConfig;
 use crate::progress::ProgressEvent;
 use crate::tui::config::ConfigEvent;
+use comically::ComicConfig;
 
 #[derive(Parser, Debug)]
 #[command(

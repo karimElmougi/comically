@@ -49,7 +49,12 @@ pub fn process_archive_images(
                     match encode_image(&img, &config.image_format) {
                         Ok(data) => {
                             log::trace!("Encoded image: {}", file_name);
-                            Some(ProcessedImage { file_name, data, dimensions, format: config.image_format })
+                            Some(ProcessedImage {
+                                file_name,
+                                data,
+                                dimensions,
+                                format: config.image_format,
+                            })
                         }
                         Err(e) => {
                             log::warn!("Failed to encode {}: {}", file_name, e);
@@ -500,7 +505,7 @@ pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<WebPMemory> {
 
 fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
-    
+
     match format {
         ImageFormat::Jpeg { quality } => {
             compress_to_jpeg(img, &mut buffer, *quality)?;
@@ -513,7 +518,7 @@ fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Result<Vec<u8>> {
             buffer.extend_from_slice(&webp_data);
         }
     }
-    
+
     Ok(buffer)
 }
 
