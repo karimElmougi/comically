@@ -8,15 +8,12 @@ use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use webp::WebPMemory;
 
-use std::path::Path;
-
 use crate::archive::ArchiveFile;
 use crate::comic::{ComicConfig, ImageFormat, PngCompression, ProcessedImage, SplitStrategy};
 
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
     config: &ComicConfig,
-    output_dir: &Path,
 ) -> Result<Vec<ProcessedImage>> {
     log::info!("Processing archive images");
 
@@ -41,20 +38,21 @@ pub fn process_archive_images(
                 .into_iter()
                 .enumerate()
                 .filter_map(|(ii, img)| {
-                    let path = {
+                    let file_name = {
                         let file = archive_file.parent().display();
                         let stem = archive_file.file_stem().to_string_lossy();
                         let extension = config.image_format.extension();
-                        output_dir.join(format!("{file}_{stem}_{ii}.{extension}",))
+                        // TODO: Validate this makes sense
+                        format!("{file}_{stem}_{ii}.{extension}")
                     };
                     let dimensions = img.dimensions();
-                    match save_image(&img, &path, &config.image_format) {
-                        Ok(_) => {
-                            log::trace!("Saved image: {}", path.display());
-                            Some(ProcessedImage { path, dimensions })
+                    match encode_image(&img, &config.image_format) {
+                        Ok(data) => {
+                            log::trace!("Encoded image: {}", file_name);
+                            Some(ProcessedImage { file_name, data, dimensions, format: config.image_format })
                         }
                         Err(e) => {
-                            log::warn!("Failed to save {}: {}", path.display(), e);
+                            log::warn!("Failed to encode {}: {}", file_name, e);
                             None
                         }
                     }
@@ -65,8 +63,8 @@ pub fn process_archive_images(
         })
         .collect::<Vec<_>>();
 
-    images.sort_by(|a, b| a.path.as_os_str().cmp(b.path.as_os_str()));
-    images.dedup_by_key(|i| i.path.as_os_str().to_owned());
+    images.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    images.dedup_by_key(|i| i.file_name.clone());
 
     Ok(images)
 }
@@ -500,36 +498,23 @@ pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<WebPMemory> {
     Ok(webp_data)
 }
 
-fn save_image(img: &DynamicImage, path: &Path, format: &ImageFormat) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "Failed to create directories for path: {}",
-                parent.display()
-            )
-        })?;
-    }
-
+fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    
     match format {
         ImageFormat::Jpeg { quality } => {
-            let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
-            compress_to_jpeg(img, &mut output_buffer, *quality)
-                .with_context(|| format!("Failed to save JPEG image: {}", path.display()))?;
+            compress_to_jpeg(img, &mut buffer, *quality)?;
         }
         ImageFormat::Png { compression } => {
-            let mut output_buffer = std::io::BufWriter::new(std::fs::File::create(path)?);
-            compress_to_png(img, &mut output_buffer, *compression)
-                .with_context(|| format!("Failed to save PNG image: {}", path.display()))?;
+            compress_to_png(img, &mut buffer, *compression)?;
         }
         ImageFormat::WebP { quality } => {
-            let webp_data = compress_to_webp(img, *quality)
-                .with_context(|| format!("Failed to encode WebP image: {}", path.display()))?;
-            std::fs::write(path, &*webp_data)
-                .with_context(|| format!("Failed to save WebP image: {}", path.display()))?;
+            let webp_data = compress_to_webp(img, *quality)?;
+            buffer.extend_from_slice(&webp_data);
         }
     }
-
-    Ok(())
+    
+    Ok(buffer)
 }
 
 #[cfg(test)]

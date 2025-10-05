@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
@@ -17,11 +17,8 @@ pub fn build(comic: &Comic) -> Result<()> {
 
     // Add images in order
     for image in comic.processed_files.iter() {
-        let file_name = image.path.file_name().unwrap().to_string_lossy();
-        zip.start_file(file_name, options)?;
-        let image_data = std::fs::read(&image.path)
-            .with_context(|| format!("Failed to read image: {:?}", image.path))?;
-        std::io::Write::write_all(&mut zip, &image_data)?;
+        zip.start_file(&image.file_name, options)?;
+        std::io::Write::write_all(&mut zip, &image.data)?;
     }
 
     // TODO: Add ComicInfo.xml if we have metadata

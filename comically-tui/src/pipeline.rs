@@ -1,14 +1,15 @@
-use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
-use crate::Event;
-use anyhow::Context;
 use comically::{Comic, ComicConfig, OutputFormat};
 use rayon::iter::{ParallelBridge, ParallelIterator};
+
 use std::{
     path::PathBuf,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
+
+use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
+use crate::Event;
 
 pub fn process_files(
     files: Vec<PathBuf>,
@@ -19,7 +20,7 @@ pub fn process_files(
     log::info!("processing with config: {:?}", config);
     log::info!("processing {} files", files.len());
 
-    let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<(usize, Comic, mpsc::Sender<Event>)>();
+    let (kindlegen_tx, kindlegen_rx) = mpsc::channel::<(usize, PathBuf, PathBuf, mpsc::Sender<Event>)>();
 
     if config.output_format == OutputFormat::Mobi {
         let event_tx = event_tx.clone();
@@ -103,7 +104,6 @@ pub fn process_files(
             let images = match comically::image::process_archive_images(
                 archive_iter,
                 &config,
-                comic.processed_dir(),
             ) {
                 Ok(imgs) => imgs,
                 Err(e) => {
@@ -146,19 +146,12 @@ pub fn process_files(
             
             let build_result = match config.output_format {
                 OutputFormat::Cbz => comically::cbz::build(&comic),
-                OutputFormat::Epub => {
-                    comically::epub::build(&comic).and_then(|_| {
-                        // Move EPUB to final destination
-                        let output_path = comic.output_path();
-                        std::fs::rename(comic.epub_file(), &output_path).with_context(|| {
-                            format!("Failed to move EPUB to output: {:?}", output_path)
-                        })
-                    })
-                }
+                OutputFormat::Epub => comically::epub::build(&comic, &output_dir).map(|_| ()),
                 OutputFormat::Mobi => {
-                    match comically::epub::build(&comic) {
-                        Ok(_) => {
-                            kindlegen_tx.send((id, comic, event_tx.clone())).ok();
+                    match comically::epub::build(&comic, &output_dir) {
+                        Ok(epub_path) => {
+                            let output_mobi = comic.output_path();
+                            kindlegen_tx.send((id, epub_path, output_mobi, event_tx.clone())).ok();
                             return Some(());
                         }
                         Err(e) => Err(e),
@@ -209,10 +202,9 @@ pub fn process_files(
     }
 }
 
-pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
+pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, PathBuf, PathBuf, mpsc::Sender<Event>)>) {
     struct KindleGenStatus {
         id: usize,
-        comic: Comic,
         spawned: comically::mobi::SpawnedKindleGen,
         start: Instant,
         event_tx: mpsc::Sender<Event>,
@@ -225,7 +217,7 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
             let result = tx.try_recv();
 
             match result {
-                Ok((id, comic, event_tx)) => {
+                Ok((id, epub_path, output_mobi, event_tx)) => {
                     let start = Instant::now();
                     event_tx
                         .send(Event::Progress(ProgressEvent::ComicUpdate {
@@ -238,18 +230,17 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
                         }))
                         .ok();
                     
-                    match comically::mobi::create(&comic) {
+                    match comically::mobi::create(epub_path, output_mobi) {
                         Ok(spawned) => {
                             pending.push(Some(KindleGenStatus {
                                 id,
-                                comic,
                                 spawned,
                                 start,
                                 event_tx,
                             }));
                         }
                         Err(e) => {
-                            log::error!("Error creating MOBI for {}: {e}", comic.title);
+                            log::error!("Error creating MOBI: {e}");
                             event_tx
                                 .send(Event::Progress(ProgressEvent::ComicUpdate {
                                     id,
@@ -287,7 +278,7 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
 
             if is_done {
                 if let Some(status) = s.take() {
-                    log::debug!("KindleGen process completed for: {}", status.comic.title);
+                    log::debug!("KindleGen process completed");
                     match status.spawned.wait() {
                         Ok(_) => {
                             status.event_tx
@@ -305,10 +296,10 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, Comic, mpsc::Sender<Event>)>) {
                                     status: ComicStatus::Success,
                                 }))
                                 .ok();
-                            log::debug!("MOBI conversion successful for: {}", status.comic.title);
+                            log::debug!("MOBI conversion successful");
                         }
                         Err(e) => {
-                            log::error!("MOBI conversion failed for {}: {e}", status.comic.title);
+                            log::error!("MOBI conversion failed: {e}");
                             status.event_tx
                                 .send(Event::Progress(ProgressEvent::ComicUpdate {
                                     id: status.id,

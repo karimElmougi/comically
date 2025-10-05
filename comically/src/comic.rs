@@ -164,13 +164,13 @@ impl ComicConfig {
 
 #[derive(Debug, Clone)]
 pub struct ProcessedImage {
-    pub path: PathBuf,
+    pub file_name: String,
+    pub data: Vec<u8>,
     pub dimensions: (u32, u32),
+    pub format: ImageFormat
 }
 
 pub struct Comic {
-    pub temp_dir: tempfile::TempDir,
-    pub processed_dir: PathBuf,
     pub processed_files: Vec<ProcessedImage>,
     pub title: String,
     pub output_dir: PathBuf,
@@ -181,20 +181,12 @@ pub struct Comic {
 impl std::fmt::Debug for Comic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Comic")
-            .field("temp_dir", &self.temp_dir)
-            .field("processed_dir", &self.processed_dir)
             .field("processed_files", &self.processed_files.len())
             .field("title", &self.title)
             .field("output_dir", &self.output_dir)
             .field("input", &self.input)
             .field("config", &self.config)
             .finish()
-    }
-}
-
-impl Drop for Comic {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
 
@@ -205,11 +197,7 @@ impl Comic {
         title: String,
         config: ComicConfig,
     ) -> anyhow::Result<Self> {
-        let temp_dir = tempfile::tempdir()?;
-
         let comic = Comic {
-            processed_dir: temp_dir.path().join("Processed"),
-            temp_dir,
             processed_files: Vec::new(),
             title,
             output_dir,
@@ -217,21 +205,7 @@ impl Comic {
             config,
         };
 
-        std::fs::create_dir_all(comic.processed_dir())?;
-
         Ok(comic)
-    }
-
-    pub fn processed_dir(&self) -> &std::path::Path {
-        &self.processed_dir
-    }
-
-    pub fn epub_dir(&self) -> PathBuf {
-        self.temp_dir.path().join("EPUB")
-    }
-
-    pub fn epub_file(&self) -> PathBuf {
-        self.epub_dir().join("book.epub")
     }
 
     pub fn output_path(&self) -> PathBuf {
