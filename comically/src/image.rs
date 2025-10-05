@@ -302,16 +302,29 @@ fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<GrayImage> {
     }
 }
 
+/// Gamma correction lookup table
+/// Only computed once per unique gamma value (256 iterations) to avoid slow float operations
+static GAMMA_LUT: std::sync::OnceLock<[u8; 256]> = std::sync::OnceLock::new();
+
+fn gamma_lut(gamma: f32) -> &'static [u8; 256] {
+    GAMMA_LUT.get_or_init(|| {
+        let mut lut = [0u8; 256];
+        for (i, pixel) in lut.iter_mut().enumerate() {
+            let normalized = i as f32 / 255.0;
+            let corrected = normalized.powf(gamma);
+            *pixel = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+        lut
+    })
+}
+
 /// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
 fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
     let gamma = gamma.clamp(0.1, 3.0);
     // only apply gamma if it's not 1.0
     if (gamma - 1.0).abs() > 0.01 {
         imageproc::map::map_colors_mut(&mut img, |pixel| {
-            let normalized = pixel[0] as f32 / 255.0;
-            let corrected = normalized.powf(gamma);
-            let new_value = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
-            Luma([new_value])
+            Luma([gamma_lut(gamma)[pixel[0] as usize]])
         });
     }
 
