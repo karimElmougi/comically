@@ -191,18 +191,13 @@ pub fn process_archive_images(
 
 /// Process a single image file with Kindle-optimized transformations
 pub fn process(img: DynamicImage, config: &ComicConfig) -> Split<DynamicImage> {
-    let img = transform::transform(img.into_luma8(), config.brightness, config.gamma);
+    let mut img = img.into_luma8();
+    img = transform::gamma(img, config.gamma);
+    img = transform::brightness(img, config.brightness);
+    img = transform::autocontrast(img);
 
-    let gray_images = if config.auto_crop {
-        if let Some(cropped) = transform::auto_crop(&img) {
-            transform::process_image_view(&cropped.to_image(), config)
-        } else {
-            transform::process_image_view(&img, config)
-        }
-    } else {
-        transform::process_image_view(&img, config)
-    };
-
-    // Convert GrayImage to DynamicImage
-    gray_images.map(DynamicImage::ImageLuma8)
+    match config.auto_crop.then(|| transform::auto_crop(&img)).flatten() {
+        Some(cropped) => transform::split_rotate(&cropped.to_image(), config),
+        None => transform::split_rotate(&img, config),
+    }.map(DynamicImage::ImageLuma8)
 }

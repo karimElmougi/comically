@@ -31,10 +31,11 @@ fn gamma_lut(gamma: f32) -> &'static [u8; 256] {
     })
 }
 
-/// Apply gamma, brightness, and autocontrast transformations
+/// Apply gamma correction to an image
 /// 
 /// gamma - 0.1 to 3.0, where 1.0 = no change, <1 = brighter, >1 = more contrast
-pub(super) fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
+#[inline]
+pub fn gamma(mut img: GrayImage, gamma: f32) -> GrayImage {
     let gamma = gamma.clamp(0.1, 3.0);
     // only apply gamma if it's not 1.0
     if (gamma - 1.0).abs() > 0.01 {
@@ -42,8 +43,13 @@ pub(super) fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> Gray
             Luma([gamma_lut(gamma)[pixel[0] as usize]])
         });
     }
+    img
+}
 
-    // Apply autocontrast - find actual min/max and stretch to 0-255
+/// Apply autocontrast to an image
+/// 
+/// This function stretches the contrast of the image to the full range of 0-255
+pub fn autocontrast(mut img: GrayImage) -> GrayImage {
     let hist = histogram(&img);
 
     let channel_hist = &hist.channels[0];
@@ -61,17 +67,20 @@ pub(super) fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> Gray
     if max > min {
         img = imageproc::contrast::stretch_contrast(&img, min, max, 0, 255);
     }
+    img
+}
 
-    // Only apply manual adjustments if explicitly set
-    if brightness != 0 {
-        imageops::colorops::brighten_in_place(&mut img, brightness);
-    }
-
+/// Adjust the brightness of an image
+/// 
+/// brightness - -255 to 255, where 0 = no change, <0 = darker, >0 = brighter
+#[inline(always)]
+pub fn brightness(mut img: GrayImage, brightness: i32) -> GrayImage {
+    imageops::colorops::brighten_in_place(&mut img, brightness);
     img
 }
 
 /// Auto-crop white margins from all sides of the image
-pub(super) fn auto_crop(img: &GrayImage) -> Option<SubImage<&GrayImage>> {
+pub fn auto_crop(img: &GrayImage) -> Option<SubImage<&GrayImage>> {
     let (width, height) = img.dimensions();
 
     // Left margin: scan from left to right
@@ -202,7 +211,7 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
 }
 
 /// Resize image to fit device dimensions with optional margins
-pub(super) fn resize_image(
+fn resize(
     img: &GrayImage,
     device_dimensions: (u32, u32),
     margin_color: Option<u8>,
@@ -268,7 +277,7 @@ pub(super) fn resize_image(
 }
 
 /// Process image view with split strategy
-pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<GrayImage> {
+pub fn split_rotate(img: &GrayImage, c: &ComicConfig) -> Split<GrayImage> {
     let target = c.device_dimensions();
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
@@ -278,7 +287,7 @@ pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<Gray
     match c.split {
         SplitStrategy::None => {
             // Just resize, no splitting or rotation
-            Split::one(resize_image(img, target, margin))
+            Split::one(resize(img, target, margin))
         }
         SplitStrategy::Split => {
             if is_double_page {
@@ -286,8 +295,8 @@ pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<Gray
                 let (left, right) = split_double_pages(img);
 
                 let (left_resized, right_resized) = rayon::join(
-                    || resize_image(&left, target, margin),
-                    || resize_image(&right, target, margin),
+                    || resize(&left, target, margin),
+                    || resize(&right, target, margin),
                 );
 
                 // Determine order based on right_to_left setting
@@ -299,15 +308,15 @@ pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<Gray
 
                 Split::two(first, second)
             } else {
-                Split::one(resize_image(img, target, margin))
+                Split::one(resize(img, target, margin))
             }
         }
         SplitStrategy::Rotate => {
             if is_double_page {
                 let rotated = rotate_image_90(img, c.right_to_left);
-                Split::one(resize_image(&rotated, target, margin))
+                Split::one(resize(&rotated, target, margin))
             } else {
-                Split::one(resize_image(img, target, margin))
+                Split::one(resize(img, target, margin))
             }
         }
         SplitStrategy::RotateAndSplit => {
@@ -321,13 +330,13 @@ pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<Gray
                 rayon::scope(|s| {
                     s.spawn(|_| {
                         let rotated = rotate_image_90(img, c.right_to_left);
-                        rotated_resized = Some(resize_image(&rotated, target, margin));
+                        rotated_resized = Some(resize(&rotated, target, margin));
                     });
                     s.spawn(|_| {
-                        left_resized = Some(resize_image(&left, target, margin));
+                        left_resized = Some(resize(&left, target, margin));
                     });
                     s.spawn(|_| {
-                        right_resized = Some(resize_image(&right, target, margin));
+                        right_resized = Some(resize(&right, target, margin));
                     });
                 });
 
@@ -343,7 +352,7 @@ pub(super) fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<Gray
 
                 Split::three(rotated_resized, first, second)
             } else {
-                Split::one(resize_image(img, target, margin))
+                Split::one(resize(img, target, margin))
             }
         }
     }
