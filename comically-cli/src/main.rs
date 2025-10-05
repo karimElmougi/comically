@@ -20,7 +20,7 @@ struct Args {
     output_dir: PathBuf,
 
     /// Output format
-    #[arg(short, long, value_enum, default_value = "cbz")]
+    #[arg(short, long, value_enum, default_value_t = OutputFormatArg::Cbz)]
     format: OutputFormatArg,
 
     /// Device preset
@@ -41,52 +41,52 @@ struct Args {
     height: Option<u32>,
 
     /// Image format
-    #[arg(long, value_enum, default_value = "jpeg")]
+    #[arg(long, value_enum, default_value_t = ImageFormatArg::Jpeg)]
     image_format: ImageFormatArg,
 
     /// JPEG/WebP quality (0-100)
-    #[arg(long, value_name = "QUALITY", default_value = "85")]
+    #[arg(long, value_name = "QUALITY", default_value_t = 85)]
     quality: u8,
 
     /// PNG compression level
-    #[arg(long, value_enum, default_value = "default")]
+    #[arg(long, value_enum, default_value_t = PngCompressionArg::Default)]
     png_compression: PngCompressionArg,
 
     /// Brightness adjustment (-100 to +100)
     #[arg(
         long,
         value_name = "VALUE",
-        default_value = "0",
+        default_value_t = -10,
         allow_hyphen_values = true
     )]
     brightness: i32,
 
     /// Gamma correction (0.1 to 3.0)
-    #[arg(long, value_name = "VALUE", default_value = "1.0")]
+    #[arg(long, value_name = "VALUE", default_value_t = 1.8)]
     gamma: f32,
 
     /// Margin color
-    #[arg(long, value_enum, default_value = "black")]
+    #[arg(long, value_enum, default_value_t = MarginColorArg::None)]
     margin_color: MarginColorArg,
 
     /// Page split strategy
-    #[arg(long, value_enum, default_value = "split")]
+    #[arg(long, value_enum, default_value_t = SplitStrategyArg::RotateSplit)]
     split: SplitStrategyArg,
 
     /// Right-to-left reading direction (manga mode)
-    #[arg(long)]
+    #[arg(long, default_value_t = true)]
     rtl: bool,
 
     /// Disable automatic cropping
-    #[arg(long)]
+    #[arg(long, default_value_t)]
     no_auto_crop: bool,
 
     /// Verbose output
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t)]
     verbose: bool,
 
     /// Quiet mode (minimal output)
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t)]
     quiet: bool,
 }
 
