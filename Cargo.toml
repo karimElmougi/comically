@@ -1,5 +1,5 @@
 [workspace]
-members = ["comically", "comically-tui"]
+members = ["comically", "comically-tui", "comically-cli"]
 resolver = "2"
 
 [workspace.dependencies]
