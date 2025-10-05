@@ -1,5 +1,7 @@
 use std::{borrow::Cow, fs, path::PathBuf};
 
+use crate::image::ImageFormat;
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SplitStrategy {
     None,
@@ -13,78 +15,6 @@ pub enum OutputFormat {
     Mobi,
     Epub,
     Cbz,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum PngCompression {
-    Fast,
-    Default,
-    Best,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ImageFormat {
-    Jpeg { quality: u8 },
-    Png { compression: PngCompression },
-    WebP { quality: u8 },
-}
-
-impl ImageFormat {
-    pub fn cycle(&self) -> Self {
-        match self {
-            ImageFormat::Jpeg { .. } => ImageFormat::Png {
-                compression: PngCompression::Default,
-            },
-            ImageFormat::Png { .. } => ImageFormat::WebP { quality: 85 },
-            ImageFormat::WebP { .. } => ImageFormat::Jpeg { quality: 85 },
-        }
-    }
-
-    pub fn extension(&self) -> &'static str {
-        match self {
-            ImageFormat::Jpeg { .. } => "jpg",
-            ImageFormat::Png { .. } => "png",
-            ImageFormat::WebP { .. } => "webp",
-        }
-    }
-
-    pub fn adjust_quality(&mut self, increase: bool, fine: bool) {
-        let step = if fine { 1 } else { 5 };
-        match self {
-            ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => {
-                if increase {
-                    *quality = (*quality + step).min(100);
-                } else {
-                    *quality = quality.saturating_sub(step);
-                }
-            }
-            ImageFormat::Png { compression } => {
-                *compression = if increase {
-                    match compression {
-                        PngCompression::Fast => PngCompression::Default,
-                        PngCompression::Default => PngCompression::Best,
-                        PngCompression::Best => PngCompression::Best,
-                    }
-                } else {
-                    match compression {
-                        PngCompression::Fast => PngCompression::Fast,
-                        PngCompression::Default => PngCompression::Fast,
-                        PngCompression::Best => PngCompression::Default,
-                    }
-                };
-            }
-        }
-    }
-}
-
-impl PngCompression {
-    pub fn cycle(&self) -> Self {
-        match self {
-            PngCompression::Fast => PngCompression::Default,
-            PngCompression::Default => PngCompression::Best,
-            PngCompression::Best => PngCompression::Fast,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -9,7 +9,7 @@ use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
 use crate::comic::{Comic, ProcessedImage};
-use crate::ImageFormat;
+use crate::image::ImageFormat;
 
 /// Builds an EPUB file from the processed images, returns the path to the created file
 pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
