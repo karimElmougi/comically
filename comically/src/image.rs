@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use fast_image_resize as fr;
+use fr::images::Image as FrImage;
 use imageproc::image::{
-    imageops::{self, FilterType},
-    load_from_memory, ColorType, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma,
-    Pixel, SubImage,
+    imageops,
+    load_from_memory, ColorType, DynamicImage, GenericImageView, GrayImage, Luma, SubImage,
 };
 use imageproc::stats::histogram;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -152,7 +153,7 @@ pub fn process(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
 
     let gray_images = if config.auto_crop {
         if let Some(cropped) = auto_crop(&img) {
-            process_image_view(&*cropped, config)
+            process_image_view(&cropped.to_image(), config)
         } else {
             process_image_view(&img, config)
         }
@@ -167,15 +168,12 @@ pub fn process(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
         .collect()
 }
 
-fn process_image_view<I>(img: &I, c: &ComicConfig) -> Vec<GrayImage>
-where
-    I: GenericImageView<Pixel = Luma<u8>> + Send + Sync,
-{
+fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Vec<GrayImage> {
     let target = c.device_dimensions();
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
 
-    let margin = c.margin_color.map(|color| Luma([color]));
+    let margin = c.margin_color;
 
     match c.split {
         SplitStrategy::None => {
@@ -188,8 +186,8 @@ where
                 let (left, right) = split_double_pages(img);
 
                 let (left_resized, right_resized) = rayon::join(
-                    || resize_image(&*left, target, margin),
-                    || resize_image(&*right, target, margin),
+                    || resize_image(&left, target, margin),
+                    || resize_image(&right, target, margin),
                 );
 
                 // Determine order based on right_to_left setting
@@ -226,10 +224,10 @@ where
                         rotated_resized = Some(resize_image(&rotated, target, margin));
                     });
                     s.spawn(|_| {
-                        left_resized = Some(resize_image(&*left, target, margin));
+                        left_resized = Some(resize_image(&left, target, margin));
                     });
                     s.spawn(|_| {
-                        right_resized = Some(resize_image(&*right, target, margin));
+                        right_resized = Some(resize_image(&right, target, margin));
                     });
                 });
 
@@ -291,19 +289,16 @@ fn transform(mut img: GrayImage, brightness: i32, gamma: f32) -> GrayImage {
     img
 }
 
-fn split_double_pages<I: GenericImageView>(img: &I) -> (SubImage<&I>, SubImage<&I>) {
+fn split_double_pages(img: &GrayImage) -> (GrayImage, GrayImage) {
     let (width, height) = img.dimensions();
 
-    let left = imageops::crop_imm(img, 0, 0, width / 2, height);
-    let right = imageops::crop_imm(img, width / 2, 0, width / 2, height);
+    let left = imageops::crop_imm(img, 0, 0, width / 2, height).to_image();
+    let right = imageops::crop_imm(img, width / 2, 0, width / 2, height).to_image();
 
     (left, right)
 }
 
-fn rotate_image_90<I>(img: &I, clockwise: bool) -> GrayImage
-where
-    I: GenericImageView<Pixel = Luma<u8>>,
-{
+fn rotate_image_90(img: &GrayImage, clockwise: bool) -> GrayImage {
     let (width, height) = img.dimensions();
     let mut rotated = GrayImage::new(height, width);
 
@@ -311,9 +306,9 @@ where
         for x in 0..width {
             let pixel = img.get_pixel(x, y);
             if clockwise {
-                rotated.put_pixel(height - 1 - y, x, pixel);
+                rotated.put_pixel(height - 1 - y, x, *pixel);
             } else {
-                rotated.put_pixel(y, width - 1 - x, pixel);
+                rotated.put_pixel(y, width - 1 - x, *pixel);
             }
         }
     }
@@ -459,26 +454,15 @@ fn is_not_noise(img: &GrayImage, x: u32, y: u32) -> bool {
     dark_neighbors >= REQUIRED_NEIGHBORS
 }
 
-fn resize_image<I>(
-    img: &I,
+fn resize_image(
+    img: &GrayImage,
     device_dimensions: (u32, u32),
-    margin_color: Option<I::Pixel>,
-) -> ImageBuffer<I::Pixel, Vec<<I::Pixel as Pixel>::Subpixel>>
-where
-    I: GenericImageView,
-    <I as GenericImageView>::Pixel: 'static,
-{
+    margin_color: Option<u8>,
+) -> GrayImage {
     let (target_width, target_height) = device_dimensions;
     let (width, height) = img.dimensions();
 
-    let filter = if width <= target_width && height <= target_height {
-        // For upscaling, Bicubic gives smoother results for manga
-        FilterType::CatmullRom
-    } else {
-        // For downscaling, Lanczos3 preserves more detail
-        FilterType::Lanczos3
-    };
-
+    // Calculate aspect-fit dimensions
     let width_ratio = target_width as f32 / width as f32;
     let height_ratio = target_height as f32 / height as f32;
     let ratio = width_ratio.min(height_ratio);
@@ -486,27 +470,58 @@ where
     let new_width = (width as f32 * ratio) as u32;
     let new_height = (height as f32 * ratio) as u32;
 
-    let resized = imageops::resize(img, new_width, new_height, filter);
+    // Choose algorithm based on scaling direction
+    let algorithm = if ratio < 1.0 {
+        // Downscaling: Lanczos3 preserves detail
+        fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)
+    } else {
+        // Upscaling: CatmullRom gives smoother results
+        fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom)
+    };
 
+    // Create source image view (need to clone data since fast_image_resize requires mutable slice)
+    let src_buffer = img.as_raw().clone();
+    let src_image = FrImage::from_vec_u8(
+        width.try_into().unwrap(),
+        height.try_into().unwrap(),
+        src_buffer,
+        fr::PixelType::U8,
+    )
+    .unwrap();
+
+    // Create destination buffer
+    let mut dst_buffer = vec![0u8; (new_width * new_height) as usize];
+    let mut dst_image = FrImage::from_slice_u8(
+        new_width.try_into().unwrap(),
+        new_height.try_into().unwrap(),
+        &mut dst_buffer,
+        fr::PixelType::U8,
+    )
+    .unwrap();
+
+    // Perform resize
+    let mut resizer = fr::Resizer::new();
+    resizer.resize(&src_image, &mut dst_image, Some(&fr::ResizeOptions::new().resize_alg(algorithm))).unwrap();
+
+    // Convert back to GrayImage
+    let resized = GrayImage::from_raw(new_width, new_height, dst_buffer).unwrap();
+
+    // If exact fit, return as-is
     if new_width == target_width && new_height == target_height {
         return resized;
     }
 
-    let margin_color = match margin_color {
-        Some(color) => color,
-        None => return resized,
-    };
-
-    let mut img = ImageBuffer::from_pixel(target_width, target_height, margin_color);
-
-    // Calculate centering offsets
-    let x_offset = (target_width - new_width) / 2;
-    let y_offset = (target_height - new_height) / 2;
-
-    // Copy the resized image to the center of the final image
-    imageops::overlay(&mut img, &resized, x_offset.into(), y_offset.into());
-
-    img
+    // Add margins if requested
+    match margin_color {
+        Some(color) => {
+            let mut result = GrayImage::from_pixel(target_width, target_height, Luma([color]));
+            let x_offset = (target_width - new_width) / 2;
+            let y_offset = (target_height - new_height) / 2;
+            imageops::overlay(&mut result, &resized, x_offset.into(), y_offset.into());
+            result
+        }
+        None => resized,
+    }
 }
 
 /// Compress an image to JPEG format with the specified quality
