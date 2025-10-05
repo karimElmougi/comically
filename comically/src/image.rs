@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
+use arrayvec::ArrayVec;
 use fast_image_resize as fr;
 use fr::images::Image as FrImage;
 use imageproc::image::{
-    imageops,
-    load_from_memory, ColorType, DynamicImage, GenericImageView, GrayImage, Luma, SubImage,
+    imageops, load_from_memory, ColorType, DynamicImage, GenericImageView, GrayImage, Luma,
+    SubImage,
 };
 use imageproc::stats::histogram;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::ParallelIterator;
+use rayon::slice::ParallelSlice;
 use webp::WebPMemory;
 
 use crate::archive::ArchiveFile;
@@ -84,71 +86,125 @@ impl ImageFormat {
     }
 }
 
+pub struct Split<T>(ArrayVec<T, 3>);
+
+impl<T> Split<T> {
+    #[inline(always)]
+    pub fn one(t: T) -> Self {
+        let mut vec = ArrayVec::new();
+        vec.push(t);
+        Split(vec)
+    }
+
+    #[inline(always)]
+    pub fn two(t1: T, t2: T) -> Self {
+        let mut vec = ArrayVec::new();
+        vec.push(t1);
+        vec.push(t2);
+        Split(vec)
+    }
+
+    #[inline(always)]
+    pub fn three(t1: T, t2: T, t3: T) -> Self {
+        Split(ArrayVec::from([t1, t2, t3]))
+    }
+
+    #[inline(always)]
+    pub fn map<U, F: FnMut(T) -> U>(self, f: F) -> Split<U> {
+        Split(self.0.into_iter().map(f).collect())
+    }
+}
+
+impl<T> IntoIterator for Split<T> {
+    type Item = T;
+    type IntoIter = <ArrayVec<T, 3> as IntoIterator>::IntoIter;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 pub fn process_archive_images(
     archive: impl Iterator<Item = anyhow::Result<ArchiveFile>> + Send,
     config: &ComicConfig,
 ) -> Result<Vec<ProcessedImage>> {
     log::info!("Processing archive images");
 
-    let mut images = archive
-        .par_bridge()
-        .filter_map(|load| {
-            if let Err(e) = &load {
-                log::warn!("Failed to load image: {}", e);
-            }
-            load.ok()
+    // 1. Collect archive files (serial, fast - no parallelism overhead)
+    let files: Vec<ArchiveFile> = archive
+        .filter_map(|result| {
+            result
+                .map_err(|e| log::warn!("Failed to load archive file: {}", e))
+                .ok()
         })
-        .filter_map(|archive_file| {
-            let Ok(img) = load_from_memory(&archive_file.data) else {
-                log::warn!("Failed to load image: {}", archive_file.file_name.display());
-                return None;
-            };
+        .collect();
 
-            Some((archive_file, process(img, config)))
-        })
-        .flat_map(|(archive_file, images)| {
-            let result = images
-                .into_iter()
-                .enumerate()
-                .filter_map(|(ii, img)| {
-                    let file_name = {
-                        let file = archive_file.parent().display();
-                        let stem = archive_file.file_stem().to_string_lossy();
-                        let extension = config.image_format.extension();
-                        // TODO: Validate this makes sense
-                        format!("{file}_{stem}_{ii}.{extension}")
-                    };
-                    let dimensions = img.dimensions();
-                    match encode_image(&img, &config.image_format) {
-                        Ok(data) => {
-                            log::trace!("Encoded image: {}", file_name);
-                            Some(ProcessedImage {
-                                file_name,
-                                data,
-                                dimensions,
-                                format: config.image_format,
-                            })
-                        }
+    log::debug!("Loaded {} files from archive", files.len());
+
+    // Calculate chunk size to minimize rayon overhead
+    // Use larger chunks to reduce coordination overhead
+    let num_threads = rayon::current_num_threads();
+    let chunk_size = (files.len() / num_threads).max(1);
+
+    log::debug!(
+        "Processing {} files with {} threads, chunk size: {}",
+        files.len(),
+        num_threads,
+        chunk_size
+    );
+
+    // 2. Single parallel stage: decode + process + encode
+    // This eliminates intermediate Vec allocation and keeps data hot in cache
+    let mut images: Vec<ProcessedImage> = files
+        .par_chunks(chunk_size)
+        .flat_map_iter(|chunk| {
+            chunk.iter().flat_map(|archive_file| {
+                let mut encoded_images = ArrayVec::<ProcessedImage, 3>::new();
+
+                // Decode image
+                let img = match load_from_memory(&archive_file.data) {
+                    Ok(img) => img,
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to decode {}: {}",
+                            archive_file.file_name.display(),
+                            e
+                        );
+                        return encoded_images;
+                    }
+                };
+
+                // Process image (transform, crop, resize, split)
+                let processed_images = process(img, config);
+
+                // Encode immediately while data is hot in cache
+                for (i, img) in processed_images.into_iter().enumerate() {
+                    match encode_image_part(archive_file, &img, i, config.image_format) {
+                        Ok(processed) => encoded_images.push(processed),
                         Err(e) => {
-                            log::warn!("Failed to encode {}: {}", file_name, e);
-                            None
+                            log::warn!(
+                                "Failed to encode {}: {}",
+                                archive_file.file_name.display(),
+                                e
+                            );
                         }
                     }
-                })
-                .collect::<Vec<_>>();
-
-            result
+                }
+                encoded_images
+            })
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    images.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-    images.dedup_by_key(|i| i.file_name.clone());
+    // 4. Serial sort + dedup (fast, no benefit from parallelism)
+    images.sort_unstable_by(|a, b| a.file_name.cmp(&b.file_name));
+    images.dedup_by(|a, b| a.file_name == b.file_name);
 
     Ok(images)
 }
 
 /// Process a single image file with Kindle-optimized transformations
-pub fn process(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
+pub fn process(img: DynamicImage, config: &ComicConfig) -> Split<DynamicImage> {
     let img = transform(img.into_luma8(), config.brightness, config.gamma);
 
     let gray_images = if config.auto_crop {
@@ -162,13 +218,10 @@ pub fn process(img: DynamicImage, config: &ComicConfig) -> Vec<DynamicImage> {
     };
 
     // Convert GrayImage to DynamicImage
-    gray_images
-        .into_iter()
-        .map(DynamicImage::ImageLuma8)
-        .collect()
+    gray_images.map(DynamicImage::ImageLuma8)
 }
 
-fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Vec<GrayImage> {
+fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Split<GrayImage> {
     let target = c.device_dimensions();
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
@@ -178,7 +231,7 @@ fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Vec<GrayImage> {
     match c.split {
         SplitStrategy::None => {
             // Just resize, no splitting or rotation
-            vec![resize_image(img, target, margin)]
+            Split::one(resize_image(img, target, margin))
         }
         SplitStrategy::Split => {
             if is_double_page {
@@ -197,17 +250,17 @@ fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Vec<GrayImage> {
                     (left_resized, right_resized)
                 };
 
-                vec![first, second]
+                Split::two(first, second)
             } else {
-                vec![resize_image(img, target, margin)]
+                Split::one(resize_image(img, target, margin))
             }
         }
         SplitStrategy::Rotate => {
             if is_double_page {
                 let rotated = rotate_image_90(img, c.right_to_left);
-                vec![resize_image(&rotated, target, margin)]
+                Split::one(resize_image(&rotated, target, margin))
             } else {
-                vec![resize_image(img, target, margin)]
+                Split::one(resize_image(img, target, margin))
             }
         }
         SplitStrategy::RotateAndSplit => {
@@ -241,9 +294,9 @@ fn process_image_view(img: &GrayImage, c: &ComicConfig) -> Vec<GrayImage> {
                     (left_resized, right_resized)
                 };
 
-                vec![rotated_resized, first, second]
+                Split::three(rotated_resized, first, second)
             } else {
-                vec![resize_image(img, target, margin)]
+                Split::one(resize_image(img, target, margin))
             }
         }
     }
@@ -481,27 +534,22 @@ fn resize_image(
 
     // Create source image view (need to clone data since fast_image_resize requires mutable slice)
     let src_buffer = img.as_raw().clone();
-    let src_image = FrImage::from_vec_u8(
-        width.try_into().unwrap(),
-        height.try_into().unwrap(),
-        src_buffer,
-        fr::PixelType::U8,
-    )
-    .unwrap();
+    let src_image = FrImage::from_vec_u8(width, height, src_buffer, fr::PixelType::U8).unwrap();
 
     // Create destination buffer
     let mut dst_buffer = vec![0u8; (new_width * new_height) as usize];
-    let mut dst_image = FrImage::from_slice_u8(
-        new_width.try_into().unwrap(),
-        new_height.try_into().unwrap(),
-        &mut dst_buffer,
-        fr::PixelType::U8,
-    )
-    .unwrap();
+    let mut dst_image =
+        FrImage::from_slice_u8(new_width, new_height, &mut dst_buffer, fr::PixelType::U8).unwrap();
 
     // Perform resize
     let mut resizer = fr::Resizer::new();
-    resizer.resize(&src_image, &mut dst_image, Some(&fr::ResizeOptions::new().resize_alg(algorithm))).unwrap();
+    resizer
+        .resize(
+            &src_image,
+            &mut dst_image,
+            Some(&fr::ResizeOptions::new().resize_alg(algorithm)),
+        )
+        .unwrap();
 
     // Convert back to GrayImage
     let resized = GrayImage::from_raw(new_width, new_height, dst_buffer).unwrap();
@@ -588,6 +636,33 @@ pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<WebPMemory> {
         .map_err(|e| anyhow::anyhow!("Failed to create WebP encoder: {}", e))?;
     let webp_data = encoder.encode(quality as f32);
     Ok(webp_data)
+}
+
+fn encode_image_part(
+    original: &ArchiveFile,
+    img: &DynamicImage,
+    part_num: usize,
+    format: ImageFormat,
+) -> Result<ProcessedImage> {
+    let file_name = {
+        let file = original.parent().display();
+        let stem = original.file_stem().to_string_lossy();
+        let extension = format.extension();
+        format!("{file}_{stem}_{part_num:03}.{extension}")
+    };
+
+    let dimensions = img.dimensions();
+
+    encode_image(img, &format)
+        .map(|data| ProcessedImage {
+            file_name,
+            data,
+            dimensions,
+            format,
+        })
+        .inspect(|processed| {
+            log::trace!("Encoded image: {}", processed.file_name);
+        })
 }
 
 fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Result<Vec<u8>> {

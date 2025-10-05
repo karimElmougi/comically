@@ -376,6 +376,7 @@ name = "comically"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "fast_image_resize",
  "imageproc",
  "log",

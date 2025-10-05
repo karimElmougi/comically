@@ -11,6 +11,7 @@ repository = "https://github.com/nicoburniske/comically"
 
 [dependencies]
 anyhow = { workspace = true }
+arrayvec = "0.7"
 fast_image_resize = "5.0"
 imageproc = { workspace = true }
 log = { workspace = true }
