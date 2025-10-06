@@ -17,6 +17,14 @@ pub fn build(title: &str, config: &ComicConfig, images: &[ProcessedImage]) -> Ve
     buffer
 }
 
+fn image_path(img_num: usize, format: ImageFormat) -> String {
+    format!("Images/image{:03}.{}", img_num, format.extension())
+}
+
+fn html_page_path(page_num: usize) -> String {
+    format!("OEBPS/page{:03}.html", page_num)
+}
+
 /// Build EPUB into the provided buffer, reusing existing allocation
 pub fn build_into(
     title: &str,
@@ -41,41 +49,34 @@ pub fn build_into(
         .unwrap();
     zip.write_all(container_xml().as_bytes()).unwrap();
 
-    // 3. Prepare image map
-    let mut image_map: Vec<(&ProcessedImage, String)> = Vec::new();
-    for (i, image) in images.iter().enumerate() {
-        image_map.push((image, format!("Images/image{:03}.jpg", i + 1)));
-    }
-
-    // 4. Add cover.html
+    // 3. Add cover.html
     zip.start_file("OEBPS/cover.html", options_deflated)
         .unwrap();
-    let cover_image_path = &image_map[0].1;
-    zip.write_all(cover_html(cover_image_path).as_bytes())
+    zip.write_all(cover_html(config.image_format).as_bytes())
         .unwrap();
 
-    // 5. Add HTML pages for each image
-    for (i, (img, img_path)) in image_map.iter().enumerate() {
-        let html_path = format!("OEBPS/page{:03}.html", i + 1);
-        zip.start_file(&html_path, options_deflated).unwrap();
-        zip.write_all(page_html(img_path, i + 1, img.dimensions).as_bytes())
+    // 4. Add HTML pages for each image
+    for (i, img) in images.iter().enumerate() {
+        zip.start_file(html_page_path(i + 1), options_deflated)
+            .unwrap();
+        zip.write_all(page_html(i + 1, config.image_format, img.dimensions).as_bytes())
             .unwrap();
     }
 
-    // 6. Add toc.ncx
+    // 5. Add toc.ncx
     zip.start_file("OEBPS/toc.ncx", options_deflated).unwrap();
-    zip.write_all(toc_ncx(title, image_map.len()).as_bytes())
+    zip.write_all(toc_ncx(title, images.len()).as_bytes())
         .unwrap();
 
-    // 7. Add content.opf
+    // 6. Add content.opf
     zip.start_file("OEBPS/content.opf", options_deflated)
         .unwrap();
-    zip.write_all(content_opf(title, config, &image_map).as_bytes())
+    zip.write_all(content_opf(title, config, images).as_bytes())
         .unwrap();
 
-    // 8. Add all images
-    for (image, rel_path) in &image_map {
-        let path = format!("OEBPS/{}", rel_path);
+    // 7. Add all images
+    for (i, image) in images.iter().enumerate() {
+        let path = format!("OEBPS/{}", image_path(i + 1, config.image_format));
         zip.start_file(&path, options_stored).unwrap();
         zip.write_all(&image.data).unwrap();
     }
@@ -93,7 +94,7 @@ fn container_xml() -> &'static str {
 </container>"#
 }
 
-fn cover_html(cover_img_path: &str) -> String {
+fn cover_html(format: ImageFormat) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -104,14 +105,15 @@ fn cover_html(cover_img_path: &str) -> String {
 </head>
 <body style="background-color:#000000;">
   <div class="cover">
-    <img src="{cover_img_path}" alt="Cover"/>
+    <img src="{}" alt="Cover"/>
   </div>
 </body>
 </html>"#,
+        image_path(1, format)
     )
 }
 
-fn page_html(img_path: &str, page_num: usize, dimensions: (u32, u32)) -> String {
+fn page_html(page_num: usize, format: ImageFormat, dimensions: (u32, u32)) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -122,11 +124,13 @@ fn page_html(img_path: &str, page_num: usize, dimensions: (u32, u32)) -> String 
 </head>
 <body>
   <div class="image">
-    <img src="{img_path}"/>
+    <img src="{}"/>
   </div>
 </body>
 </html>"#,
-        dimensions.0, dimensions.1
+        dimensions.0,
+        dimensions.1,
+        image_path(page_num, format)
     )
 }
 
@@ -171,11 +175,7 @@ fn toc_ncx(title: &str, num_pages: usize) -> String {
     )
 }
 
-fn content_opf(
-    title: &str,
-    config: &ComicConfig,
-    image_map: &[(&ProcessedImage, String)],
-) -> String {
+fn content_opf(title: &str, config: &ComicConfig, images: &[ProcessedImage]) -> String {
     let uuid = Uuid::new_v4().to_string();
 
     // Build manifest items
@@ -193,7 +193,7 @@ fn content_opf(
     manifest.push('\n');
 
     // Add content HTML files
-    for i in 0..image_map.len() {
+    for i in 0..images.len() {
         manifest.push_str(&format!(
             r#"    <item id="page{}" href="page{:03}.html" media-type="application/xhtml+xml"/>"#,
             i + 1,
@@ -203,13 +203,14 @@ fn content_opf(
     }
 
     // Add images
-    for (i, (image, rel_path)) in image_map.iter().enumerate() {
+    for (i, image) in images.iter().enumerate() {
         let media_type = match image.format {
             ImageFormat::Jpeg { .. } => "image/jpeg",
             ImageFormat::Png { .. } => "image/png",
             ImageFormat::WebP { .. } => "image/webp",
         };
 
+        let rel_path = image_path(i + 1, image.format);
         // Special handling for the first image (cover)
         if i == 0 {
             manifest.push_str(&format!(
@@ -232,7 +233,7 @@ fn content_opf(
     spine.push('\n');
 
     let mut right_to_left = config.right_to_left;
-    for i in 1..image_map.len() {
+    for i in 1..images.len() {
         let spread_property = if right_to_left {
             "page-spread-right"
         } else {
