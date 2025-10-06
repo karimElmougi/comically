@@ -1,8 +1,8 @@
 //! Image processing pipeline for manga/comic optimization
 
-mod decode;
-mod encode;
-mod transform;
+pub mod decode;
+pub mod encode;
+pub mod transform;
 
 // Re-export public API
 pub use encode::{compress_to_jpeg, compress_to_png, compress_to_webp, PngCompression};

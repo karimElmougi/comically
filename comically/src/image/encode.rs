@@ -92,7 +92,7 @@ pub fn compress_to_webp(img: &DynamicImage, quality: u8) -> Result<WebPMemory> {
     Ok(webp_data)
 }
 
-pub(super) fn encode_image_part(
+pub fn encode_image_part(
     original: &ArchiveFile,
     img: &DynamicImage,
     part_num: usize,

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use uuid::Uuid;
 use zip::{
     write::{SimpleFileOptions, ZipWriter},
@@ -6,17 +5,23 @@ use zip::{
 };
 
 use std::io::{Cursor, Write};
-use std::path::PathBuf;
 
 use crate::comic::{Comic, ProcessedImage};
 use crate::image::ImageFormat;
 
-/// Builds an EPUB file from the processed images, returns the path to the created file
-pub fn build(comic: &Comic, images: &[ProcessedImage], output_dir: &std::path::Path) -> Result<PathBuf> {
-    log::info!("Building EPUB: {:?}", comic);
+/// Build EPUB and return the bytes
+pub fn build(comic: &Comic, images: &[ProcessedImage]) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    build_into(comic, images, &mut buffer);
+    buffer
+}
 
-    // Create zip writer in memory
-    let cursor = Cursor::new(Vec::new());
+/// Build EPUB into the provided buffer, reusing existing allocation
+pub fn build_into(comic: &Comic, images: &[ProcessedImage], buffer: &mut Vec<u8>) {
+    log::debug!("Building EPUB into buffer: {:?}", comic);
+
+    buffer.clear();
+    let cursor = Cursor::new(buffer);
     let mut zip = ZipWriter::new(cursor);
 
     let options_stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
@@ -24,12 +29,13 @@ pub fn build(comic: &Comic, images: &[ProcessedImage], output_dir: &std::path::P
         SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // 1. Add mimetype (must be first and uncompressed)
-    zip.start_file("mimetype", options_stored)?;
-    zip.write_all(b"application/epub+zip")?;
+    zip.start_file("mimetype", options_stored).unwrap();
+    zip.write_all(b"application/epub+zip").unwrap();
 
     // 2. Add META-INF/container.xml
-    zip.start_file("META-INF/container.xml", options_deflated)?;
-    zip.write_all(container_xml().as_bytes())?;
+    zip.start_file("META-INF/container.xml", options_deflated)
+        .unwrap();
+    zip.write_all(container_xml().as_bytes()).unwrap();
 
     // 3. Prepare image map
     let mut image_map: Vec<(&ProcessedImage, String)> = Vec::new();
@@ -38,42 +44,40 @@ pub fn build(comic: &Comic, images: &[ProcessedImage], output_dir: &std::path::P
     }
 
     // 4. Add cover.html
-    zip.start_file("OEBPS/cover.html", options_deflated)?;
+    zip.start_file("OEBPS/cover.html", options_deflated)
+        .unwrap();
     let cover_image_path = &image_map[0].1;
-    zip.write_all(cover_html(cover_image_path).as_bytes())?;
+    zip.write_all(cover_html(cover_image_path).as_bytes())
+        .unwrap();
 
     // 5. Add HTML pages for each image
     for (i, (img, img_path)) in image_map.iter().enumerate() {
         let html_path = format!("OEBPS/page{:03}.html", i + 1);
-        zip.start_file(&html_path, options_deflated)?;
-        zip.write_all(page_html(img_path, i + 1, img.dimensions).as_bytes())?;
+        zip.start_file(&html_path, options_deflated).unwrap();
+        zip.write_all(page_html(img_path, i + 1, img.dimensions).as_bytes())
+            .unwrap();
     }
 
     // 6. Add toc.ncx
-    zip.start_file("OEBPS/toc.ncx", options_deflated)?;
-    zip.write_all(toc_ncx(comic, image_map.len()).as_bytes())?;
+    zip.start_file("OEBPS/toc.ncx", options_deflated).unwrap();
+    zip.write_all(toc_ncx(comic, image_map.len()).as_bytes())
+        .unwrap();
 
     // 7. Add content.opf
-    zip.start_file("OEBPS/content.opf", options_deflated)?;
-    zip.write_all(content_opf(comic, &image_map).as_bytes())?;
+    zip.start_file("OEBPS/content.opf", options_deflated)
+        .unwrap();
+    zip.write_all(content_opf(comic, &image_map).as_bytes())
+        .unwrap();
 
     // 8. Add all images
     for (image, rel_path) in &image_map {
         let path = format!("OEBPS/{}", rel_path);
-        zip.start_file(&path, options_stored)?;
-        zip.write_all(&image.data)?;
+        zip.start_file(&path, options_stored).unwrap();
+        zip.write_all(&image.data).unwrap();
     }
 
     // Finish zip and get bytes
-    let cursor = zip.finish()?;
-    let epub_bytes = cursor.into_inner();
-
-    // Write to output file
-    let output_path = output_dir.join(format!("{}.epub", comic.title));
-    std::fs::write(&output_path, epub_bytes)?;
-
-    log::info!("Created EPUB: {:?}", output_path);
-    Ok(output_path)
+    zip.finish().unwrap();
 }
 
 fn container_xml() -> &'static str {

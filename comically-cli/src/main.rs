@@ -207,7 +207,7 @@ fn main() -> Result<()> {
         .to_string();
 
     // Create comic
-    let mut comic = Comic::new(
+    let comic = Comic::new(
         args.input.clone(),
         args.output_dir.clone(),
         title.clone(),
@@ -252,31 +252,31 @@ fn main() -> Result<()> {
         log::info!("Building {output_format:?}...");
     }
 
-    match output_format {
-        OutputFormat::Cbz => {
-            comically::cbz::build(&comic, &images).context("Failed to build CBZ")?;
-        }
-        OutputFormat::Epub => {
-            comically::epub::build(&comic, &images, &comic.output_dir).context("Failed to build EPUB")?;
-        }
+    let bytes = match output_format {
+        OutputFormat::Cbz => comically::cbz::build(&comic, &images),
+        OutputFormat::Epub => comically::epub::build(&comic, &images),
         OutputFormat::Mobi => {
             if !comically::is_kindlegen_available() {
                 anyhow::bail!(
                     "KindleGen is not available. Please install it to create MOBI files."
                 );
             }
-            let epub_path = comically::epub::build(&comic, &images, &comic.output_dir)
-                .context("Failed to build EPUB for MOBI conversion")?;
+            let bytes = comically::epub::build(&comic, &images);
+            let epub_path = comic.output_dir.join(format!("{}.epub", comic.title));
+            std::fs::write(&epub_path, bytes).context("Failed to write EPUB file")?;
+
             let output_mobi = comic.output_path();
-            let spawned = comically::mobi::create(epub_path, output_mobi)
+            let spawned = comically::mobi::create(epub_path, output_mobi.clone())
                 .context("Failed to start MOBI conversion")?;
             spawned.wait().context("MOBI conversion failed")?;
+            return Ok(());
         }
-    }
+    };
 
-    let output_path = comic.output_path();
+    std::fs::write(&comic.output_path(), bytes).context("Failed to write output file")?;
+
     if !args.quiet {
-        log::info!("Done: {}", output_path.display());
+        log::info!("Done: {}", comic.output_path().display());
     }
 
     Ok(())

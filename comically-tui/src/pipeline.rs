@@ -1,11 +1,11 @@
-use comically::{Comic, ComicConfig, OutputFormat};
-
 use std::{
     path::PathBuf,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
+
+use comically::{Comic, ComicConfig, OutputFormat};
 
 use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
 use crate::Event;
@@ -53,6 +53,9 @@ pub fn process_files(
         })
         .collect();
 
+    // Reusable buffer for building archives - avoids repeated allocations
+    let mut build_buffer = Vec::new();
+
     for (id, comic) in comics {
         // Process images
         let start = Instant::now();
@@ -60,7 +63,7 @@ pub fn process_files(
             Ok(iter) => iter,
             Err(e) => {
                 log::error!("Error in comic: {} {e}", comic.title);
-                error(&event_tx, id,  e );
+                error(&event_tx, id, e);
                 continue;
             }
         };
@@ -87,6 +90,7 @@ pub fn process_files(
         let on_processed = || {
             send_comic_update(&event_tx, id, ComicStatus::ImageProcessed);
         };
+
         let images =
             match comically::image::process_batch_with_progress(files, &config, on_processed) {
                 Ok(imgs) => imgs,
@@ -120,31 +124,51 @@ pub fn process_files(
         );
 
         let build_result = match config.output_format {
-            OutputFormat::Cbz => comically::cbz::build(&comic, &images),
-            OutputFormat::Epub => comically::epub::build(&comic, &images, &output_dir).map(|_| ()),
-            OutputFormat::Mobi => match comically::epub::build(&comic, &images, &output_dir) {
-                Ok(epub_path) => {
-                    let output_mobi = comic.output_path();
-                    kindlegen_tx
-                        .send((id, epub_path, output_mobi, event_tx.clone()))
-                        .ok();
-                    continue;
-                }
-                Err(e) => Err(e),
-            },
+            OutputFormat::Cbz => {
+                comically::cbz::build_into(&comic, &images, &mut build_buffer);
+
+                let output_path = comic.output_path();
+                std::fs::write(&output_path, &build_buffer)
+                    .inspect(|_| log::info!("Created CBZ: {:?}", output_path))
+                    .map_err(|e| anyhow::anyhow!("Failed to write CBZ: {}", e))
+            }
+            OutputFormat::Epub => {
+                comically::epub::build_into(&comic, &images, &mut build_buffer);
+                let output_path = output_dir.join(format!("{}.epub", comic.title));
+                std::fs::write(&output_path, &build_buffer)
+                    .inspect(|_| log::info!("Created EPUB: {:?}", output_path))
+                    .map_err(|e| anyhow::anyhow!("Failed to write EPUB: {}", e))
+            }
+            OutputFormat::Mobi => {
+                comically::epub::build_into(&comic, &images, &mut build_buffer);
+
+                let epub_path = output_dir.join(format!("{}.epub", comic.title));
+                std::fs::write(&epub_path, &build_buffer)
+                    .inspect(|_| {
+                        log::info!("Created EPUB for MOBI: {:?}", epub_path);
+                        let output_mobi = comic.output_path();
+                        kindlegen_tx
+                            .send((id, epub_path, output_mobi, event_tx.clone()))
+                            .ok();
+                    })
+                    .map_err(|e| anyhow::anyhow!("Failed to write EPUB: {}", e))
+            }
         };
 
         match build_result {
             Ok(_) => {
-                send_comic_update(
-                    &event_tx,
-                    id,
-                    ComicStatus::StageCompleted {
-                        stage: ComicStage::Package,
-                        duration: build_start.elapsed(),
-                    },
-                );
-                send_comic_update(&event_tx, id, ComicStatus::Success);
+                // For MOBI, we continue to kindlegen processing
+                if config.output_format != OutputFormat::Mobi {
+                    send_comic_update(
+                        &event_tx,
+                        id,
+                        ComicStatus::StageCompleted {
+                            stage: ComicStage::Package,
+                            duration: build_start.elapsed(),
+                        },
+                    );
+                    send_comic_update(&event_tx, id, ComicStatus::Success);
+                }
             }
             Err(e) => {
                 log::error!("Error building output for {}: {e}", comic.title);
@@ -247,7 +271,11 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, PathBuf, PathBuf, mpsc::Sender<
                         }
                         Err(e) => {
                             log::error!("MOBI conversion failed: {e}");
-                            send_comic_update(&status.event_tx, status.id, ComicStatus::Failed { error: e });
+                            send_comic_update(
+                                &status.event_tx,
+                                status.id,
+                                ComicStatus::Failed { error: e },
+                            );
                         }
                     }
                 }
