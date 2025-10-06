@@ -106,19 +106,28 @@ pub fn process_files(
                 })
                 .collect();
 
-            let images = match comically::image::process_archive_images(files, &config) {
-                Ok(imgs) => imgs,
-                Err(e) => {
-                    log::error!("Error processing images for {}: {e}", comic.title);
-                    event_tx
-                        .send(Event::Progress(ProgressEvent::ComicUpdate {
-                            id,
-                            status: ComicStatus::Failed { error: e },
-                        }))
-                        .ok();
-                    return None;
-                }
+            let on_processed = || {
+                event_tx
+                    .send(Event::Progress(ProgressEvent::ComicUpdate {
+                        id,
+                        status: ComicStatus::ImageProcessed,
+                    }))
+                    .ok();
             };
+            let images =
+                match comically::image::process_batch_with_progress(files, &config, on_processed) {
+                    Ok(imgs) => imgs,
+                    Err(e) => {
+                        log::error!("Error processing images for {}: {e}", comic.title);
+                        event_tx
+                            .send(Event::Progress(ProgressEvent::ComicUpdate {
+                                id,
+                                status: ComicStatus::Failed { error: e },
+                            }))
+                            .ok();
+                        return None;
+                    }
+                };
 
             event_tx
                 .send(Event::Progress(ProgressEvent::ComicUpdate {

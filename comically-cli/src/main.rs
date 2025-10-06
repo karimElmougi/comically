@@ -240,8 +240,8 @@ fn main() -> Result<()> {
     if !args.quiet {
         log::info!("Processing images...");
     }
-    let images = comically::image::process_archive_images(archive, &config)
-        .context("Failed to process images")?;
+    let images =
+        comically::image::process_batch(archive, &config).context("Failed to process images")?;
 
     if !args.quiet {
         log::info!("Processed {} images", images.len());

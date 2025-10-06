@@ -111,10 +111,18 @@ impl<T> IntoIterator for Split<T> {
     }
 }
 
-pub fn process_archive_images(
+pub fn process_batch(files: Vec<ArchiveFile>, config: &ComicConfig) -> Result<Vec<ProcessedImage>> {
+    process_batch_with_progress(files, config, || {})
+}
+
+pub fn process_batch_with_progress<F>(
     files: Vec<ArchiveFile>,
     config: &ComicConfig,
-) -> Result<Vec<ProcessedImage>> {
+    on_progress: F,
+) -> Result<Vec<ProcessedImage>>
+where
+    F: Fn() + Send + Sync,
+{
     log::info!("Processing {} archive images", files.len());
 
     // Use larger chunks to reduce coordination overhead
@@ -160,6 +168,10 @@ pub fn process_archive_images(
                         }
                     }
                 }
+
+                // Report progress after processing this file
+                on_progress();
+
                 encoded_images
             })
         })
