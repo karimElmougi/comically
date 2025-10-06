@@ -109,6 +109,8 @@ impl ProgressState {
                     match &status {
                         ComicStatus::StageCompleted { stage, duration } => {
                             comic.timings.add_stage(*stage, *duration);
+                            // Not storing this status
+                            return;
                         }
                         ComicStatus::ImageProcessingStart {
                             total_images,
@@ -123,6 +125,8 @@ impl ProgressState {
                         }
                         ComicStatus::ImageProcessingComplete { duration } => {
                             comic.timings.add_stage(ComicStage::Process, *duration);
+                            // Not storing this status
+                            return;
                         }
                         _ => {}
                     }
