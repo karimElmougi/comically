@@ -43,13 +43,9 @@ pub enum ComicStatus {
         start: Instant,
     },
     ImageProcessingStart {
-        total_images: usize,
         start: Instant,
     },
     ImageProcessed,
-    ImageProcessingComplete {
-        duration: Duration,
-    },
     StageCompleted {
         stage: ComicStage,
         duration: Duration,
@@ -62,6 +58,7 @@ pub enum ComicStatus {
 
 pub enum ProgressEvent {
     RegisterComic { id: usize, file_name: String },
+    ComicStats { id: usize, total_images: usize },
     ComicUpdate { id: usize, status: ComicStatus },
     ProcessingComplete,
 }
@@ -154,6 +151,11 @@ impl ProgressState {
                     };
                 }
             }
+            ProgressEvent::ComicStats { id, total_images } => {
+                if let Some(comic) = self.comics.get_mut(id) {
+                    comic.total_images = total_images;
+                }
+            }
             ProgressEvent::ComicUpdate { id, status } => {
                 if let Some(comic) = self.comics.get_mut(id) {
                     match &status {
@@ -162,21 +164,12 @@ impl ProgressState {
                             // Not storing this status
                             return;
                         }
-                        ComicStatus::ImageProcessingStart {
-                            total_images,
-                            start,
-                        } => {
-                            comic.total_images = *total_images;
+                        ComicStatus::ImageProcessingStart { start } => {
                             comic.images_processed = 0;
                             comic.image_processing_start = Some(*start);
                         }
                         ComicStatus::ImageProcessed => {
                             comic.images_processed += 1;
-                        }
-                        ComicStatus::ImageProcessingComplete { duration } => {
-                            comic.timings.add_stage(ComicStage::Process, *duration);
-                            // Not storing this status
-                            return;
                         }
                         _ => {}
                     }
@@ -269,44 +262,11 @@ fn draw_header(buf: &mut Buffer, state: &ProgressState, header_area: Rect, theme
         .filter(|state| matches!(state.current_status(), ComicStatus::Success))
         .count();
 
-    let mut total_work = 0.0;
-    let mut completed_work = 0.0;
+    let total_work: usize = state.comics.iter().map(|c| c.total_images).sum();
+    let completed_work: usize = state.comics.iter().map(|c| c.images_processed).sum();
 
-    for comic in &state.comics {
-        match comic.current_status() {
-            ComicStatus::Waiting => {
-                total_work += 1.0;
-            }
-            ComicStatus::Progress {
-                stage, progress, ..
-            } => {
-                total_work += 1.0;
-                // Each stage contributes a portion based on output format
-                let stage_weight = stage_weight(state.output_format, *stage);
-                completed_work += stage_weight * (progress / 100.0);
-            }
-            ComicStatus::ImageProcessingStart { .. } | ComicStatus::ImageProcessed => {
-                total_work += 1.0;
-                // Image processing is weighted as 50% of the work
-                if comic.total_images > 0 {
-                    let image_progress = comic.images_processed as f64 / comic.total_images as f64;
-                    completed_work += 0.5 * image_progress;
-                }
-            }
-            ComicStatus::Success => {
-                total_work += 1.0;
-                completed_work += 1.0;
-            }
-            ComicStatus::Failed { .. } => {
-                total_work += 1.0;
-                completed_work += 1.0;
-            }
-            _ => {}
-        }
-    }
-
-    let progress_ratio = if total_work > 0.0 {
-        completed_work / total_work
+    let progress_ratio = if total_work > 0 {
+        completed_work as f64 / total_work as f64
     } else {
         0.0
     };
@@ -446,7 +406,7 @@ fn draw_file_status(buf: &mut Buffer, comic_state: &ComicState, area: Rect, them
 
             gauge.render(area, buf);
         }
-        ComicStatus::StageCompleted { .. } | ComicStatus::ImageProcessingComplete { .. } => {
+        ComicStatus::StageCompleted { .. } => {
             unreachable!("not storing this status")
         }
         ComicStatus::Success => {
@@ -635,24 +595,5 @@ impl<'a> Widget for StageTimingBar<'a> {
             )
             .alignment(ratatui::layout::Alignment::Center)
             .render(total_label_area, buf);
-    }
-}
-
-fn stage_weight(format: comically::OutputFormat, stage: ComicStage) -> f64 {
-    match (format, stage) {
-        // MOBI format weights
-        (comically::OutputFormat::Mobi, ComicStage::Process) => 0.5,
-        (comically::OutputFormat::Mobi, ComicStage::Package) => 0.05, // EPUB building
-        (comically::OutputFormat::Mobi, ComicStage::Convert) => 0.4,  // EPUB to MOBI conversion
-
-        // EPUB format weights
-        (comically::OutputFormat::Epub, ComicStage::Process) => 0.8,
-        (comically::OutputFormat::Epub, ComicStage::Package) => 0.1, // EPUB building
-        (comically::OutputFormat::Epub, ComicStage::Convert) => 0.0, // Not used
-
-        // CBZ format weights
-        (comically::OutputFormat::Cbz, ComicStage::Process) => 0.85,
-        (comically::OutputFormat::Cbz, ComicStage::Package) => 0.05, // CBZ building
-        (comically::OutputFormat::Cbz, ComicStage::Convert) => 0.0,  // Not used
     }
 }

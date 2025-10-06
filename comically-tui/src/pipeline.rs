@@ -27,43 +27,37 @@ pub fn process_files(
         thread::spawn(move || {
             poll_kindlegen(kindlegen_rx);
             // after all the comics have finished conversion to mobi, send the complete event
-            send_processing_complete(&event_tx);
+            processing_complete(&event_tx);
         });
     }
 
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
-        .map(|(id, comic)| {
-            send_register_comic(&event_tx, id, comic.title().to_owned());
-            (id, comic)
+        // Register all comics ahead of time for progress tracking
+        .inspect(|(id, comic)| register_comic(&event_tx, *id, comic.title().to_owned()))
+        .filter_map(|(id, comic)| {
+            let iter = match comically::archive::unarchive_comic_iter(&comic) {
+                Ok(iter) => iter,
+                Err(e) => {
+                    log::error!("Error in comic: {} {e}", comic.title());
+                    error(&event_tx, id, e);
+                    return None;
+                }
+            };
+            update_stats(&event_tx, id, iter.num_images());
+            Some((id, comic, iter))
         })
         .collect();
 
     // Reusable buffer for building archives - avoids repeated allocations
     let mut build_buffer = Vec::new();
 
-    for (id, comic) in comics {
+    for (id, comic, archive_iter) in comics {
         // Process images
         let start = Instant::now();
-        let archive_iter = match comically::archive::unarchive_comic_iter(&comic) {
-            Ok(iter) => iter,
-            Err(e) => {
-                log::error!("Error in comic: {} {e}", comic.title());
-                error(&event_tx, id, e);
-                continue;
-            }
-        };
 
-        let num_images = archive_iter.num_images();
-        send_comic_update(
-            &event_tx,
-            id,
-            ComicStatus::ImageProcessingStart {
-                total_images: num_images,
-                start,
-            },
-        );
+        send_comic_update(&event_tx, id, ComicStatus::ImageProcessingStart { start });
 
         // Collect archive files
         let files: Vec<_> = archive_iter
@@ -88,13 +82,7 @@ pub fn process_files(
                 }
             };
 
-        send_comic_update(
-            &event_tx,
-            id,
-            ComicStatus::ImageProcessingComplete {
-                duration: start.elapsed(),
-            },
-        );
+        stage_complete(&event_tx, id, ComicStage::Process, &start);
 
         log::info!("Processed {} images for {}", images.len(), comic.title());
 
@@ -144,16 +132,9 @@ pub fn process_files(
 
         match build_result {
             Ok(_) => {
+                stage_complete(&event_tx, id, ComicStage::Package, &build_start);
                 // For MOBI, we continue to kindlegen processing
                 if config.output_format != OutputFormat::Mobi {
-                    send_comic_update(
-                        &event_tx,
-                        id,
-                        ComicStatus::StageCompleted {
-                            stage: ComicStage::Package,
-                            duration: build_start.elapsed(),
-                        },
-                    );
                     send_comic_update(&event_tx, id, ComicStatus::Success);
                 }
             }
@@ -166,7 +147,7 @@ pub fn process_files(
 
     match config.output_format {
         OutputFormat::Epub | OutputFormat::Cbz => {
-            send_processing_complete(&event_tx);
+            processing_complete(&event_tx);
         }
         _ => {}
     }
@@ -210,7 +191,7 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, PathBuf, PathBuf, mpsc::Sender<
                         }
                         Err(e) => {
                             log::error!("Error creating MOBI: {e}");
-                            send_comic_update(&event_tx, id, ComicStatus::Failed { error: e });
+                            error(&event_tx, id, e);
                         }
                     }
                 }
@@ -245,24 +226,18 @@ pub fn poll_kindlegen(tx: mpsc::Receiver<(usize, PathBuf, PathBuf, mpsc::Sender<
                     log::debug!("KindleGen process completed");
                     match status.spawned.wait() {
                         Ok(_) => {
-                            send_comic_update(
+                            stage_complete(
                                 &status.event_tx,
                                 status.id,
-                                ComicStatus::StageCompleted {
-                                    stage: ComicStage::Convert,
-                                    duration: status.start.elapsed(),
-                                },
+                                ComicStage::Convert,
+                                &status.start,
                             );
                             send_comic_update(&status.event_tx, status.id, ComicStatus::Success);
                             log::debug!("MOBI conversion successful");
                         }
                         Err(e) => {
                             log::error!("MOBI conversion failed: {e}");
-                            send_comic_update(
-                                &status.event_tx,
-                                status.id,
-                                ComicStatus::Failed { error: e },
-                            );
+                            error(&status.event_tx, status.id, e);
                         }
                     }
                 }
@@ -288,10 +263,25 @@ fn send_comic_update(tx: &mpsc::Sender<Event>, id: usize, status: ComicStatus) {
     send_progress(tx, ProgressEvent::ComicUpdate { id, status });
 }
 
-fn send_register_comic(tx: &mpsc::Sender<Event>, id: usize, file_name: String) {
+fn register_comic(tx: &mpsc::Sender<Event>, id: usize, file_name: String) {
     send_progress(tx, ProgressEvent::RegisterComic { id, file_name });
 }
 
-fn send_processing_complete(tx: &mpsc::Sender<Event>) {
+fn update_stats(tx: &mpsc::Sender<Event>, id: usize, total_images: usize) {
+    send_progress(tx, ProgressEvent::ComicStats { id, total_images });
+}
+
+fn processing_complete(tx: &mpsc::Sender<Event>) {
     send_progress(tx, ProgressEvent::ProcessingComplete);
+}
+
+fn stage_complete(tx: &mpsc::Sender<Event>, id: usize, stage: ComicStage, start: &Instant) {
+    send_comic_update(
+        tx,
+        id,
+        ComicStatus::StageCompleted {
+            stage,
+            duration: start.elapsed(),
+        },
+    );
 }
