@@ -1,3 +1,6 @@
+use anyhow::Result;
+use rayon::iter::{ParallelIterator, ParallelBridge};
+
 use std::{
     path::PathBuf,
     sync::mpsc,
@@ -60,13 +63,10 @@ pub fn process_files(
         send_comic_update(&event_tx, id, ComicStatus::ImageProcessingStart { start });
 
         // Collect archive files
-        let files: Vec<_> = archive_iter
-            .filter_map(|result| {
-                result
-                    .map_err(|e| log::warn!("Failed to load archive file: {}", e))
-                    .ok()
-            })
-            .collect();
+        let Ok(files) = archive_iter.par_bridge().collect::<Result<Vec<_>>>() else {
+            error(&event_tx, id, anyhow::anyhow!("Failed to collect archive files"));
+            continue;
+        };
 
         let on_processed = || {
             send_comic_update(&event_tx, id, ComicStatus::ImageProcessed);
