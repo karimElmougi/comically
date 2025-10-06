@@ -6,25 +6,23 @@ use zip::{
 
 use std::io::{Cursor, Write};
 
-use crate::comic::{Comic, ComicConfig, ProcessedImage};
+use crate::comic::{ComicConfig, ProcessedImage};
 use crate::image::ImageFormat;
 
 /// Build EPUB and return the bytes
-pub fn build(comic: &Comic, config: &ComicConfig, images: &[ProcessedImage]) -> Vec<u8> {
+pub fn build(title: &str, config: &ComicConfig, images: &[ProcessedImage]) -> Vec<u8> {
     let mut buffer = Vec::new();
-    build_into(comic, config, images, &mut buffer);
+    build_into(title, config, images, &mut buffer);
     buffer
 }
 
 /// Build EPUB into the provided buffer, reusing existing allocation
 pub fn build_into(
-    comic: &Comic,
+    title: &str,
     config: &ComicConfig,
     images: &[ProcessedImage],
     buffer: &mut Vec<u8>,
 ) {
-    log::debug!("Building EPUB into buffer: {:?}", comic);
-
     buffer.clear();
     let cursor = Cursor::new(buffer);
     let mut zip = ZipWriter::new(cursor);
@@ -65,13 +63,13 @@ pub fn build_into(
 
     // 6. Add toc.ncx
     zip.start_file("OEBPS/toc.ncx", options_deflated).unwrap();
-    zip.write_all(toc_ncx(comic, image_map.len()).as_bytes())
+    zip.write_all(toc_ncx(title, image_map.len()).as_bytes())
         .unwrap();
 
     // 7. Add content.opf
     zip.start_file("OEBPS/content.opf", options_deflated)
         .unwrap();
-    zip.write_all(content_opf(comic, config, &image_map).as_bytes())
+    zip.write_all(content_opf(title, config, &image_map).as_bytes())
         .unwrap();
 
     // 8. Add all images
@@ -131,7 +129,7 @@ fn page_html(img_path: &str, page_num: usize, dimensions: (u32, u32)) -> String 
     )
 }
 
-fn toc_ncx(comic: &Comic, num_pages: usize) -> String {
+fn toc_ncx(title: &str, num_pages: usize) -> String {
     let uuid = Uuid::new_v4().to_string();
     let mut nav_points = String::new();
 
@@ -169,12 +167,11 @@ fn toc_ncx(comic: &Comic, num_pages: usize) -> String {
   <navMap>
 {nav_points}  </navMap>
 </ncx>"#,
-        title = &comic.title
     )
 }
 
 fn content_opf(
-    comic: &Comic,
+    title: &str,
     config: &ComicConfig,
     image_map: &[(&ProcessedImage, String)],
 ) -> String {
@@ -280,7 +277,6 @@ fn content_opf(
           <manifest>{manifest}</manifest>
           <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
-        title = &comic.title,
         writing_mode = if config.right_to_left {
             "horizontal-rl"
         } else {

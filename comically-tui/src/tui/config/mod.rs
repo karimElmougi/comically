@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use comically::{ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
+use comically::{ComicConfig, ComicFile, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 use crate::tui::{
     button::{Button, ButtonVariant},
@@ -31,7 +31,7 @@ use crate::tui::{
 };
 
 pub struct ConfigState {
-    pub files: Vec<(MangaFile, bool)>,
+    pub files: Vec<(ComicFile, bool)>,
     pub file_list_state: ListState,
     pub selected_field: Option<SelectedField>,
     pub preview_state: PreviewState,
@@ -49,12 +49,6 @@ pub enum ModalState {
     None,
     Help(HelpState),
     DeviceSelector(DeviceSelectorState),
-}
-
-#[derive(Debug)]
-pub struct MangaFile {
-    pub archive_path: PathBuf,
-    pub name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,7 +77,7 @@ pub struct LoadedPreviewImage {
     file_idx: usize,
     page_idx: usize,
     total_pages: usize,
-    archive_path: PathBuf,
+    archive_path: ComicFile,
     width: u32,
     height: u32,
     config: ComicConfig,
@@ -91,7 +85,7 @@ pub struct LoadedPreviewImage {
 
 enum PreviewRequest {
     LoadFile {
-        archive_path: PathBuf,
+        archive_path: ComicFile,
         config: ComicConfig,
         page_idx: Option<usize>,
         file_idx: usize,
@@ -103,7 +97,7 @@ pub enum ConfigEvent {
         file_idx: usize,
         page_idx: usize,
         total_pages: usize,
-        archive_path: PathBuf,
+        archive_path: ComicFile,
         image: DynamicImage,
         config: ComicConfig,
     },
@@ -115,11 +109,11 @@ impl ConfigState {
     pub fn new(
         event_tx: mpsc::Sender<crate::Event>,
         picker: Picker,
-        files: Vec<MangaFile>,
+        files: Vec<ComicFile>,
         theme: Theme,
         output_dir: PathBuf,
     ) -> Self {
-        let files: Vec<(MangaFile, bool)> = files.into_iter().map(|f| (f, true)).collect();
+        let files: Vec<(ComicFile, bool)> = files.into_iter().map(|f| (f, true)).collect();
 
         let mut list_state = ListState::default();
         if !files.is_empty() {
@@ -316,11 +310,12 @@ impl ConfigState {
     }
 
     fn send_start_processing(&self) {
-        let selected_paths: Vec<PathBuf> = self
+        let selected_paths: Vec<ComicFile> = self
             .files
             .iter()
             .filter(|(_, selected)| *selected)
-            .map(|(file, _)| file.archive_path.clone())
+            .map(|(file, _)| file)
+            .cloned()
             .collect();
 
         if !selected_paths.is_empty() {
@@ -381,7 +376,7 @@ impl ConfigState {
                     .preview_state
                     .preview_tx
                     .send(PreviewRequest::LoadFile {
-                        archive_path: file.archive_path.clone(),
+                        archive_path: file.clone(),
                         config: self.config.clone(),
                         page_idx: Some(idx),
                         file_idx,
@@ -642,7 +637,7 @@ impl<'a> Widget for FileListWidget<'a> {
             .iter()
             .map(|(file, selected)| {
                 let checkbox = if *selected { "[✓]" } else { "[ ]" };
-                let content = format!("{} {}", checkbox, file.name);
+                let content = format!("{} {}", checkbox, file.title());
                 ListItem::new(content).style(self.state.theme.content)
             })
             .collect();
@@ -1054,7 +1049,7 @@ impl<'a> Widget for PreviewWidget<'a> {
                     .preview_state
                     .loaded_image
                     .as_ref()
-                    .map(|loaded| loaded.archive_path != selected_file.archive_path)
+                    .map(|loaded| loaded.archive_path != *selected_file)
             })
             .unwrap_or(true);
 
@@ -1115,11 +1110,7 @@ impl<'a> Widget for PreviewWidget<'a> {
             let [title_area, image_area] =
                 Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(preview_area);
 
-            let file_name = loaded_image
-                .archive_path
-                .file_stem()
-                .unwrap()
-                .to_string_lossy();
+            let file_name = loaded_image.archive_path.title();
 
             let page_info = format!(
                 "page {} of {}",
@@ -1227,7 +1218,7 @@ fn base_button<'input, 'state>(
 }
 
 fn load_and_process_preview(
-    path: &PathBuf,
+    path: &ComicFile,
     config: &ComicConfig,
     page_index: Option<usize>,
 ) -> anyhow::Result<(DynamicImage, usize, usize)> {

@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
 use comically::device::Device;
-use comically::{Comic, ComicConfig, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
+use comically::{ComicConfig, ComicFile, ImageFormat, OutputFormat, PngCompression, SplitStrategy};
 
 #[derive(Parser)]
 #[command(name = "comically-cli")]
@@ -199,7 +199,7 @@ fn main() -> Result<()> {
     let output_format = config.output_format;
 
     // Create comic
-    let comic = Comic::new(args.input.clone());
+    let comic = ComicFile::new(args.input.clone());
 
     if !args.quiet {
         log::info!(
@@ -209,7 +209,7 @@ fn main() -> Result<()> {
     }
 
     // Open archive
-    let archive: Vec<_> = comically::archive::unarchive_comic_iter(&comic.input)
+    let archive: Vec<_> = comically::archive::unarchive_comic_iter(&comic)
         .context("Failed to open comic archive")?
         .filter_map(|result| {
             result
@@ -240,21 +240,21 @@ fn main() -> Result<()> {
     }
 
     let bytes = match output_format {
-        OutputFormat::Cbz => comically::cbz::build(&comic, &images),
-        OutputFormat::Epub => comically::epub::build(&comic, &config, &images),
+        OutputFormat::Cbz => comically::cbz::build(&images),
+        OutputFormat::Epub => comically::epub::build(comic.title(), &config, &images),
         OutputFormat::Mobi => {
             if !comically::is_kindlegen_available() {
                 anyhow::bail!(
                     "KindleGen is not available. Please install it to create MOBI files."
                 );
             }
-            let bytes = comically::epub::build(&comic, &config, &images);
+            let bytes = comically::epub::build(comic.title(), &config, &images);
             let epub_path = args
                 .output_dir
-                .join(comic.output_filename(OutputFormat::Epub));
+                .join(comic.with_extension(OutputFormat::Epub));
             std::fs::write(&epub_path, bytes).context("Failed to write EPUB file")?;
 
-            let output_mobi = args.output_dir.join(comic.output_filename(output_format));
+            let output_mobi = args.output_dir.join(comic.with_extension(output_format));
             let spawned = comically::mobi::create(epub_path, output_mobi.clone())
                 .context("Failed to start MOBI conversion")?;
             spawned.wait().context("MOBI conversion failed")?;
@@ -262,7 +262,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let output_path = args.output_dir.join(comic.output_filename(output_format));
+    let output_path = args.output_dir.join(comic.with_extension(output_format));
     std::fs::write(&output_path, bytes).context("Failed to write output file")?;
 
     if !args.quiet {

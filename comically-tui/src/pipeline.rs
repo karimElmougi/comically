@@ -5,13 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use comically::{Comic, ComicConfig, OutputFormat};
+use comically::{ComicConfig, ComicFile, OutputFormat};
 
 use crate::tui::progress::{ComicStage, ComicStatus, ProgressEvent};
 use crate::Event;
 
 pub fn process_files(
-    files: Vec<PathBuf>,
+    files: Vec<ComicFile>,
     config: ComicConfig,
     output_dir: PathBuf,
     event_tx: mpsc::Sender<Event>,
@@ -34,9 +34,8 @@ pub fn process_files(
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
-        .map(|(id, file)| {
-            let comic = Comic::new(file);
-            send_register_comic(&event_tx, id, comic.title.clone());
+        .map(|(id, comic)| {
+            send_register_comic(&event_tx, id, comic.title().to_owned());
             (id, comic)
         })
         .collect();
@@ -47,10 +46,10 @@ pub fn process_files(
     for (id, comic) in comics {
         // Process images
         let start = Instant::now();
-        let archive_iter = match comically::archive::unarchive_comic_iter(&comic.input) {
+        let archive_iter = match comically::archive::unarchive_comic_iter(&comic) {
             Ok(iter) => iter,
             Err(e) => {
-                log::error!("Error in comic: {} {e}", comic.title);
+                log::error!("Error in comic: {} {e}", comic.title());
                 error(&event_tx, id, e);
                 continue;
             }
@@ -83,7 +82,7 @@ pub fn process_files(
             match comically::image::process_batch_with_progress(files, &config, on_processed) {
                 Ok(imgs) => imgs,
                 Err(e) => {
-                    log::error!("Error processing images for {}: {e}", comic.title);
+                    log::error!("Error processing images for {}: {e}", comic.title());
                     error(&event_tx, id, e);
                     continue;
                 }
@@ -97,7 +96,7 @@ pub fn process_files(
             },
         );
 
-        log::info!("Processed {} images for {}", images.len(), comic.title);
+        log::info!("Processed {} images for {}", images.len(), comic.title());
 
         // Build output format
         let build_start = Instant::now();
@@ -113,29 +112,28 @@ pub fn process_files(
 
         let build_result = match config.output_format {
             OutputFormat::Cbz => {
-                comically::cbz::build_into(&comic, &images, &mut build_buffer);
+                comically::cbz::build_into(&images, &mut build_buffer);
 
-                let output_path = output_dir.join(comic.output_filename(config.output_format));
+                let output_path = output_dir.join(comic.with_extension(config.output_format));
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created CBZ: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write CBZ: {}", e))
             }
             OutputFormat::Epub => {
-                comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
-                let output_path = output_dir.join(comic.output_filename(config.output_format));
+                comically::epub::build_into(comic.title(), &config, &images, &mut build_buffer);
+                let output_path = output_dir.join(comic.with_extension(config.output_format));
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created EPUB: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write EPUB: {}", e))
             }
             OutputFormat::Mobi => {
-                comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
+                comically::epub::build_into(comic.title(), &config, &images, &mut build_buffer);
 
-                let epub_path = output_dir.join(comic.output_filename(OutputFormat::Epub));
+                let epub_path = output_dir.join(comic.with_extension(OutputFormat::Epub));
                 std::fs::write(&epub_path, &build_buffer)
                     .inspect(|_| {
                         log::info!("Created EPUB for MOBI: {:?}", epub_path);
-                        let output_mobi =
-                            output_dir.join(comic.output_filename(OutputFormat::Mobi));
+                        let output_mobi = output_dir.join(comic.with_extension(OutputFormat::Mobi));
                         kindlegen_tx
                             .send((id, epub_path, output_mobi, event_tx.clone()))
                             .ok();
@@ -160,7 +158,7 @@ pub fn process_files(
                 }
             }
             Err(e) => {
-                log::error!("Error building output for {}: {e}", comic.title);
+                log::error!("Error building output for {}: {e}", comic.title());
                 error(&event_tx, id, e);
             }
         }

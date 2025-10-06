@@ -7,6 +7,6 @@ pub mod image;
 pub mod mobi;
 
 // Re-export commonly used types
-pub use comic::{Comic, ComicConfig, OutputFormat, ProcessedImage, SplitStrategy};
+pub use comic::{ComicConfig, ComicFile, OutputFormat, ProcessedImage, SplitStrategy};
 pub use image::{ImageFormat, PngCompression};
 pub use mobi::is_kindlegen_available;

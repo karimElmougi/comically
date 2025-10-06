@@ -3,19 +3,17 @@ use zip::ZipWriter;
 
 use std::io::Cursor;
 
-use crate::comic::{Comic, ProcessedImage};
+use crate::comic::ProcessedImage;
 
 /// Build CBZ and return the bytes
-pub fn build(comic: &Comic, images: &[ProcessedImage]) -> Vec<u8> {
+pub fn build(images: &[ProcessedImage]) -> Vec<u8> {
     let mut buffer = Vec::new();
-    build_into(comic, images, &mut buffer);
+    build_into(images, &mut buffer);
     buffer
 }
 
 /// Build CBZ into the provided buffer, reusing existing allocation
-pub fn build_into(comic: &Comic, images: &[ProcessedImage], buffer: &mut Vec<u8>) {
-    log::debug!("Building CBZ into buffer: {:?}", comic);
-
+pub fn build_into(images: &[ProcessedImage], buffer: &mut Vec<u8>) {
     buffer.clear();
     let cursor = Cursor::new(buffer);
     let mut zip = ZipWriter::new(cursor);

@@ -14,9 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use comically::{ComicConfig, ComicFile};
+
 use crate::tui::config::ConfigEvent;
 use crate::tui::progress::ProgressEvent;
-use comically::ComicConfig;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -191,7 +192,7 @@ pub enum Event {
     Progress(ProgressEvent),
     Config(ConfigEvent),
     StartProcessing {
-        files: Vec<PathBuf>,
+        files: Vec<ComicFile>,
         config: ComicConfig,
         output_dir: PathBuf,
     },

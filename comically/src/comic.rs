@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{fs, path::PathBuf};
 
 use crate::device::Device;
@@ -98,13 +99,22 @@ pub struct ProcessedImage {
     pub format: ImageFormat,
 }
 
-#[derive(Debug)]
-pub struct Comic {
-    pub title: String,
-    pub input: PathBuf,
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ArchiveExt {
+    Cbz,
+    Cbr,
+    Zip,
+    Rar,
 }
 
-impl Comic {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComicFile {
+    title: String,
+    input: PathBuf,
+    ext: ArchiveExt,
+}
+
+impl ComicFile {
     pub fn new(file: PathBuf) -> Self {
         let title = file
             .file_stem()
@@ -112,24 +122,50 @@ impl Comic {
             .to_string_lossy()
             .to_string();
 
-        Comic { title, input: file }
+        assert!(file.extension().is_some());
+        let ext = file.extension().and_then(|ext| ext.to_str()).unwrap();
+        let ext = match ext {
+            "cbz" => ArchiveExt::Cbz,
+            "cbr" => ArchiveExt::Cbr,
+            "zip" => ArchiveExt::Zip,
+            "rar" => ArchiveExt::Rar,
+            _ => panic!("Unsupported archive format: {}", ext),
+        };
+
+        ComicFile {
+            title,
+            input: file,
+            ext,
+        }
     }
 
-    pub fn output_filename(&self, output_format: OutputFormat) -> String {
+    pub fn as_path(&self) -> &Path {
+        &self.input
+    }
+
+    pub fn extension(&self) -> ArchiveExt {
+        self.ext
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn with_extension(&self, extension: OutputFormat) -> PathBuf {
         // don't use .with_extension() bc it replaces everything after the first dot
         let mut filename = self.title.clone();
         filename.push('.');
-        filename.push_str(output_format.as_str());
-        filename
+        filename.push_str(extension.as_str());
+        filename.into()
     }
 }
 
 #[test]
 fn output_path_with_dots() {
-    let comic = Comic::new(PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"));
+    let comic = ComicFile::new(PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"));
 
     assert_eq!(
-        comic.output_filename(OutputFormat::Cbz),
-        "Dr. STONE v01 (2018) (Digital) (1r0n).cbz"
+        comic.with_extension(OutputFormat::Epub),
+        PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).epub")
     );
 }
