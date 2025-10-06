@@ -5,7 +5,6 @@ use fr::images::CroppedImage as FrCroppedImage;
 use fr::images::Image as FrImage;
 use fr::images::ImageRef as FrImageRef;
 use imageproc::image::{imageops, GrayImage, Luma};
-use imageproc::stats::histogram;
 use parking_lot::RwLock;
 
 use super::Split;
@@ -28,7 +27,10 @@ struct GammaLut {
 impl GammaLut {
     const fn new() -> Self {
         // NEG_INFINITY is used to indicate that the lut needs to be recomputed
-        Self {gamma: f32::NEG_INFINITY, lut: [0u8; 256]}
+        Self {
+            gamma: f32::NEG_INFINITY,
+            lut: [0u8; 256],
+        }
     }
 
     fn recompute(&mut self, gamma: f32) {
@@ -51,9 +53,9 @@ fn gamma_lut(gamma: f32) -> [u8; 256] {
         drop(lut);
         let mut lut = GAMMA_LUT.write();
         lut.recompute(gamma);
-        lut.lut.clone()
+        lut.lut
     } else {
-        lut.lut.clone()
+        lut.lut
     }
 }
 
@@ -131,25 +133,21 @@ impl Image {
     ///
     /// This function stretches the contrast of the image to the full range of 0-255
     pub fn autocontrast(self) -> Image {
-        let mut img = GrayImage::from(self);
-        let hist = histogram(&img);
+        if self.data.is_empty() {
+            return self;
+        }
 
-        let channel_hist = &hist.channels[0];
-
-        let min = channel_hist
-            .iter()
-            .position(|&count| count > 0)
-            .unwrap_or(0) as u8;
-        let max = channel_hist
-            .iter()
-            .rposition(|&count| count > 0)
-            .unwrap_or(255) as u8;
+        // Find the darkest pixel value
+        let min = self.data.iter().copied().min().unwrap();
+        // Find the brightest pixel value
+        let max = self.data.iter().copied().max().unwrap();
 
         // Only stretch if there's a range to work with
         if max > min {
-            img = imageproc::contrast::stretch_contrast(&img, min, max, 0, 255);
+            imageproc::contrast::stretch_contrast(&self.into(), min, max, 0, 255).into()
+        } else {
+            self
         }
-        img.into()
     }
 
     /// Auto-crop white margins from all sides of the image
