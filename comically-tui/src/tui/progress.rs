@@ -28,7 +28,7 @@ pub struct ProgressState {
 #[derive(Debug)]
 struct ComicState {
     title: String,
-    status: Vec<ComicStatus>,
+    status: ComicStatus,
     timings: StageTimings,
     image_processing_start: Option<Instant>,
     images_processed: usize,
@@ -62,17 +62,7 @@ struct StageMetrics {
 
 impl ComicState {
     fn current_status(&self) -> &ComicStatus {
-        self.status
-            .iter()
-            .rev()
-            .find(|status| {
-                !matches!(
-                    status,
-                    ComicStatus::StageCompleted { .. }
-                        | ComicStatus::ImageProcessingComplete { .. }
-                )
-            })
-            .unwrap()
+        &self.status
     }
 }
 
@@ -97,7 +87,7 @@ impl ProgressState {
                 if id == self.comics.len() {
                     self.comics.push(ComicState {
                         title: file_name,
-                        status: vec![ComicStatus::Waiting],
+                        status: ComicStatus::Waiting,
                         timings: StageTimings::new(),
                         image_processing_start: None,
                         images_processed: 0,
@@ -106,7 +96,7 @@ impl ProgressState {
                 } else {
                     self.comics[id] = ComicState {
                         title: file_name,
-                        status: vec![ComicStatus::Waiting],
+                        status: ComicStatus::Waiting,
                         timings: StageTimings::new(),
                         image_processing_start: None,
                         images_processed: 0,
@@ -136,7 +126,7 @@ impl ProgressState {
                         }
                         _ => {}
                     }
-                    comic.status.push(status);
+                    comic.status = status;
                 } else {
                     panic!("Comic state not found for id: {}", id);
                 }

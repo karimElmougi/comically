@@ -53,7 +53,7 @@ pub fn process_files(
         })
         .collect();
 
-    for (id, mut comic) in comics {
+    for (id, comic) in comics {
         // Process images
         let start = Instant::now();
         let archive_iter = match comically::archive::unarchive_comic_iter(&comic.input) {
@@ -107,8 +107,6 @@ pub fn process_files(
 
         log::info!("Processed {} images for {}", images.len(), comic.title);
 
-        comic.processed_files = images;
-
         // Build output format
         let build_start = Instant::now();
         send_comic_update(
@@ -122,9 +120,9 @@ pub fn process_files(
         );
 
         let build_result = match config.output_format {
-            OutputFormat::Cbz => comically::cbz::build(&comic),
-            OutputFormat::Epub => comically::epub::build(&comic, &output_dir).map(|_| ()),
-            OutputFormat::Mobi => match comically::epub::build(&comic, &output_dir) {
+            OutputFormat::Cbz => comically::cbz::build(&comic, &images),
+            OutputFormat::Epub => comically::epub::build(&comic, &images, &output_dir).map(|_| ()),
+            OutputFormat::Mobi => match comically::epub::build(&comic, &images, &output_dir) {
                 Ok(epub_path) => {
                     let output_mobi = comic.output_path();
                     kindlegen_tx

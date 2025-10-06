@@ -247,8 +247,6 @@ fn main() -> Result<()> {
         log::info!("Processed {} images", images.len());
     }
 
-    comic.processed_files = images;
-
     // Build output
     if !args.quiet {
         log::info!("Building {output_format:?}...");
@@ -256,10 +254,10 @@ fn main() -> Result<()> {
 
     match output_format {
         OutputFormat::Cbz => {
-            comically::cbz::build(&comic).context("Failed to build CBZ")?;
+            comically::cbz::build(&comic, &images).context("Failed to build CBZ")?;
         }
         OutputFormat::Epub => {
-            comically::epub::build(&comic, &comic.output_dir).context("Failed to build EPUB")?;
+            comically::epub::build(&comic, &images, &comic.output_dir).context("Failed to build EPUB")?;
         }
         OutputFormat::Mobi => {
             if !comically::is_kindlegen_available() {
@@ -267,7 +265,7 @@ fn main() -> Result<()> {
                     "KindleGen is not available. Please install it to create MOBI files."
                 );
             }
-            let epub_path = comically::epub::build(&comic, &comic.output_dir)
+            let epub_path = comically::epub::build(&comic, &images, &comic.output_dir)
                 .context("Failed to build EPUB for MOBI conversion")?;
             let output_mobi = comic.output_path();
             let spawned = comically::mobi::create(epub_path, output_mobi)

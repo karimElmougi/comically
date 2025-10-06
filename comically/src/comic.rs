@@ -89,7 +89,6 @@ pub struct ProcessedImage {
 }
 
 pub struct Comic {
-    pub processed_files: Vec<ProcessedImage>,
     pub title: String,
     pub output_dir: PathBuf,
     pub input: PathBuf,
@@ -99,7 +98,6 @@ pub struct Comic {
 impl std::fmt::Debug for Comic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Comic")
-            .field("processed_files", &self.processed_files.len())
             .field("title", &self.title)
             .field("output_dir", &self.output_dir)
             .field("input", &self.input)
@@ -116,7 +114,6 @@ impl Comic {
         config: ComicConfig,
     ) -> anyhow::Result<Self> {
         let comic = Comic {
-            processed_files: Vec::new(),
             title,
             output_dir,
             input: file,

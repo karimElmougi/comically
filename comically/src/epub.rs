@@ -12,7 +12,7 @@ use crate::comic::{Comic, ProcessedImage};
 use crate::image::ImageFormat;
 
 /// Builds an EPUB file from the processed images, returns the path to the created file
-pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
+pub fn build(comic: &Comic, images: &[ProcessedImage], output_dir: &std::path::Path) -> Result<PathBuf> {
     log::info!("Building EPUB: {:?}", comic);
 
     // Create zip writer in memory
@@ -33,7 +33,7 @@ pub fn build(comic: &Comic, output_dir: &std::path::Path) -> Result<PathBuf> {
 
     // 3. Prepare image map
     let mut image_map: Vec<(&ProcessedImage, String)> = Vec::new();
-    for (i, image) in comic.processed_files.iter().enumerate() {
+    for (i, image) in images.iter().enumerate() {
         image_map.push((image, format!("Images/image{:03}.jpg", i + 1)));
     }
 

@@ -4,9 +4,9 @@ use zip::ZipWriter;
 
 use std::fs::File;
 
-use crate::comic::Comic;
+use crate::comic::{Comic, ProcessedImage};
 
-pub fn build(comic: &Comic) -> Result<()> {
+pub fn build(comic: &Comic, images: &[ProcessedImage]) -> Result<()> {
     log::info!("Building CBZ: {:?}", comic);
 
     let output_path = comic.output_path();
@@ -16,7 +16,7 @@ pub fn build(comic: &Comic) -> Result<()> {
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     // Add images in order
-    for image in comic.processed_files.iter() {
+    for image in images.iter() {
         zip.start_file(&image.file_name, options)?;
         std::io::Write::write_all(&mut zip, &image.data)?;
     }
