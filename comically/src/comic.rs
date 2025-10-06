@@ -18,6 +18,16 @@ pub enum OutputFormat {
     Cbz,
 }
 
+impl OutputFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OutputFormat::Mobi => "mobi",
+            OutputFormat::Epub => "epub",
+            OutputFormat::Cbz => "cbz",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComicConfig {
     pub device: Device,
@@ -91,60 +101,35 @@ pub struct ProcessedImage {
 #[derive(Debug)]
 pub struct Comic {
     pub title: String,
-    pub output_dir: PathBuf,
     pub input: PathBuf,
 }
 
 impl Comic {
-    pub fn new(file: PathBuf, output_dir: PathBuf) -> Self {
+    pub fn new(file: PathBuf) -> Self {
         let title = file
             .file_stem()
             .expect("Comic file should be a file, not a directory")
             .to_string_lossy()
             .to_string();
 
-        Comic {
-            title,
-            output_dir,
-            input: file,
-        }
+        Comic { title, input: file }
     }
 
-    pub fn output_path(&self, output_format: OutputFormat) -> PathBuf {
-        let filename = self.input.file_stem().unwrap().to_string_lossy();
-
-        let extension = match output_format {
-            OutputFormat::Mobi => "mobi",
-            OutputFormat::Epub => "epub",
-            OutputFormat::Cbz => "cbz",
-        };
-
+    pub fn output_filename(&self, output_format: OutputFormat) -> String {
         // don't use .with_extension() bc it replaces everything after the first dot
-        self.output_dir.join(format!("{}.{}", filename, extension))
+        let mut filename = self.title.clone();
+        filename.push('.');
+        filename.push_str(output_format.as_str());
+        filename
     }
 }
 
 #[test]
 fn output_path_with_dots() {
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().unwrap();
-    let output_dir = temp_dir.path().join("output");
-
-    let comic = Comic::new(
-        PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"),
-        output_dir.clone(),
-    );
-
-    let output_path = comic.output_path(OutputFormat::Cbz);
-    assert_eq!(
-        output_path,
-        output_dir.join("Dr. STONE v01 (2018) (Digital) (1r0n).cbz")
-    );
+    let comic = Comic::new(PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"));
 
     assert_eq!(
-        output_path.file_name().unwrap().to_str().unwrap(),
-        "Dr. STONE v01 (2018) (Digital) (1r0n).cbz",
-        "filename is preserved"
+        comic.output_filename(OutputFormat::Cbz),
+        "Dr. STONE v01 (2018) (Digital) (1r0n).cbz"
     );
 }

@@ -199,7 +199,7 @@ fn main() -> Result<()> {
     let output_format = config.output_format;
 
     // Create comic
-    let comic = Comic::new(args.input.clone(), args.output_dir.clone());
+    let comic = Comic::new(args.input.clone());
 
     if !args.quiet {
         log::info!(
@@ -249,10 +249,12 @@ fn main() -> Result<()> {
                 );
             }
             let bytes = comically::epub::build(&comic, &config, &images);
-            let epub_path = comic.output_dir.join(format!("{}.epub", comic.title));
+            let epub_path = args
+                .output_dir
+                .join(comic.output_filename(OutputFormat::Epub));
             std::fs::write(&epub_path, bytes).context("Failed to write EPUB file")?;
 
-            let output_mobi = comic.output_path(output_format);
+            let output_mobi = args.output_dir.join(comic.output_filename(output_format));
             let spawned = comically::mobi::create(epub_path, output_mobi.clone())
                 .context("Failed to start MOBI conversion")?;
             spawned.wait().context("MOBI conversion failed")?;
@@ -260,7 +262,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let output_path = comic.output_path(output_format);
+    let output_path = args.output_dir.join(comic.output_filename(output_format));
     std::fs::write(&output_path, bytes).context("Failed to write output file")?;
 
     if !args.quiet {

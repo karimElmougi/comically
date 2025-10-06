@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::tui::progress::ProgressEvent;
 use crate::tui::config::ConfigEvent;
+use crate::tui::progress::ProgressEvent;
 use comically::ComicConfig;
 
 #[derive(Parser, Debug)]

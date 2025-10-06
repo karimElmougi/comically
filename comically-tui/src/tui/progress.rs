@@ -66,7 +66,6 @@ pub enum ProgressEvent {
     ProcessingComplete,
 }
 
-
 pub struct ProgressState {
     start: Instant,
     comics: Vec<ComicState>,

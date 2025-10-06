@@ -35,7 +35,7 @@ pub fn process_files(
         .into_iter()
         .enumerate()
         .map(|(id, file)| {
-            let comic = Comic::new(file, output_dir.clone());
+            let comic = Comic::new(file);
             send_register_comic(&event_tx, id, comic.title.clone());
             (id, comic)
         })
@@ -115,14 +115,14 @@ pub fn process_files(
             OutputFormat::Cbz => {
                 comically::cbz::build_into(&comic, &images, &mut build_buffer);
 
-                let output_path = comic.output_path(config.output_format);
+                let output_path = output_dir.join(comic.output_filename(config.output_format));
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created CBZ: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write CBZ: {}", e))
             }
             OutputFormat::Epub => {
                 comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
-                let output_path = output_dir.join(format!("{}.epub", comic.title));
+                let output_path = output_dir.join(comic.output_filename(config.output_format));
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created EPUB: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write EPUB: {}", e))
@@ -130,11 +130,12 @@ pub fn process_files(
             OutputFormat::Mobi => {
                 comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
 
-                let epub_path = output_dir.join(format!("{}.epub", comic.title));
+                let epub_path = output_dir.join(comic.output_filename(OutputFormat::Epub));
                 std::fs::write(&epub_path, &build_buffer)
                     .inspect(|_| {
                         log::info!("Created EPUB for MOBI: {:?}", epub_path);
-                        let output_mobi = comic.output_path(config.output_format);
+                        let output_mobi =
+                            output_dir.join(comic.output_filename(OutputFormat::Mobi));
                         kindlegen_tx
                             .send((id, epub_path, output_mobi, event_tx.clone()))
                             .ok();
