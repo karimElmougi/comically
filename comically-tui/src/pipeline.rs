@@ -7,7 +7,7 @@ use std::{
 
 use comically::{Comic, ComicConfig, OutputFormat};
 
-use crate::progress::{ComicStage, ComicStatus, ProgressEvent};
+use crate::tui::progress::{ComicStage, ComicStatus, ProgressEvent};
 use crate::Event;
 
 pub fn process_files(

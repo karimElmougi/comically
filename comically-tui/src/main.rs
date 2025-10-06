@@ -1,10 +1,10 @@
 mod pipeline;
-mod progress;
 mod tui;
 
 use anyhow::Context;
 use clap::Parser;
 use ratatui::{crossterm::event, layout::Size, Viewport};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use std::{
     env,
@@ -13,9 +13,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use crate::progress::ProgressEvent;
+use crate::tui::progress::ProgressEvent;
 use crate::tui::config::ConfigEvent;
 use comically::ComicConfig;
 
