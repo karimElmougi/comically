@@ -97,7 +97,7 @@ pub fn encode_image_part(
     img: &DynamicImage,
     part_num: usize,
     format: ImageFormat,
-) -> Result<ProcessedImage> {
+) -> ProcessedImage {
     let file_name = {
         let file = original.parent().display();
         let stem = original.file_stem().to_string_lossy();
@@ -107,34 +107,35 @@ pub fn encode_image_part(
 
     let dimensions = img.dimensions();
 
-    encode_image(img, &format)
-        .map(|data| ProcessedImage {
-            file_name,
-            data,
-            dimensions,
-            format,
-        })
-        .inspect(|processed| {
-            log::trace!("Encoded image: {}", processed.file_name);
-        })
+    let img = ProcessedImage {
+        file_name,
+        data: encode_image(img, &format),
+        dimensions,
+        format,
+    };
+
+    log::trace!("Encoded image: {}", img.file_name);
+    img
 }
 
-fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Result<Vec<u8>> {
+fn encode_image(img: &DynamicImage, format: &ImageFormat) -> Vec<u8> {
     let (width, height) = img.dimensions();
     let mut buffer = Vec::with_capacity((width * height) as usize);
 
     match format {
         ImageFormat::Jpeg { quality } => {
-            compress_to_jpeg(img, &mut buffer, *quality)?;
+            compress_to_jpeg(img, &mut buffer, *quality).expect("Writing to vec should never fail");
         }
         ImageFormat::Png { compression } => {
-            compress_to_png(img, &mut buffer, *compression)?;
+            compress_to_png(img, &mut buffer, *compression)
+                .expect("Writing to vec should never fail");
         }
         ImageFormat::WebP { quality } => {
-            let webp_data = compress_to_webp(img, *quality)?;
+            let webp_data =
+                compress_to_webp(img, *quality).expect("Writing to vec should never fail");
             buffer.extend_from_slice(&webp_data);
         }
     }
 
-    Ok(buffer)
+    buffer
 }

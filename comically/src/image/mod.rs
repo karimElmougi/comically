@@ -5,10 +5,9 @@ pub mod encode;
 pub mod transform;
 
 // Re-export public API
-pub use encode::{compress_to_jpeg, compress_to_png, compress_to_webp, PngCompression};
-
 use anyhow::Result;
 use arrayvec::ArrayVec;
+pub use encode::{compress_to_jpeg, compress_to_png, compress_to_webp, PngCompression};
 use imageproc::image::DynamicImage;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -129,44 +128,30 @@ where
     // This eliminates intermediate Vec allocation and keeps data hot in cache
     let mut images: Vec<ProcessedImage> = files
         .par_iter()
-        .flat_map_iter(|archive_file| {
-            let mut encoded_images = ArrayVec::<ProcessedImage, 3>::new();
-
+        .map(|archive_file| {
             // Decode image
-            let img = match decode::decode(&archive_file.data) {
-                Ok(img) => img,
-                Err(e) => {
-                    log::warn!(
-                        "Failed to decode {}: {}",
-                        archive_file.file_name.display(),
-                        e
-                    );
-                    return encoded_images;
-                }
-            };
+            let img = decode::decode(&archive_file.data)?;
 
             // Process image (transform, crop, resize, split)
             let processed_images = process(img, config);
 
+            let mut encoded_images = ArrayVec::<ProcessedImage, 3>::new();
+
             // Encode immediately while data is hot in cache
             for (i, img) in processed_images.into_iter().enumerate() {
-                match encode::encode_image_part(archive_file, &img, i, config.image_format) {
-                    Ok(processed) => encoded_images.push(processed),
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to encode {}: {}",
-                            archive_file.file_name.display(),
-                            e
-                        );
-                    }
-                }
+                let processed =
+                    encode::encode_image_part(archive_file, &img, i, config.image_format);
+                encoded_images.push(processed);
             }
 
             // Report progress after processing this file
             on_progress();
 
-            encoded_images
+            Ok(encoded_images)
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     // Serial sort + dedup (fast, no benefit from parallelism)
