@@ -1,5 +1,4 @@
 use comically::{Comic, ComicConfig, OutputFormat};
-use rayon::iter::{ParallelBridge, ParallelIterator};
 
 use std::{
     path::PathBuf,
@@ -68,7 +67,6 @@ pub fn process_files(
 
     comics
         .into_iter()
-        .par_bridge()
         .filter_map(|(id, mut comic)| {
             // Process images
             let start = Instant::now();
