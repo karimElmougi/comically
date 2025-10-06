@@ -11,7 +11,8 @@ use crate::image::ImageFormat;
 
 /// Build EPUB and return the bytes
 pub fn build(title: &str, config: &ComicConfig, images: &[ProcessedImage]) -> Vec<u8> {
-    let mut buffer = Vec::new();
+    let cap = images.len() * images.first().map(|i| i.data.len()).unwrap_or(1);
+    let mut buffer = Vec::with_capacity(cap);
     build_into(title, config, images, &mut buffer);
     buffer
 }

@@ -1254,7 +1254,7 @@ fn load_and_process_preview(
         .next()
         .ok_or_else(|| anyhow::anyhow!("No processed images"))?;
 
-    let mut compressed_buffer = Vec::new();
+    let mut compressed_buffer = Vec::with_capacity(first_image.as_bytes().len());
     let quality = match config.image_format {
         ImageFormat::Jpeg { quality } | ImageFormat::WebP { quality } => quality,
         _ => 85, // Default quality for preview

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rayon::iter::{ParallelIterator, ParallelBridge};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 
 use std::{
     path::PathBuf,
@@ -54,7 +54,8 @@ pub fn process_files(
         .collect();
 
     // Reusable buffer for building archives - avoids repeated allocations
-    let mut build_buffer = Vec::new();
+    // Reserves 200MB, which should be enough for most comics
+    let mut build_buffer = Vec::with_capacity(200 * 1024 * 1024);
 
     for (id, comic, archive_iter) in comics {
         // Process images
@@ -64,7 +65,11 @@ pub fn process_files(
 
         // Collect archive files
         let Ok(files) = archive_iter.par_bridge().collect::<Result<Vec<_>>>() else {
-            error(&event_tx, id, anyhow::anyhow!("Failed to collect archive files"));
+            error(
+                &event_tx,
+                id,
+                anyhow::anyhow!("Failed to collect archive files"),
+            );
             continue;
         };
 

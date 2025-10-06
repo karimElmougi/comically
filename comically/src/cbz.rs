@@ -7,7 +7,8 @@ use crate::comic::ProcessedImage;
 
 /// Build CBZ and return the bytes
 pub fn build(images: &[ProcessedImage]) -> Vec<u8> {
-    let mut buffer = Vec::new();
+    let cap = images.len() * images.first().map(|i| i.data.len()).unwrap_or(1);
+    let mut buffer = Vec::with_capacity(cap);
     build_into(images, &mut buffer);
     buffer
 }
