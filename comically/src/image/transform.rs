@@ -300,7 +300,7 @@ impl Img for CroppedImage<'_> {
 ///
 /// # Returns
 /// A [`Split`] containing 1-3 processed images depending on the strategy.
-pub fn split_rotate<I: Img + Send + Sync>(img: I, c: &ComicConfig) -> Split<Image> {
+pub fn split_rotate<I: Img>(img: I, c: &ComicConfig) -> Split<Image> {
     let target = c.device_dimensions();
     let (width, height) = img.dimensions();
     let is_double_page = width > height;
@@ -341,10 +341,8 @@ fn split<I: Img>(img: &I, c: &ComicConfig) -> Split<Image> {
     // Split double pages
     let (left, right) = split_double_pages(img);
 
-    let (left_resized, right_resized) = rayon::join(
-        || resize(left, c.device_dimensions(), c.margin_color),
-        || resize(right, c.device_dimensions(), c.margin_color),
-    );
+    let left_resized = resize(left, c.device_dimensions(), c.margin_color);
+    let right_resized = resize(right, c.device_dimensions(), c.margin_color);
 
     // Determine order based on right_to_left setting
     let (first, second) = if c.right_to_left {
@@ -356,29 +354,14 @@ fn split<I: Img>(img: &I, c: &ComicConfig) -> Split<Image> {
     Split::two(first, second)
 }
 
-fn split_rotate_inner<I: Img + Send + Sync>(img: &I, c: &ComicConfig) -> Split<Image> {
+fn split_rotate_inner<I: Img>(img: &I, c: &ComicConfig) -> Split<Image> {
     let (left, right) = split_double_pages(img);
 
-    let mut rotated_resized = None;
-    let mut left_resized = None;
-    let mut right_resized = None;
+    let rotated = rotate_image_90(img, c.right_to_left);
+    let rotated_resized = resize(rotated, c.device_dimensions(), c.margin_color);
 
-    rayon::scope(|s| {
-        s.spawn(|_| {
-            let rotated = rotate_image_90(img, c.right_to_left);
-            rotated_resized = Some(resize(rotated, c.device_dimensions(), c.margin_color));
-        });
-        s.spawn(|_| {
-            left_resized = Some(resize(left, c.device_dimensions(), c.margin_color));
-        });
-        s.spawn(|_| {
-            right_resized = Some(resize(right, c.device_dimensions(), c.margin_color));
-        });
-    });
-
-    let rotated_resized = rotated_resized.unwrap();
-    let left_resized = left_resized.unwrap();
-    let right_resized = right_resized.unwrap();
+    let left_resized = resize(left, c.device_dimensions(), c.margin_color);
+    let right_resized = resize(right, c.device_dimensions(), c.margin_color);
 
     let (first, second) = if c.right_to_left {
         (right_resized, left_resized)
