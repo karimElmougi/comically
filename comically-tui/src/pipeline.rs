@@ -34,22 +34,10 @@ pub fn process_files(
     let comics: Vec<_> = files
         .into_iter()
         .enumerate()
-        .filter_map(|(id, file)| {
-            let title = file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            send_register_comic(&event_tx, id, title.clone());
-
-            match Comic::new(file.clone(), output_dir.clone(), title) {
-                Ok(comic) => Some((id, comic)),
-                Err(e) => {
-                    error(&event_tx, id, e);
-                    None
-                }
-            }
+        .map(|(id, file)| {
+            let comic = Comic::new(file, output_dir.clone());
+            send_register_comic(&event_tx, id, comic.title.clone());
+            (id, comic)
         })
         .collect();
 

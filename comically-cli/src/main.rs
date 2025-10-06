@@ -198,16 +198,8 @@ fn main() -> Result<()> {
     let config = build_config(&args)?;
     let output_format = config.output_format;
 
-    // Extract title from filename
-    let title = args
-        .input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("comic")
-        .to_string();
-
     // Create comic
-    let comic = Comic::new(args.input.clone(), args.output_dir.clone(), title.clone())?;
+    let comic = Comic::new(args.input.clone(), args.output_dir.clone());
 
     if !args.quiet {
         log::info!(

@@ -88,31 +88,26 @@ pub struct ProcessedImage {
     pub format: ImageFormat,
 }
 
+#[derive(Debug)]
 pub struct Comic {
     pub title: String,
     pub output_dir: PathBuf,
     pub input: PathBuf,
 }
 
-impl std::fmt::Debug for Comic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Comic")
-            .field("title", &self.title)
-            .field("output_dir", &self.output_dir)
-            .field("input", &self.input)
-            .finish()
-    }
-}
-
 impl Comic {
-    pub fn new(file: PathBuf, output_dir: PathBuf, title: String) -> anyhow::Result<Self> {
-        let comic = Comic {
+    pub fn new(file: PathBuf, output_dir: PathBuf) -> Self {
+        let title = file
+            .file_stem()
+            .expect("Comic file should be a file, not a directory")
+            .to_string_lossy()
+            .to_string();
+
+        Comic {
             title,
             output_dir,
             input: file,
-        };
-
-        Ok(comic)
+        }
     }
 
     pub fn output_path(&self, output_format: OutputFormat) -> PathBuf {
@@ -139,9 +134,7 @@ fn output_path_with_dots() {
     let comic = Comic::new(
         PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"),
         output_dir.clone(),
-        "Dr. STONE v01 (2018) (Digital) (1r0n)".to_string(),
-    )
-    .unwrap();
+    );
 
     let output_path = comic.output_path(OutputFormat::Cbz);
     assert_eq!(
