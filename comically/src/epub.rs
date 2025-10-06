@@ -6,18 +6,23 @@ use zip::{
 
 use std::io::{Cursor, Write};
 
-use crate::comic::{Comic, ProcessedImage};
+use crate::comic::{Comic, ComicConfig, ProcessedImage};
 use crate::image::ImageFormat;
 
 /// Build EPUB and return the bytes
-pub fn build(comic: &Comic, images: &[ProcessedImage]) -> Vec<u8> {
+pub fn build(comic: &Comic, config: &ComicConfig, images: &[ProcessedImage]) -> Vec<u8> {
     let mut buffer = Vec::new();
-    build_into(comic, images, &mut buffer);
+    build_into(comic, config, images, &mut buffer);
     buffer
 }
 
 /// Build EPUB into the provided buffer, reusing existing allocation
-pub fn build_into(comic: &Comic, images: &[ProcessedImage], buffer: &mut Vec<u8>) {
+pub fn build_into(
+    comic: &Comic,
+    config: &ComicConfig,
+    images: &[ProcessedImage],
+    buffer: &mut Vec<u8>,
+) {
     log::debug!("Building EPUB into buffer: {:?}", comic);
 
     buffer.clear();
@@ -66,7 +71,7 @@ pub fn build_into(comic: &Comic, images: &[ProcessedImage], buffer: &mut Vec<u8>
     // 7. Add content.opf
     zip.start_file("OEBPS/content.opf", options_deflated)
         .unwrap();
-    zip.write_all(content_opf(comic, &image_map).as_bytes())
+    zip.write_all(content_opf(comic, config, &image_map).as_bytes())
         .unwrap();
 
     // 8. Add all images
@@ -168,7 +173,11 @@ fn toc_ncx(comic: &Comic, num_pages: usize) -> String {
     )
 }
 
-fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String {
+fn content_opf(
+    comic: &Comic,
+    config: &ComicConfig,
+    image_map: &[(&ProcessedImage, String)],
+) -> String {
     let uuid = Uuid::new_v4().to_string();
 
     // Build manifest items
@@ -218,17 +227,13 @@ fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String
 
     // Build spine items with page spread properties
     let mut spine = String::new();
-    let progression_direction = if comic.config.right_to_left {
-        "rtl"
-    } else {
-        "ltr"
-    };
+    let progression_direction = if config.right_to_left { "rtl" } else { "ltr" };
 
     // Add cover as first item in spine (typically center spread)
     spine.push_str(r#"    <itemref idref="cover-html" properties="page-spread-center"/>"#);
     spine.push('\n');
 
-    let mut right_to_left = comic.config.right_to_left;
+    let mut right_to_left = config.right_to_left;
     for i in 1..image_map.len() {
         let spread_property = if right_to_left {
             "page-spread-right"
@@ -247,7 +252,7 @@ fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String
         right_to_left = !right_to_left;
     }
 
-    let (width, height) = comic.config.device_dimensions();
+    let (width, height) = config.device_dimensions();
 
     // Create the OPF content with page-progression-direction
     format!(
@@ -276,7 +281,7 @@ fn content_opf(comic: &Comic, image_map: &[(&ProcessedImage, String)]) -> String
           <spine toc="ncx" page-progression-direction="{progression_direction}">{spine}</spine>
         </package>"###,
         title = &comic.title,
-        writing_mode = if comic.config.right_to_left {
+        writing_mode = if config.right_to_left {
             "horizontal-rl"
         } else {
             "horizontal-lr"

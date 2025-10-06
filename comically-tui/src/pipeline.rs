@@ -43,7 +43,7 @@ pub fn process_files(
 
             send_register_comic(&event_tx, id, title.clone());
 
-            match Comic::new(file.clone(), output_dir.clone(), title, config.clone()) {
+            match Comic::new(file.clone(), output_dir.clone(), title) {
                 Ok(comic) => Some((id, comic)),
                 Err(e) => {
                     error(&event_tx, id, e);
@@ -127,26 +127,26 @@ pub fn process_files(
             OutputFormat::Cbz => {
                 comically::cbz::build_into(&comic, &images, &mut build_buffer);
 
-                let output_path = comic.output_path();
+                let output_path = comic.output_path(config.output_format);
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created CBZ: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write CBZ: {}", e))
             }
             OutputFormat::Epub => {
-                comically::epub::build_into(&comic, &images, &mut build_buffer);
+                comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
                 let output_path = output_dir.join(format!("{}.epub", comic.title));
                 std::fs::write(&output_path, &build_buffer)
                     .inspect(|_| log::info!("Created EPUB: {:?}", output_path))
                     .map_err(|e| anyhow::anyhow!("Failed to write EPUB: {}", e))
             }
             OutputFormat::Mobi => {
-                comically::epub::build_into(&comic, &images, &mut build_buffer);
+                comically::epub::build_into(&comic, &config, &images, &mut build_buffer);
 
                 let epub_path = output_dir.join(format!("{}.epub", comic.title));
                 std::fs::write(&epub_path, &build_buffer)
                     .inspect(|_| {
                         log::info!("Created EPUB for MOBI: {:?}", epub_path);
-                        let output_mobi = comic.output_path();
+                        let output_mobi = comic.output_path(config.output_format);
                         kindlegen_tx
                             .send((id, epub_path, output_mobi, event_tx.clone()))
                             .ok();

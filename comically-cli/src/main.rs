@@ -207,12 +207,7 @@ fn main() -> Result<()> {
         .to_string();
 
     // Create comic
-    let comic = Comic::new(
-        args.input.clone(),
-        args.output_dir.clone(),
-        title.clone(),
-        config.clone(),
-    )?;
+    let comic = Comic::new(args.input.clone(), args.output_dir.clone(), title.clone())?;
 
     if !args.quiet {
         log::info!(
@@ -254,18 +249,18 @@ fn main() -> Result<()> {
 
     let bytes = match output_format {
         OutputFormat::Cbz => comically::cbz::build(&comic, &images),
-        OutputFormat::Epub => comically::epub::build(&comic, &images),
+        OutputFormat::Epub => comically::epub::build(&comic, &config, &images),
         OutputFormat::Mobi => {
             if !comically::is_kindlegen_available() {
                 anyhow::bail!(
                     "KindleGen is not available. Please install it to create MOBI files."
                 );
             }
-            let bytes = comically::epub::build(&comic, &images);
+            let bytes = comically::epub::build(&comic, &config, &images);
             let epub_path = comic.output_dir.join(format!("{}.epub", comic.title));
             std::fs::write(&epub_path, bytes).context("Failed to write EPUB file")?;
 
-            let output_mobi = comic.output_path();
+            let output_mobi = comic.output_path(output_format);
             let spawned = comically::mobi::create(epub_path, output_mobi.clone())
                 .context("Failed to start MOBI conversion")?;
             spawned.wait().context("MOBI conversion failed")?;
@@ -273,10 +268,11 @@ fn main() -> Result<()> {
         }
     };
 
-    std::fs::write(&comic.output_path(), bytes).context("Failed to write output file")?;
+    let output_path = comic.output_path(output_format);
+    std::fs::write(&output_path, bytes).context("Failed to write output file")?;
 
     if !args.quiet {
-        log::info!("Done: {}", comic.output_path().display());
+        log::info!("Done: {}", output_path.display());
     }
 
     Ok(())

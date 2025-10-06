@@ -92,7 +92,6 @@ pub struct Comic {
     pub title: String,
     pub output_dir: PathBuf,
     pub input: PathBuf,
-    pub config: ComicConfig,
 }
 
 impl std::fmt::Debug for Comic {
@@ -101,32 +100,25 @@ impl std::fmt::Debug for Comic {
             .field("title", &self.title)
             .field("output_dir", &self.output_dir)
             .field("input", &self.input)
-            .field("config", &self.config)
             .finish()
     }
 }
 
 impl Comic {
-    pub fn new(
-        file: PathBuf,
-        output_dir: PathBuf,
-        title: String,
-        config: ComicConfig,
-    ) -> anyhow::Result<Self> {
+    pub fn new(file: PathBuf, output_dir: PathBuf, title: String) -> anyhow::Result<Self> {
         let comic = Comic {
             title,
             output_dir,
             input: file,
-            config,
         };
 
         Ok(comic)
     }
 
-    pub fn output_path(&self) -> PathBuf {
+    pub fn output_path(&self, output_format: OutputFormat) -> PathBuf {
         let filename = self.input.file_stem().unwrap().to_string_lossy();
 
-        let extension = match self.config.output_format {
+        let extension = match output_format {
             OutputFormat::Mobi => "mobi",
             OutputFormat::Epub => "epub",
             OutputFormat::Cbz => "cbz",
@@ -144,18 +136,14 @@ fn output_path_with_dots() {
     let temp_dir = TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
 
-    let mut config = ComicConfig::default();
-    config.output_format = OutputFormat::Cbz;
-
     let comic = Comic::new(
         PathBuf::from("Dr. STONE v01 (2018) (Digital) (1r0n).cbz"),
         output_dir.clone(),
         "Dr. STONE v01 (2018) (Digital) (1r0n)".to_string(),
-        config,
     )
     .unwrap();
 
-    let output_path = comic.output_path();
+    let output_path = comic.output_path(OutputFormat::Cbz);
     assert_eq!(
         output_path,
         output_dir.join("Dr. STONE v01 (2018) (Digital) (1r0n).cbz")
