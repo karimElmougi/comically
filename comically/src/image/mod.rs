@@ -10,8 +10,7 @@ pub use encode::{compress_to_jpeg, compress_to_png, compress_to_webp, PngCompres
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use imageproc::image::DynamicImage;
-use rayon::iter::ParallelIterator;
-use rayon::slice::ParallelSlice;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::archive::ArchiveFile;
 use crate::comic::{ComicConfig, ProcessedImage};
@@ -111,6 +110,7 @@ impl<T> IntoIterator for Split<T> {
     }
 }
 
+#[inline(always)]
 pub fn process_batch(files: Vec<ArchiveFile>, config: &ComicConfig) -> Result<Vec<ProcessedImage>> {
     process_batch_with_progress(files, config, || {})
 }
@@ -125,55 +125,47 @@ where
 {
     log::info!("Processing {} archive images", files.len());
 
-    // Use larger chunks to reduce coordination overhead
-    let num_threads = rayon::current_num_threads();
-    let chunk_size = (files.len() / num_threads).max(1);
-
-    log::debug!("Using {} threads, chunk size: {}", num_threads, chunk_size);
-
     // Parallel stage: decode + process + encode
     // This eliminates intermediate Vec allocation and keeps data hot in cache
     let mut images: Vec<ProcessedImage> = files
-        .par_chunks(chunk_size)
-        .flat_map_iter(|chunk| {
-            chunk.iter().flat_map(|archive_file| {
-                let mut encoded_images = ArrayVec::<ProcessedImage, 3>::new();
+        .par_iter()
+        .flat_map_iter(|archive_file| {
+            let mut encoded_images = ArrayVec::<ProcessedImage, 3>::new();
 
-                // Decode image
-                let img = match decode::decode(&archive_file.data) {
-                    Ok(img) => img,
+            // Decode image
+            let img = match decode::decode(&archive_file.data) {
+                Ok(img) => img,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to decode {}: {}",
+                        archive_file.file_name.display(),
+                        e
+                    );
+                    return encoded_images;
+                }
+            };
+
+            // Process image (transform, crop, resize, split)
+            let processed_images = process(img, config);
+
+            // Encode immediately while data is hot in cache
+            for (i, img) in processed_images.into_iter().enumerate() {
+                match encode::encode_image_part(archive_file, &img, i, config.image_format) {
+                    Ok(processed) => encoded_images.push(processed),
                     Err(e) => {
                         log::warn!(
-                            "Failed to decode {}: {}",
+                            "Failed to encode {}: {}",
                             archive_file.file_name.display(),
                             e
                         );
-                        return encoded_images;
-                    }
-                };
-
-                // Process image (transform, crop, resize, split)
-                let processed_images = process(img, config);
-
-                // Encode immediately while data is hot in cache
-                for (i, img) in processed_images.into_iter().enumerate() {
-                    match encode::encode_image_part(archive_file, &img, i, config.image_format) {
-                        Ok(processed) => encoded_images.push(processed),
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to encode {}: {}",
-                                archive_file.file_name.display(),
-                                e
-                            );
-                        }
                     }
                 }
+            }
 
-                // Report progress after processing this file
-                on_progress();
+            // Report progress after processing this file
+            on_progress();
 
-                encoded_images
-            })
+            encoded_images
         })
         .collect();
 
