@@ -381,6 +381,7 @@ dependencies = [
  "imageproc",
  "log",
  "num_enum",
+ "parking_lot",
  "rayon",
  "serde",
  "serde_json",

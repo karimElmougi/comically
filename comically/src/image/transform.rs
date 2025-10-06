@@ -6,6 +6,7 @@ use fr::images::Image as FrImage;
 use fr::images::ImageRef as FrImageRef;
 use imageproc::image::{imageops, GrayImage, Luma};
 use imageproc::stats::histogram;
+use parking_lot::RwLock;
 
 use super::Split;
 use crate::comic::{ComicConfig, SplitStrategy};
@@ -19,18 +20,41 @@ const SAFETY_MARGIN: u32 = 2;
 
 /// Gamma correction lookup table
 /// Only computed once per unique gamma value (256 iterations) to avoid slow float operations
-static GAMMA_LUT: std::sync::OnceLock<[u8; 256]> = std::sync::OnceLock::new();
+struct GammaLut {
+    gamma: f32,
+    lut: [u8; 256],
+}
 
-fn gamma_lut(gamma: f32) -> &'static [u8; 256] {
-    GAMMA_LUT.get_or_init(|| {
-        let mut lut = [0u8; 256];
-        for (i, pixel) in lut.iter_mut().enumerate() {
+impl GammaLut {
+    const fn new() -> Self {
+        // NEG_INFINITY is used to indicate that the lut needs to be recomputed
+        Self {gamma: f32::NEG_INFINITY, lut: [0u8; 256]}
+    }
+
+    fn recompute(&mut self, gamma: f32) {
+        self.gamma = gamma;
+        for (i, pixel) in self.lut.iter_mut().enumerate() {
             let normalized = i as f32 / 255.0;
             let corrected = normalized.powf(gamma);
             *pixel = (corrected * 255.0).round().clamp(0.0, 255.0) as u8;
         }
-        lut
-    })
+    }
+}
+
+/// Gamma correction lookup table
+/// Only computed once per unique gamma value (256 iterations) to avoid slow float operations
+static GAMMA_LUT: RwLock<GammaLut> = RwLock::new(GammaLut::new());
+
+fn gamma_lut(gamma: f32) -> [u8; 256] {
+    let lut = GAMMA_LUT.read();
+    if (lut.gamma - gamma).abs() >= 0.001 {
+        drop(lut);
+        let mut lut = GAMMA_LUT.write();
+        lut.recompute(gamma);
+        lut.lut.clone()
+    } else {
+        lut.lut.clone()
+    }
 }
 
 /// Trait for zero-copy image views compatible with fast_image_resize.
@@ -81,8 +105,9 @@ impl Image {
         let gamma = gamma.clamp(0.1, 3.0);
         // only apply gamma if it's not 1.0
         if (gamma - 1.0).abs() > 0.01 {
+            let lut = gamma_lut(gamma);
             for pixel in self.data.iter_mut() {
-                *pixel = gamma_lut(gamma)[*pixel as usize];
+                *pixel = lut[*pixel as usize];
             }
         }
         self
