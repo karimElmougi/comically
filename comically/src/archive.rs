@@ -1,6 +1,6 @@
 use anyhow::Context;
 use unrar::Archive;
-use zip::ZipArchive;
+use zip::{HasZipMetadata, ZipArchive};
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -108,7 +108,7 @@ impl Iterator for ZipReader {
                 None => continue,
             };
 
-            let mut data = Vec::new();
+            let mut data = Vec::with_capacity(file.get_metadata().uncompressed_size as usize);
             if let Err(e) = Read::read_to_end(&mut file, &mut data) {
                 return Some(Err(e.into()));
             }
